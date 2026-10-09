@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -50,6 +51,18 @@ var (
 
 	eqFreqs = [10]uint16{31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000}
 )
+
+// debugEnabled gates protocol tracing (GATT writes, notifications, retries).
+// It is off by default so stdout stays clean for machine-readable output;
+// set QCY_DEBUG=1 to trace to stderr.
+var debugEnabled = os.Getenv("QCY_DEBUG") != ""
+
+// dbg writes protocol tracing to stderr when QCY_DEBUG is set.
+func dbg(format string, args ...any) {
+	if debugEnabled {
+		fmt.Fprintf(os.Stderr, format, args...)
+	}
+}
 
 func mustUUID(s string) bluetooth.UUID {
 	u, err := bluetooth.ParseUUID(s)
@@ -107,7 +120,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
   qcyctl scan [seconds]
   qcyctl info [seconds]
-  qcyctl status [seconds]
+  qcyctl status [--json] [seconds]
   qcyctl noise [seconds]
   qcyctl anc <off|adaptive|indoor|commuting|noisy|antiwind|transparency> [seconds]  (anc = adaptive)
   qcyctl <game|sleep|ldac|multipoint|wind> <on|off> [seconds]
@@ -117,7 +130,7 @@ func usage() {
   qcyctl auto-off <minutes|never> [seconds]
   qcyctl balance <left|center|right|0-100> [seconds]
   qcyctl eq get [seconds]
-  qcyctl eq set <g1,g2,...,g10> [seconds]        (dB, e.g. -3,0,2.5,...)
+  qcyctl eq set <g1,g2,...,g10> [--yes] [seconds]  (dB, e.g. -3,0,2.5,...; --yes required: overwrites preset 8)
   qcyctl eq preset <n> [seconds]
   qcyctl keys get [seconds]
   qcyctl keys set <keyId:funId> [<keyId:funId> ...] [seconds]
@@ -345,7 +358,7 @@ func connectQCY(scanSeconds int) (*qcy, error) {
 		if err == nil {
 			break
 		}
-		fmt.Fprintf(os.Stderr, "connect attempt %d to %s failed: %v\n", attempt, addr, err)
+		dbg("connect attempt %d to %s failed: %v\n", attempt, addr, err)
 		select {
 		case addr = <-addrCh:
 		default:
@@ -414,14 +427,14 @@ func runClient(scanSeconds int, fn func(*client) error) error {
 
 func (c *client) start() error {
 	err := c.q.notify.EnableNotifications(func(buf []byte) {
-		fmt.Printf("notify[1002] raw=%x\n", buf)
+		dbg("notify[1002] raw=%x\n", buf)
 		frames, perr := parseFrames(buf)
 		if perr != nil {
-			fmt.Printf("  (unparsed: %v)\n", perr)
+			dbg("  (unparsed: %v)\n", perr)
 			return
 		}
 		for _, f := range frames {
-			fmt.Printf("  frame cmd=0x%02x params=%x\n", f.cmd, f.params)
+			dbg("  frame cmd=0x%02x params=%x\n", f.cmd, f.params)
 			cp := frame{cmd: f.cmd, params: append([]byte(nil), f.params...)}
 			select {
 			case c.frames <- cp:
@@ -432,14 +445,14 @@ func (c *client) start() error {
 	if err != nil {
 		return fmt.Errorf("enable notifications 1002: %w", err)
 	}
-	fmt.Println("subscribed notify[1002]")
+	dbg("subscribed notify[1002]\n")
 	if c.q.battery != nil {
 		if err := c.q.battery.EnableNotifications(func(buf []byte) {
-			fmt.Printf("notify[0008] raw=%x\n", buf)
+			dbg("notify[0008] raw=%x\n", buf)
 		}); err != nil {
-			fmt.Fprintf(os.Stderr, "subscribe battery 0008: %v\n", err)
+			dbg("subscribe battery 0008: %v\n", err)
 		} else {
-			fmt.Println("subscribed notify[0008]")
+			dbg("subscribed notify[0008]\n")
 		}
 	}
 	return nil
@@ -460,12 +473,12 @@ func (c *client) drain() {
 func (c *client) send(opcode byte, params []byte) error {
 	pkt := buildFrame(opcode, params)
 	n, err := c.q.cmd.WriteWithoutResponse(pkt)
-	fmt.Printf("tx %x (without-response n=%d err=%v)\n", pkt, n, err)
+	dbg("tx %x (without-response n=%d err=%v)\n", pkt, n, err)
 	if err == nil {
 		return nil
 	}
 	n2, err2 := c.q.cmd.Write(pkt)
-	fmt.Printf("tx %x (with-response n=%d err=%v)\n", pkt, n2, err2)
+	dbg("tx %x (with-response n=%d err=%v)\n", pkt, n2, err2)
 	if err2 != nil {
 		return fmt.Errorf("write 0x%02x: without-response=%v with-response=%v", opcode, err, err2)
 	}
@@ -551,20 +564,36 @@ func cmdInfo(args []string) error {
 	return nil
 }
 
-func printBattery(q *qcy) {
+// readBattery reads characteristic 0008 and returns the parsed L/R/case levels.
+func readBattery(q *qcy) (left, right, box byte, lc, rc, cc bool, err error) {
 	if q.battery == nil {
-		fmt.Fprintln(os.Stderr, "battery characteristic 0008 not available on this device")
-		return
+		return 0, 0, 0, false, false, false, errors.New("battery characteristic 0008 not available on this device")
 	}
 	var buf [4]byte
 	n, err := q.battery.Read(buf[:])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "read battery 0008: %v\n", err)
-		return
+		return 0, 0, 0, false, false, false, fmt.Errorf("read battery 0008: %w", err)
 	}
-	left, right, box, lc, rc, cc, perr := parseBattery(buf[:n])
-	if perr != nil {
-		fmt.Fprintf(os.Stderr, "parse battery: %v\n", perr)
+	return parseBattery(buf[:n])
+}
+
+// readVersion reads characteristic 0007 and returns the left/right firmware.
+func readVersion(q *qcy) (string, string, error) {
+	if q.version == nil {
+		return "", "", errors.New("version characteristic 0007 not available on this device")
+	}
+	var buf [8]byte
+	n, err := q.version.Read(buf[:])
+	if err != nil {
+		return "", "", fmt.Errorf("read version 0007: %w", err)
+	}
+	return parseVersion(buf[:n])
+}
+
+func printBattery(q *qcy) {
+	left, right, box, lc, rc, cc, err := readBattery(q)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return
 	}
 	fmt.Printf("battery left=%d%% charging=%v right=%d%% charging=%v box=%d%% charging=%v\n",
@@ -572,87 +601,275 @@ func printBattery(q *qcy) {
 }
 
 func printVersion(q *qcy) {
-	if q.version == nil {
-		fmt.Fprintln(os.Stderr, "version characteristic 0007 not available on this device")
-		return
-	}
-	var buf [8]byte
-	n, err := q.version.Read(buf[:])
+	l, r, err := readVersion(q)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "read version 0007: %v\n", err)
-		return
-	}
-	l, r, perr := parseVersion(buf[:n])
-	if perr != nil {
-		fmt.Fprintf(os.Stderr, "parse version: %v\n", perr)
+		fmt.Fprintln(os.Stderr, err)
 		return
 	}
 	fmt.Printf("version left=%s right=%s\n", l, r)
 }
 
+// statusReport is the machine-readable snapshot of the earbuds. Every field is
+// optional: a query that fails is recorded in Errors and left out, so a partial
+// snapshot is still emitted.
+type statusReport struct {
+	Address   string          `json:"address,omitempty"`
+	Firmware  *fwReport       `json:"firmware,omitempty"`
+	Battery   *batteryReport  `json:"battery,omitempty"`
+	Noise     *noiseReport    `json:"noise,omitempty"`
+	Toggles   map[string]bool `json:"toggles"`
+	PromptVol *promptReport   `json:"promptVolume,omitempty"`
+	AutoOff   *autoOffReport  `json:"autoOff,omitempty"`
+	Wear      *wearReport     `json:"wear,omitempty"`
+	Balance   *int            `json:"balance,omitempty"`
+	EQ        *eqReport       `json:"eq,omitempty"`
+	Keys      *keysReport     `json:"keys,omitempty"`
+	Errors    []string        `json:"errors,omitempty"`
+}
+
+type fwReport struct {
+	Left  string `json:"left"`
+	Right string `json:"right"`
+}
+
+type batteryReport struct {
+	Left          int  `json:"left"`
+	Right         int  `json:"right"`
+	Case          int  `json:"case"`
+	LeftCharging  bool `json:"leftCharging"`
+	RightCharging bool `json:"rightCharging"`
+	CaseCharging  bool `json:"caseCharging"`
+	CasePresent   bool `json:"casePresent"`
+}
+
+type noiseReport struct {
+	Mode     string `json:"mode"`
+	Scene    string `json:"scene"`
+	ModeRaw  int    `json:"modeRaw"`
+	SceneRaw int    `json:"sceneRaw"`
+	Value    int    `json:"value"`
+}
+
+type promptReport struct {
+	Value int `json:"value"`
+	Max   int `json:"max"`
+}
+
+// autoOffReport.Minutes is null when auto-off is disabled ("never").
+type autoOffReport struct {
+	Minutes *int `json:"minutes"`
+}
+
+type wearReport struct {
+	Enabled bool `json:"enabled"`
+}
+
+type eqBandReport struct {
+	Freq int     `json:"freq"`
+	Gain float64 `json:"gain"`
+}
+
+type eqReport struct {
+	Preset int            `json:"preset"`
+	Bands  []eqBandReport `json:"bands"`
+}
+
+type keysReport struct {
+	Raw   string   `json:"raw"`
+	Pairs []string `json:"pairs"`
+}
+
 func cmdStatus(args []string) error {
-	scanSeconds, err := parseSeconds(args, 30)
+	jsonOut := false
+	var rest []string
+	for _, a := range args {
+		if a == "--json" {
+			jsonOut = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	scanSeconds, err := parseSeconds(rest, 30)
 	if err != nil {
 		return err
 	}
 	return runClient(scanSeconds, func(c *client) error {
-		q := c.q
-		fmt.Println("=== status ===")
-		printBattery(q)
-		printVersion(q)
-		q16 := func(op byte) ([]byte, error) { return c.query(op, 1500*time.Millisecond) }
-
-		printQuery("anc (0x17)", q16, 0x17, func(p []byte) string {
-			if len(p) < 3 {
-				return fmt.Sprintf("raw=%x", p)
-			}
-			return fmt.Sprintf("mode=0x%02x(%s) scene=0x%02x(%s) value=0x%02x",
-				p[0], noiseModeName(p[0]), p[1], noiseSceneName(p[0], p[1]), p[2])
-		})
-		for _, name := range []string{"game", "sleep", "ldac", "multipoint", "wind"} {
-			op := toggles[name]
-			printQuery(fmt.Sprintf("%s (0x%02x)", name, op), q16, op, func(p []byte) string {
-				if len(p) < 1 {
-					return fmt.Sprintf("raw=%x", p)
-				}
-				return onOffName(p[0])
-			})
+		rep := gatherStatus(c)
+		if jsonOut {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(rep)
 		}
-		printQuery("prompt-vol (0x1d)", q16, 0x1D, func(p []byte) string {
-			if len(p) == 0 {
-				return "raw=[]"
-			}
-			if len(p) >= 2 {
-				return fmt.Sprintf("value=%d max=%d", p[0], p[1])
-			}
-			return fmt.Sprintf("value=%d", p[0])
-		})
-		printQuery("auto-off (0x14)", q16, 0x14, func(p []byte) string {
-			if len(p) < 2 {
-				return fmt.Sprintf("raw=%x", p)
-			}
-			return fmt.Sprintf("set=%s current=%s", minutesName(u16le(p, 0)), minutesName(u16le(p, 2)))
-		})
-		printQuery("wear (0x2c)", q16, 0x2C, func(p []byte) string {
-			if len(p) < 1 {
-				return fmt.Sprintf("raw=%x", p)
-			}
-			s := "disabled(0x02)"
-			if p[0] == 0x01 {
-				s = "enabled(0x01)"
-			}
-			return fmt.Sprintf("%s actions=%x", s, p[1:])
-		})
-		printQuery("balance (0x16)", q16, 0x16, func(p []byte) string {
-			if len(p) < 1 {
-				return fmt.Sprintf("raw=%x", p)
-			}
-			return fmt.Sprintf("value=%d (0x%02x)", p[0], p[0])
-		})
-		printQuery("eq (0x22)", q16, 0x22, func(p []byte) string { return fmtEq(p) })
-		printKeys(q)
+		printStatusHuman(rep)
 		return nil
 	})
+}
+
+// gatherStatus queries every readable opcode once and assembles a snapshot.
+// It never writes anything to the device.
+func gatherStatus(c *client) *statusReport {
+	q := c.q
+	rep := &statusReport{Toggles: map[string]bool{}}
+	addErr := func(err error) {
+		if err != nil {
+			rep.Errors = append(rep.Errors, err.Error())
+		}
+	}
+
+	if left, right, box, lc, rc, cc, err := readBattery(q); err != nil {
+		addErr(err)
+	} else {
+		rep.Battery = &batteryReport{
+			Left: int(left), Right: int(right), Case: int(box),
+			LeftCharging: lc, RightCharging: rc, CaseCharging: cc,
+			CasePresent: box != 0x00 && box != 0x7f,
+		}
+	}
+	if l, r, err := readVersion(q); err != nil {
+		addErr(err)
+	} else {
+		rep.Firmware = &fwReport{Left: l, Right: r}
+	}
+
+	q16 := func(op byte) ([]byte, error) { return c.query(op, 1500*time.Millisecond) }
+
+	if p, err := q16(0x17); err != nil {
+		addErr(fmt.Errorf("anc: %w", err))
+	} else if len(p) >= 3 {
+		rep.Noise = &noiseReport{
+			Mode: noiseModeName(p[0]), Scene: noiseSceneName(p[0], p[1]),
+			ModeRaw: int(p[0]), SceneRaw: int(p[1]), Value: int(p[2]),
+		}
+	}
+
+	for _, name := range []string{"game", "sleep", "ldac", "multipoint", "wind"} {
+		p, err := q16(toggles[name])
+		if err != nil {
+			addErr(fmt.Errorf("%s: %w", name, err))
+			continue
+		}
+		rep.Toggles[name] = len(p) >= 1 && p[0] == 0x01
+	}
+
+	if p, err := q16(0x1D); err != nil {
+		addErr(fmt.Errorf("prompt-vol: %w", err))
+	} else if len(p) >= 1 {
+		pr := &promptReport{Value: int(p[0])}
+		if len(p) >= 2 {
+			pr.Max = int(p[1])
+		}
+		rep.PromptVol = pr
+	}
+
+	if p, err := q16(0x14); err != nil {
+		addErr(fmt.Errorf("auto-off: %w", err))
+	} else if len(p) >= 2 {
+		ao := &autoOffReport{}
+		if v := u16le(p, 0); v != 0xFFFF {
+			m := int(v)
+			ao.Minutes = &m
+		}
+		rep.AutoOff = ao
+	}
+
+	if p, err := q16(0x2C); err != nil {
+		addErr(fmt.Errorf("wear: %w", err))
+	} else if len(p) >= 1 {
+		rep.Wear = &wearReport{Enabled: p[0] == 0x01}
+	}
+
+	if p, err := q16(0x16); err != nil {
+		addErr(fmt.Errorf("balance: %w", err))
+	} else if len(p) >= 1 {
+		b := int(p[0])
+		rep.Balance = &b
+	}
+
+	if p, err := q16(0x22); err != nil {
+		addErr(fmt.Errorf("eq: %w", err))
+	} else if preset, bands, perr := parseEq(p); perr != nil {
+		addErr(fmt.Errorf("eq: %w", perr))
+	} else {
+		eq := &eqReport{Preset: int(preset)}
+		for _, b := range bands {
+			eq.Bands = append(eq.Bands, eqBandReport{Freq: b.freq, Gain: float64(b.gain) / 100})
+		}
+		rep.EQ = eq
+	}
+
+	if q.keys != nil {
+		var buf [64]byte
+		if n, err := q.keys.Read(buf[:]); err != nil {
+			addErr(fmt.Errorf("keys: %w", err))
+		} else {
+			k := &keysReport{Raw: fmt.Sprintf("%x", buf[:n])}
+			for i := 0; i+1 < n; i += 2 {
+				k.Pairs = append(k.Pairs, fmt.Sprintf("%02x:%02x", buf[i], buf[i+1]))
+			}
+			rep.Keys = k
+		}
+	}
+
+	return rep
+}
+
+func printStatusHuman(rep *statusReport) {
+	fmt.Println("=== status ===")
+	if v := rep.Firmware; v != nil {
+		fmt.Printf("%-18s left=%s right=%s\n", "version", v.Left, v.Right)
+	}
+	if b := rep.Battery; b != nil {
+		fmt.Printf("%-18s left=%d%% charging=%v right=%d%% charging=%v box=%d%% charging=%v\n",
+			"battery", b.Left, b.LeftCharging, b.Right, b.RightCharging, b.Case, b.CaseCharging)
+	}
+	if n := rep.Noise; n != nil {
+		fmt.Printf("%-18s mode=0x%02x(%s) scene=0x%02x(%s) value=0x%02x\n",
+			"anc (0x17)", n.ModeRaw, n.Mode, n.SceneRaw, n.Scene, n.Value)
+	}
+	for _, name := range []string{"game", "sleep", "ldac", "multipoint", "wind"} {
+		v, ok := rep.Toggles[name]
+		if !ok {
+			fmt.Printf("%-18s <no response>\n", fmt.Sprintf("%s (0x%02x)", name, toggles[name]))
+			continue
+		}
+		fmt.Printf("%-18s %s\n", fmt.Sprintf("%s (0x%02x)", name, toggles[name]), boolName(v))
+	}
+	if p := rep.PromptVol; p != nil {
+		fmt.Printf("%-18s value=%d max=%d\n", "prompt-vol (0x1d)", p.Value, p.Max)
+	}
+	if a := rep.AutoOff; a != nil {
+		if a.Minutes == nil {
+			fmt.Printf("%-18s never\n", "auto-off (0x14)")
+		} else {
+			fmt.Printf("%-18s %dmin\n", "auto-off (0x14)", *a.Minutes)
+		}
+	}
+	if w := rep.Wear; w != nil {
+		fmt.Printf("%-18s %s\n", "wear (0x2c)", boolName(w.Enabled))
+	}
+	if b := rep.Balance; b != nil {
+		fmt.Printf("%-18s value=%d\n", "balance (0x16)", *b)
+	}
+	if eq := rep.EQ; eq != nil {
+		var parts []string
+		for _, b := range eq.Bands {
+			parts = append(parts, fmt.Sprintf("%dHz:%.2fdB", b.Freq, b.Gain))
+		}
+		fmt.Printf("%-18s preset=%d bands=%s\n", "eq (0x22)", eq.Preset, strings.Join(parts, ","))
+	}
+	if k := rep.Keys; k != nil {
+		fmt.Printf("%-18s raw=%s\n", "keys (0x0d)", k.Raw)
+	}
+	for _, e := range rep.Errors {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", e)
+	}
+}
+
+func boolName(v bool) string {
+	if v {
+		return "on"
+	}
+	return "off"
 }
 
 func printQuery(label string, q func(byte) ([]byte, error), opcode byte, fmtFn func([]byte) string) {
@@ -1016,9 +1233,24 @@ func cmdEqGet(args []string) error {
 
 func cmdEqSet(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: qcyctl eq set <g1,g2,...,g10> [seconds]")
+		return errors.New("usage: qcyctl eq set <g1,g2,...,g10> [--yes] [seconds]")
 	}
-	parts := strings.Split(args[0], ",")
+	gainsArg := args[0]
+	confirmed := false
+	var secArgs []string
+	for _, a := range args[1:] {
+		if a == "--yes" {
+			confirmed = true
+			continue
+		}
+		secArgs = append(secArgs, a)
+	}
+	// Writing 0x22 always targets the custom preset (8) and switches the active
+	// selection to it, so a saved curve can be lost. Refuse unless explicit.
+	if !confirmed {
+		return errors.New("eq set overwrites the active custom EQ preset (8) and can erase a saved curve; re-run with --yes to confirm")
+	}
+	parts := strings.Split(gainsArg, ",")
 	if len(parts) != 10 {
 		return fmt.Errorf("eq set: need 10 gains, got %d", len(parts))
 	}
@@ -1037,7 +1269,7 @@ func cmdEqSet(args []string) error {
 		}
 		gains[i] = centi
 	}
-	scanSeconds, err := parseSeconds(args[1:], 30)
+	scanSeconds, err := parseSeconds(secArgs, 30)
 	if err != nil {
 		return err
 	}

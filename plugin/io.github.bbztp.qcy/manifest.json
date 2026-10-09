@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.bbztp.qcy",
+  "name": "QCY Earbuds",
+  "version": "0.1.0",
+  "author": "bbztp",
+  "license": "MIT",
+  "description": "Control QCY earbuds (MeloBuds N70 and friends) from the Omarchy bar: battery, active noise control, LDAC, multipoint, low-latency game mode, find-my-buds, and a readout of the earbuds' state.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "QCY Earbuds",
+    "description": "Battery in the bar; click for active noise control, multipoint/LDAC/game toggles, and a readout of the earbuds' state.",
+    "category": "Audio",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "showPercentage": false,
+      "scanSeconds": 20,
+      "deviceMatch": "qcy",
+      "refreshOnOpen": true
+    },
+    "schema": [
+      {
+        "key": "showPercentage",
+        "type": "boolean",
+        "label": "Show battery percentage in the bar",
+        "defaultValue": false,
+        "description": "Show the numeric battery percentage next to the glyph. Right-clicking the bar button toggles this too."
+      },
+      {
+        "key": "scanSeconds",
+        "type": "integer",
+        "label": "Bluetooth scan time (seconds)",
+        "description": "How long to listen for the earbuds' low-energy advertisement before giving up. Longer is more reliable; a refresh waits at most this long.",
+        "min": 5,
+        "max": 60,
+        "step": 5,
+        "defaultValue": 20
+      },
+      {
+        "key": "deviceMatch",
+        "type": "string",
+        "label": "Device name match",
+        "description": "Case-insensitive substring used to recognise your earbuds among Bluetooth devices.",
+        "defaultValue": "qcy"
+      },
+      {
+        "key": "refreshOnOpen",
+        "type": "boolean",
+        "label": "Read the earbuds' state when the panel opens",
+        "defaultValue": true
+      }
+    ]
+  }
+}
