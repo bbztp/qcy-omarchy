@@ -1,0 +1,8 @@
+# Compiled binaries
+backend/qcyctl
+qcyctl
+
+# Build/test artifacts
+*.test
+*.out
+/tmp/
