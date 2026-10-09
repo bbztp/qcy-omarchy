@@ -1,13 +1,18 @@
 import QtQuick
+import Qt5Compat.GraphicalEffects
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// QCY earbuds widget: a battery button in the bar and a popup with active
+// QCY earbuds widget: the QCY wordmark in the bar and a popup with active
 // noise control, multipoint/LDAC/game toggles, find-my-buds, and a readout of
 // the earbuds' state (firmware, per-ear battery, EQ curve, balance, auto-off).
 //
-// Bar button — left click: panel · right click: toggle percentage · middle click: refresh
+// Actions apply immediately with optimistic UI; no wait for a scan. Full status
+// is read on (re)connect, on manual refresh, and once a minute while the panel
+// is open; battery is read on open and every 20s while open.
+//
+// Bar button — left click: panel · right click: re-read · middle click: find my earbuds
 // Panel — Esc: close · r: refresh · f: find my earbuds
 Panel {
   id: root
@@ -15,12 +20,14 @@ Panel {
   ipcTarget: "io.github.bbztp.qcy"
   // Own the single IpcHandler the target permits so refresh() can be routed.
   manageIpc: false
+  // Only exist while a matching device is connected; the bar collapses an
+  // invisible slot to zero, so nothing shows when the earbuds are away.
+  visible: Qcy.connected
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color accent: Color.accent
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property bool vertical: bar ? bar.vertical : false
-  readonly property bool showPercentage: setting("showPercentage", false)
 
   // Optimistic toggle state while a setter is in flight, cleared when a fresh
   // report lands. Lets the switch throw immediately without waiting a scan.
@@ -28,7 +35,7 @@ Panel {
   property int nowTick: 0
 
   readonly property var rep: Qcy.report
-  readonly property var batt: rep ? rep.battery : null
+  readonly property var batt: Qcy.battery ? Qcy.battery : (rep ? rep.battery : null)
   readonly property var noise: rep ? rep.noise : null
   readonly property var togglesReport: rep && rep.toggles ? rep.toggles : ({})
 
@@ -67,13 +74,6 @@ Panel {
     return charging ? _chargeGlyphs[idx] : _levelGlyphs[idx]
   }
 
-  function barText() {
-    if (!Qcy.connected) return _earbudsGlyph
-    var g = batteryGlyph()
-    if (showPercentage && !vertical) return Math.round(level * 100) + "% " + g
-    return g
-  }
-
   function heroStatus() {
     if (!Qcy.connected) return "NOT CONNECTED"
     if (Qcy.loading) return "READING…"
@@ -82,6 +82,7 @@ Panel {
   }
 
   function currentAnc() {
+    if (optimistic["anc"] !== undefined) return optimistic["anc"]
     return noise ? noise.scene : ""
   }
 
@@ -126,13 +127,6 @@ Panel {
     return "Updated " + Math.round(s / 60) + "m ago"
   }
 
-  function togglePercentage() {
-    root.settings = Object.assign({}, root.settings, { showPercentage: !root.showPercentage })
-    Qcy.settings = root.settings
-    if (bar && bar.shell && typeof bar.shell.updateEntryInline === "function")
-      bar.shell.updateEntryInline(root.moduleName, root.settings)
-  }
-
   function setToggle(key, label, on) {
     var next = Object.assign({}, optimistic)
     next[key] = on
@@ -140,18 +134,54 @@ Panel {
     Qcy.set(label, [key, on ? "on" : "off"])
   }
 
+  function setAnc(key) {
+    var next = Object.assign({}, optimistic)
+    next["anc"] = key
+    optimistic = next
+    Qcy.set("ANC " + key, ["anc", key])
+  }
+
   Component.onCompleted: Qcy.settings = settings
   onSettingsChanged: Qcy.settings = settings
 
+  // Opening the panel is the display trigger: read battery lightly now and keep
+  // it fresh while open; full status re-runs only occasionally.
   onOpenedChanged: {
-    if (opened && Qcy.refreshOnOpen && Qcy.connected) Qcy.refresh()
+    if (opened) {
+      if (Qcy.connected) Qcy.pollBattery()
+      batteryTimer.running = opened
+      statusTimer.running = opened
+    }
+  }
+
+  Timer {
+    id: batteryTimer
+    interval: 20000
+    repeat: true
+    running: false
+    onTriggered: {
+      if (root.opened && Qcy.connected) Qcy.pollBattery()
+    }
+  }
+
+  Timer {
+    id: statusTimer
+    interval: 60000
+    repeat: true
+    running: false
+    onTriggered: {
+      if (root.opened && Qcy.connected) Qcy.refresh()
+    }
   }
 
   // A fresh report supersedes any optimistic toggle state.
   Connections {
     target: Qcy
     function onUpdatedAtChanged() { root.optimistic = ({}) }
-    function onConnectedChanged() { root.optimistic = ({}) }
+    function onConnectedChanged() {
+      root.optimistic = ({})
+      if (!Qcy.connected) root.close()
+    }
   }
 
   Timer {
@@ -173,19 +203,54 @@ Panel {
     function hide() { root.close() }
     function toggle() { root.toggle() }
     function refresh() { Qcy.refresh() }
-    function togglePercentage() { root.togglePercentage() }
+    function battery() { Qcy.pollBattery() }
+    function find() { Qcy.set("Find my earbuds", ["find"]) }
   }
 
-  BarIconButton {
+  // The QCY wordmark, tinted with the bar foreground. Wider than an icon slot,
+  // so a plain WidgetButton instead of the square BarIconButton holds it.
+  readonly property Component _logoIcon: Component {
+    Item {
+      id: logoHost
+      width: root.vertical ? 18 : 44
+      height: root.vertical ? 44 : 18
+
+      Image {
+        id: logoImg
+        anchors.fill: parent
+        source: "assets/qcy-logo.svg"
+        sourceSize: root.vertical ? Qt.size(18, 44) : Qt.size(44, 18)
+        fillMode: Image.PreserveAspectFit
+        rotation: root.vertical ? -90 : 0
+      }
+      ColorOverlay {
+        anchors.fill: parent
+        source: logoImg
+        color: root.foreground
+      }
+    }
+  }
+
+  WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.barText()
-    slotSize: Style.bar.iconSlot * (root.showPercentage && !root.vertical && Qcy.connected ? 2 : 1)
+    labelVisible: false
+    hasVisualContent: true
+    foreground: root.foreground
+    fixedWidth: root.vertical ? -1 : 44
+    fixedHeight: root.vertical ? 44 : -1
+    tooltipText: "QCY Earbuds — left: panel · right: re-read · middle: find"
     onPressed: function (b) {
-      if (b === Qt.RightButton) root.togglePercentage()
-      else if (b === Qt.MiddleButton) Qcy.refresh()
+      if (b === Qt.RightButton) Qcy.refresh()
+      else if (b === Qt.MiddleButton) Qcy.set("Find my earbuds", ["find"])
       else root.toggle()
+    }
+    Loader {
+      anchors.centerIn: parent
+      width: root.vertical ? 18 : 44
+      height: root.vertical ? 44 : 18
+      sourceComponent: root._logoIcon
     }
   }
 
@@ -306,7 +371,7 @@ Panel {
                 required property var modelData
                 label: modelData.label
                 active: root.currentAnc() === modelData.key
-                onClicked: Qcy.set("ANC " + modelData.label, ["anc", modelData.key])
+                onClicked: root.setAnc(modelData.key)
               }
             }
           }

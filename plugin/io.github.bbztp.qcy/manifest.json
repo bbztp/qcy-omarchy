@@ -19,28 +19,19 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "showPercentage": false,
-      "scanSeconds": 20,
-      "deviceMatch": "qcy",
-      "refreshOnOpen": true
+      "scanSeconds": 10,
+      "deviceMatch": "qcy"
     },
     "schema": [
-      {
-        "key": "showPercentage",
-        "type": "boolean",
-        "label": "Show battery percentage in the bar",
-        "defaultValue": false,
-        "description": "Show the numeric battery percentage next to the glyph. Right-clicking the bar button toggles this too."
-      },
       {
         "key": "scanSeconds",
         "type": "integer",
         "label": "Bluetooth scan time (seconds)",
-        "description": "How long to listen for the earbuds' low-energy advertisement before giving up. Longer is more reliable; a refresh waits at most this long.",
+        "description": "How long to listen for the earbuds' low-energy advertisement before giving up. Longer is more reliable; an action or read waits at most this long.",
         "min": 5,
         "max": 60,
         "step": 5,
-        "defaultValue": 20
+        "defaultValue": 10
       },
       {
         "key": "deviceMatch",
@@ -48,12 +39,6 @@
         "label": "Device name match",
         "description": "Case-insensitive substring used to recognise your earbuds among Bluetooth devices.",
         "defaultValue": "qcy"
-      },
-      {
-        "key": "refreshOnOpen",
-        "type": "boolean",
-        "label": "Read the earbuds' state when the panel opens",
-        "defaultValue": true
       }
     ]
   }

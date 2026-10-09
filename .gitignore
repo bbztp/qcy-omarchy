@@ -6,3 +6,4 @@ qcyctl
 *.test
 *.out
 /tmp/
+backend/backend

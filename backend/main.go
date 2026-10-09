@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -86,6 +87,8 @@ func main() {
 		err = cmdInfo(args)
 	case "status":
 		err = cmdStatus(args)
+	case "battery":
+		err = cmdBattery(args)
 	case "noise":
 		err = cmdNoise(args)
 	case "anc":
@@ -121,6 +124,7 @@ func usage() {
   qcyctl scan [seconds]
   qcyctl info [seconds]
   qcyctl status [--json] [seconds]
+  qcyctl battery [--json] [seconds]
   qcyctl noise [seconds]
   qcyctl anc <off|adaptive|indoor|commuting|noisy|antiwind|transparency> [seconds]  (anc = adaptive)
   qcyctl <game|sleep|ldac|multipoint|wind> <on|off> [seconds]
@@ -317,10 +321,24 @@ func (q *qcy) Close() {
 	}
 }
 
+// connectQCY reaches the earbuds. Scanning the LE adapter is the slow part
+// (up to scanSeconds), so the last address that worked is cached and tried
+// first with a short deadline; only if that fails do we fall back to a scan.
 func connectQCY(scanSeconds int) (*qcy, error) {
 	adapter := bluetooth.DefaultAdapter
 	if err := adapter.Enable(); err != nil {
 		return nil, fmt.Errorf("enable adapter: %w", err)
+	}
+
+	// Fast path: reconnect straight to the address that worked last time.
+	if cached, ok := loadCachedAddr(); ok {
+		if dev, err := dialLE(adapter, cached, 2*time.Second); err == nil {
+			if q, err := buildQCY(dev); err == nil {
+				return q, nil
+			}
+			_ = dev.Disconnect()
+		}
+		dbg("cached address %s unreachable, scanning\n", cached)
 	}
 
 	scanner := quicky.NewScanner()
@@ -370,6 +388,37 @@ func connectQCY(scanSeconds int) (*qcy, error) {
 		return nil, fmt.Errorf("connect LE %s: %w", addr, err)
 	}
 
+	q, err := buildQCY(dev)
+	if err != nil {
+		return nil, err
+	}
+	saveCachedAddr(addr)
+	return q, nil
+}
+
+// dialLE connects to a specific address, giving up after timeout so a stale or
+// out-of-range address cannot hang the caller.
+func dialLE(adapter *bluetooth.Adapter, addr bluetooth.Address, timeout time.Duration) (bluetooth.Device, error) {
+	type res struct {
+		dev bluetooth.Device
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		dev, err := adapter.Connect(addr, bluetooth.ConnectionParams{})
+		ch <- res{dev, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.dev, r.err
+	case <-time.After(timeout):
+		return bluetooth.Device{}, errors.New("connect timed out")
+	}
+}
+
+// buildQCY discovers the QCY service and its characteristics on a device that
+// is already connected.
+func buildQCY(dev bluetooth.Device) (*qcy, error) {
 	services, err := dev.DiscoverServices([]bluetooth.UUID{svcUUID})
 	if err != nil {
 		_ = dev.Disconnect()
@@ -394,6 +443,57 @@ func connectQCY(scanSeconds int) (*qcy, error) {
 	q.keys = findChar(services[0], keysUUID)
 	q.eqPreset = findChar(services[0], eqPresetUUID)
 	return q, nil
+}
+
+func cacheFilePath() string {
+	dir := os.Getenv("XDG_CACHE_HOME")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		dir = filepath.Join(home, ".cache")
+	}
+	return filepath.Join(dir, "qcyctl", "le-address")
+}
+
+func loadCachedAddr() (bluetooth.Address, bool) {
+	p := cacheFilePath()
+	if p == "" {
+		return bluetooth.Address{}, false
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return bluetooth.Address{}, false
+	}
+	fields := strings.Fields(string(b))
+	if len(fields) == 0 {
+		return bluetooth.Address{}, false
+	}
+	var addr bluetooth.Address
+	addr.Set(fields[0])
+	if len(fields) > 1 && fields[1] == "1" {
+		addr.SetRandom(true)
+	}
+	if addr.MAC == (bluetooth.MAC{}) {
+		return bluetooth.Address{}, false
+	}
+	return addr, true
+}
+
+func saveCachedAddr(addr bluetooth.Address) {
+	p := cacheFilePath()
+	if p == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return
+	}
+	random := "0"
+	if addr.IsRandom() {
+		random = "1"
+	}
+	_ = os.WriteFile(p, []byte(addr.String()+" "+random+"\n"), 0o644)
 }
 
 func findChar(s bluetooth.DeviceService, uuid bluetooth.UUID) *bluetooth.DeviceCharacteristic {
@@ -701,6 +801,44 @@ func cmdStatus(args []string) error {
 			return enc.Encode(rep)
 		}
 		printStatusHuman(rep)
+		return nil
+	})
+}
+
+// cmdBattery reads only the battery characteristic, not the full query chain.
+// It exists so the panel can poll battery live while open without paying for a
+// full status read.
+func cmdBattery(args []string) error {
+	jsonOut := false
+	var rest []string
+	for _, a := range args {
+		if a == "--json" {
+			jsonOut = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	scanSeconds, err := parseSeconds(rest, 15)
+	if err != nil {
+		return err
+	}
+	return runClient(scanSeconds, func(c *client) error {
+		left, right, box, lc, rc, cc, err := readBattery(c.q)
+		if err != nil {
+			return err
+		}
+		rep := batteryReport{
+			Left: int(left), Right: int(right), Case: int(box),
+			LeftCharging: lc, RightCharging: rc, CaseCharging: cc,
+			CasePresent: box != 0x00 && box != 0x7f,
+		}
+		if jsonOut {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(rep)
+		}
+		fmt.Printf("battery left=%d%% charging=%v right=%d%% charging=%v box=%d%% charging=%v\n",
+			rep.Left, rep.LeftCharging, rep.Right, rep.RightCharging, rep.Case, rep.CaseCharging)
 		return nil
 	})
 }
