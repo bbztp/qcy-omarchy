@@ -28,13 +28,19 @@ if [ "$build" = 1 ]; then
   command -v go >/dev/null 2>&1 || { echo "error: go is required to build qcyctl" >&2; exit 1; }
   echo "building qcyctl…"
   ( cd "${repo_dir}/backend" && go build -o qcyctl . )
+  echo "building qcyctld…"
+  ( cd "${repo_dir}/backend/cmd/qcyctld" && go build -o qcyctld . )
 fi
 
 [ -x "${repo_dir}/backend/qcyctl" ] || { echo "error: ${repo_dir}/backend/qcyctl not found (run without --no-build)" >&2; exit 1; }
+[ -x "${repo_dir}/backend/cmd/qcyctld/qcyctld" ] || { echo "error: ${repo_dir}/backend/cmd/qcyctld/qcyctld not found" >&2; exit 1; }
 
 echo "installing qcyctl -> ${bin_dir}/qcyctl"
 mkdir -p "${bin_dir}"
 install -m 0755 "${repo_dir}/backend/qcyctl" "${bin_dir}/qcyctl"
+
+echo "installing qcyctld -> ${bin_dir}/qcyctld"
+install -m 0755 "${repo_dir}/backend/cmd/qcyctld/qcyctld" "${bin_dir}/qcyctld"
 
 echo "installing plugin -> ${plugin_dir}"
 rm -rf "${plugin_dir}"

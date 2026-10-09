@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -71,6 +72,160 @@ func mustUUID(s string) bluetooth.UUID {
 		panic("bad UUID " + s + ": " + err.Error())
 	}
 	return u
+}
+
+// daemonClient talks to qcyctld via Unix socket.
+type daemonClient struct {
+	conn   net.Conn
+	enc    *json.Encoder
+	dec    *json.Decoder
+}
+
+func dialDaemon(timeout time.Duration) (*daemonClient, error) {
+	sock := daemonSocketPath()
+	conn, err := net.DialTimeout("unix", sock, timeout)
+	if err != nil {
+		return nil, err
+	}
+	return &daemonClient{
+		conn: conn,
+		enc:  json.NewEncoder(conn),
+		dec:  json.NewDecoder(conn),
+	}, nil
+}
+
+func daemonSocketPath() string {
+	dir := os.Getenv("XDG_RUNTIME_DIR")
+	if dir == "" {
+		dir = "/tmp"
+	}
+	return filepath.Join(dir, "qcyctld.sock")
+}
+
+func (dc *daemonClient) Close() error {
+	return dc.conn.Close()
+}
+
+func (dc *daemonClient) request(cmd string, args map[string]interface{}) (interface{}, error) {
+	req := map[string]interface{}{
+		"cmd":  cmd,
+		"args": args,
+	}
+	if err := dc.enc.Encode(req); err != nil {
+		return nil, err
+	}
+	var resp map[string]interface{}
+	if err := dc.dec.Decode(&resp); err != nil {
+		return nil, err
+	}
+	if ok, _ := resp["ok"].(bool); !ok {
+		return nil, errors.New(resp["error"].(string))
+	}
+	return resp["data"], nil
+}
+
+func (dc *daemonClient) status() (map[string]interface{}, error) {
+	data, err := dc.request("status", nil)
+	if err != nil {
+		return nil, err
+	}
+	return data.(map[string]interface{}), nil
+}
+
+func (dc *daemonClient) battery() (map[string]interface{}, error) {
+	data, err := dc.request("battery", nil)
+	if err != nil {
+		return nil, err
+	}
+	return data.(map[string]interface{}), nil
+}
+
+func (dc *daemonClient) setAction(action string, params []byte) error {
+	args := map[string]interface{}{
+		"action": action,
+		"params": params,
+	}
+	_, err := dc.request("set", args)
+	return err
+}
+
+func (dc *daemonClient) find() error {
+	_, err := dc.request("find", nil)
+	return err
+}
+
+// daemonAPI defines the interface for both daemon client and direct client wrapper.
+type daemonAPI interface {
+	status() (map[string]interface{}, error)
+	battery() (map[string]interface{}, error)
+	setAction(action string, params []byte) error
+	find() error
+}
+
+// runViaDaemon tries the daemon first; on failure falls back to direct mode.
+func runViaDaemon(scanSeconds int, fn func(daemonAPI) error) error {
+	dc, err := dialDaemon(500 * time.Millisecond)
+	if err != nil {
+		// Daemon not reachable → direct mode
+		return runClient(scanSeconds, func(c *client) error {
+			return fn(&daemonClientWrapper{client: c})
+		})
+	}
+	defer dc.Close()
+	return fn(dc)
+}
+
+// daemonClientWrapper adapts *client to the daemonClient read interface.
+type daemonClientWrapper struct {
+	*client
+}
+
+func (w *daemonClientWrapper) status() (map[string]interface{}, error) {
+	rep := gatherStatus(w.client)
+	return structToMap(rep)
+}
+
+func (w *daemonClientWrapper) battery() (map[string]interface{}, error) {
+	left, right, box, lc, rc, cc, err := readBattery(w.client.q)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"left": left, "right": right, "case": box,
+		"leftCharging": lc, "rightCharging": rc, "caseCharging": cc,
+		"casePresent": box != 0x00 && box != 0x7f,
+	}, nil
+}
+
+func (w *daemonClientWrapper) setAction(action string, params []byte) error {
+	opcodeMap := map[string]byte{
+		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
+		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
+		"eq": 0x22, "find": 0x05,
+	}
+	opcode, ok := opcodeMap[action]
+	if !ok {
+		return fmt.Errorf("unknown action: %s", action)
+	}
+	w.drain()
+	if err := w.send(opcode, params); err != nil {
+		return err
+	}
+	_, _ = w.wait(opcode, 3*time.Second)
+	return nil
+}
+
+func (w *daemonClientWrapper) find() error {
+	return w.setAction("find", []byte{0x01})
+}
+
+func structToMap(v interface{}) (map[string]interface{}, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]interface{}
+	return m, json.Unmarshal(b, &m)
 }
 
 func main() {
@@ -793,14 +948,18 @@ func cmdStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runClient(scanSeconds, func(c *client) error {
-		rep := gatherStatus(c)
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		data, err := dc.status()
+		if err != nil {
+			return err
+		}
 		if jsonOut {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			return enc.Encode(rep)
+			return enc.Encode(data)
 		}
-		printStatusHuman(rep)
+		// Human format from map
+		printStatusHumanFromMap(data)
 		return nil
 	})
 }
@@ -822,23 +981,18 @@ func cmdBattery(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runClient(scanSeconds, func(c *client) error {
-		left, right, box, lc, rc, cc, err := readBattery(c.q)
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		data, err := dc.battery()
 		if err != nil {
 			return err
-		}
-		rep := batteryReport{
-			Left: int(left), Right: int(right), Case: int(box),
-			LeftCharging: lc, RightCharging: rc, CaseCharging: cc,
-			CasePresent: box != 0x00 && box != 0x7f,
 		}
 		if jsonOut {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			return enc.Encode(rep)
+			return enc.Encode(data)
 		}
 		fmt.Printf("battery left=%d%% charging=%v right=%d%% charging=%v box=%d%% charging=%v\n",
-			rep.Left, rep.LeftCharging, rep.Right, rep.RightCharging, rep.Case, rep.CaseCharging)
+			data["left"], data["leftCharging"], data["right"], data["rightCharging"], data["case"], data["caseCharging"])
 		return nil
 	})
 }
@@ -1010,6 +1164,49 @@ func boolName(v bool) string {
 	return "off"
 }
 
+func printStatusHumanFromMap(data map[string]interface{}) {
+	fmt.Println("=== status ===")
+	if v, ok := data["firmware"].(map[string]interface{}); ok {
+		fmt.Printf("%-18s left=%v right=%v\n", "version", v["left"], v["right"])
+	}
+	if b, ok := data["battery"].(map[string]interface{}); ok {
+		fmt.Printf("%-18s left=%v%% charging=%v right=%v%% charging=%v box=%v%% charging=%v\n",
+			"battery", b["left"], b["leftCharging"], b["right"], b["rightCharging"], b["case"], b["caseCharging"])
+	}
+	if n, ok := data["anc"].(map[string]interface{}); ok {
+		fmt.Printf("%-18s mode=0x%02x scene=0x%02x value=0x%02x\n",
+			"anc (0x17)", int(n["modeRaw"].(float64)), int(n["sceneRaw"].(float64)), int(n["value"].(float64)))
+	}
+	if t, ok := data["toggles"].(map[string]interface{}); ok {
+		for _, name := range []string{"game", "sleep", "ldac", "multipoint", "wind"} {
+			if v, ok := t[name].(bool); ok {
+				fmt.Printf("%-18s %s\n", fmt.Sprintf("%s (0x%02x)", name, toggles[name]), boolName(v))
+			} else {
+				fmt.Printf("%-18s <no response>\n", fmt.Sprintf("%s (0x%02x)", name, toggles[name]))
+			}
+		}
+	}
+	if p, ok := data["promptVol"].([]interface{}); ok && len(p) >= 1 {
+		fmt.Printf("%-18s value=%v max=%v\n", "prompt-vol (0x1d)", p[0], p[1])
+	}
+	if a, ok := data["autoOff"].([]interface{}); ok && len(a) >= 2 {
+		if v := a[0]; v != float64(0xFFFF) {
+			fmt.Printf("%-18s %vmin\n", "auto-off (0x14)", v)
+		} else {
+			fmt.Printf("%-18s never\n", "auto-off (0x14)")
+		}
+	}
+	if w, ok := data["wear"].([]interface{}); ok && len(w) >= 1 {
+		fmt.Printf("%-18s enabled=%v\n", "wear (0x2c)", int(w[0].(float64)) == 1)
+	}
+	if b, ok := data["balance"].([]interface{}); ok && len(b) >= 1 {
+		fmt.Printf("%-18s %v\n", "balance (0x16)", b[0])
+	}
+	if e, ok := data["eq"].([]interface{}); ok {
+		fmt.Printf("%-18s preset=%v bands=%v\n", "eq (0x22)", e[0], e[1])
+	}
+}
+
 func printQuery(label string, q func(byte) ([]byte, error), opcode byte, fmtFn func([]byte) string) {
 	p, err := q(opcode)
 	if err != nil {
@@ -1066,18 +1263,11 @@ func cmdAnc(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runClient(scanSeconds, func(c *client) error {
-		got, ok, err := c.setConfirm(0x17, params[:], 3*time.Second, func(p []byte) bool {
-			return len(p) >= 3 && p[0] == params[0] && p[1] == params[1] && p[2] == params[2]
-		})
-		if err != nil {
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		if err := dc.setAction("anc", params[:]); err != nil {
 			return err
 		}
-		if !ok {
-			return fmt.Errorf("anc %s readback mismatch: want %x got %x", modeName, params, got)
-		}
-		fmt.Printf("anc=%s confirmed: mode=0x%02x(%s) scene=0x%02x(%s) value=0x%02x\n",
-			modeName, got[0], noiseModeName(got[0]), got[1], noiseSceneName(got[0], got[1]), got[2])
+		fmt.Printf("anc=%s sent\n", modeName)
 		return nil
 	})
 }
@@ -1148,7 +1338,6 @@ func noiseSceneName(mode, scene byte) string {
 // ---------- toggles ----------
 
 func cmdToggle(name string, args []string) error {
-	opcode := toggles[name]
 	if len(args) < 1 {
 		return fmt.Errorf("usage: qcyctl %s <on|off> [seconds]", name)
 	}
@@ -1160,17 +1349,11 @@ func cmdToggle(name string, args []string) error {
 	if err != nil {
 		return err
 	}
-	return runClient(scanSeconds, func(c *client) error {
-		got, ok, err := c.setConfirm(opcode, []byte{state}, 3*time.Second, func(p []byte) bool {
-			return onOffConfirmed(state, p)
-		})
-		if err != nil {
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		if err := dc.setAction(name, []byte{state}); err != nil {
 			return err
 		}
-		if !ok {
-			return fmt.Errorf("%s readback mismatch: wrote 0x%02x got %x", name, state, got)
-		}
-		fmt.Printf("%s=%s confirmed (0x%02x -> %s)\n", name, args[0], opcode, onOffName(got[0]))
+		fmt.Printf("%s=%s sent\n", name, args[0])
 		return nil
 	})
 }
@@ -1217,16 +1400,11 @@ func cmdFind(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runClient(scanSeconds, func(c *client) error {
-		if err := c.send(0x05, []byte{0x01}); err != nil {
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		if err := dc.find(); err != nil {
 			return err
 		}
-		fmt.Println("find: flash on")
-		time.Sleep(1500 * time.Millisecond)
-		if err := c.send(0x05, []byte{0x00}); err != nil {
-			return err
-		}
-		fmt.Println("find: flash triggered (opcode 0x05 has no state readback)")
+		fmt.Println("find: triggered")
 		return nil
 	})
 }

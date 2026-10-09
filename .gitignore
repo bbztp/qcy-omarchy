@@ -7,3 +7,4 @@ qcyctl
 *.out
 /tmp/
 backend/backend
+backend/cmd/qcyctld/qcyctld
