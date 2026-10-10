@@ -54,6 +54,10 @@ type daemon struct {
 	frames       chan frame
 	connected    bool
 	scanSeconds  int
+
+	// Model detection & routing
+	modelID string
+	handler ModelHandler
 }
 
 type frame struct {
@@ -78,6 +82,196 @@ func mustUUID(s string) bluetooth.UUID {
 		panic("bad UUID " + s + ": " + err.Error())
 	}
 	return u
+}
+
+// ============================================================
+// Capability-driven model registry
+// ============================================================
+
+// FeatureFlag represents a user-facing feature the model supports.
+type FeatureFlag string
+
+const (
+	FeatureANC           FeatureFlag = "anc"           // Adaptive ANC with scenes
+	FeatureGameMode      FeatureFlag = "gameMode"      // Low latency game mode
+	FeatureSleepMode     FeatureFlag = "sleepMode"     // Sleep timer
+	FeatureLDAC          FeatureFlag = "ldac"          // LDAC codec toggle
+	FeatureMultipoint    FeatureFlag = "multipoint"    // Multipoint toggle
+	FeatureWindNoise     FeatureFlag = "windNoise"     // Wind noise reduction
+	FeatureWearDetect    FeatureFlag = "wearDetect"    // In-ear detection
+	FeatureAutoOff       FeatureFlag = "autoOff"       // Auto power-off timer
+	FeatureBalance       FeatureFlag = "balance"       // L/R balance
+	FeaturePromptVolume  FeatureFlag = "promptVolume"  // Prompt volume
+	FeatureFind          FeatureFlag = "find"          // Find my earbuds
+	FeatureBatteryCase   FeatureFlag = "batteryCase"   // Case battery level
+	FeatureKeysRemap     FeatureFlag = "keysRemap"     // Touch key remapping
+	FeatureEQ            FeatureFlag = "eq"            // EQ presets (read-only)
+)
+
+// ActionSpec describes a settable action for the UI.
+type ActionSpec struct {
+	ID          string      `json:"id"`                    // unique action ID
+	Label       string      `json:"label"`                 // user-visible label
+	Type        string      `json:"type"`                  // "toggle" | "enum" | "trigger" | "slider"
+	Options     []string    `json:"options,omitempty"`     // for enum: ["off", "adaptive", ...]
+	Min         int         `json:"min,omitempty"`         // for slider
+	Max         int         `json:"max,omitempty"`
+	Step        int         `json:"step,omitempty"`
+	Opcode      byte        `json:"-"`                     // internal opcode
+	ParamMap    map[string]byte `json:"-"`                 // option -> param byte
+	ReadOpcode  byte        `json:"-"`                     // opcode to read current state
+	ReadParser  string      `json:"-"`                     // parser name for read response
+}
+
+// Capabilities describes what a model supports and how to present it.
+type Capabilities struct {
+	ModelID      string         `json:"modelId"`      // e.g., "melobuds-n70"
+	DisplayName  string         `json:"displayName"`  // e.g., "QCY MeloBuds N70"
+	Features     []FeatureFlag  `json:"features"`     // supported features
+	Actions      []ActionSpec   `json:"actions"`      // settable actions
+	BatteryChars []string       `json:"batteryChars"` // "left", "right", "case"
+}
+
+// ModelHandler defines the interface each model implements.
+type ModelHandler interface {
+	Capabilities() Capabilities
+	// HandleSet executes a setter action. Return nil on success.
+	HandleSet(d *daemon, actionID string, params []byte) error
+	// HandleRead reads a specific state (optional, for non-standard reads).
+	HandleRead(d *daemon, actionID string) (interface{}, error)
+	// OnConnect called after successful connection (subscribe extra chars, etc).
+	OnConnect(d *daemon) error
+	// OnDisconnect called when connection drops.
+	OnDisconnect(d *daemon)
+}
+
+// GenericHandler is the fallback for unknown models.
+type GenericHandler struct{}
+
+func (GenericHandler) Capabilities() Capabilities {
+	return Capabilities{
+		ModelID:     "generic",
+		DisplayName: "QCY Earbuds (Generic)",
+		Features:    []FeatureFlag{FeatureBatteryCase},
+		Actions: []ActionSpec{
+			{ID: "find", Label: "Find Earbuds", Type: "trigger", Opcode: 0x05},
+		},
+		BatteryChars: []string{"left", "right", "case"},
+	}
+}
+
+func (GenericHandler) HandleSet(d *daemon, actionID string, params []byte) error {
+	if actionID == "find" {
+		return d.setAction("find", []byte{0x01})
+	}
+	return fmt.Errorf("generic handler: unknown action %s", actionID)
+}
+
+func (GenericHandler) HandleRead(d *daemon, actionID string) (interface{}, error) {
+	return nil, fmt.Errorf("generic handler: unknown read %s", actionID)
+}
+
+func (GenericHandler) OnConnect(d *daemon) error  { return nil }
+func (GenericHandler) OnDisconnect(d *daemon)     {}
+
+// ============================================================
+// MeloBuds N70 handler
+// ============================================================
+
+type meloBudsN70Handler struct{}
+
+func (meloBudsN70Handler) Capabilities() Capabilities {
+	return Capabilities{
+		ModelID:     "melobuds-n70",
+		DisplayName: "QCY MeloBuds N70",
+		Features: []FeatureFlag{
+			FeatureANC, FeatureGameMode, FeatureSleepMode,
+			FeatureLDAC, FeatureMultipoint, FeatureWindNoise,
+			FeatureWearDetect, FeatureAutoOff, FeatureBalance,
+			FeaturePromptVolume, FeatureFind, FeatureBatteryCase,
+			FeatureEQ, FeatureKeysRemap,
+		},
+		Actions: []ActionSpec{
+			{
+				ID: "anc", Label: "ANC Mode", Type: "enum",
+				Options: []string{"off", "adaptive", "indoor", "commuting", "noisy", "antiwind", "transparency"},
+				Opcode: 0x17,
+				ParamMap: map[string]byte{
+					"off": 0x00, "adaptive": 0x01, "indoor": 0x01, "commuting": 0x02,
+					"noisy": 0x03, "antiwind": 0x04, "transparency": 0x01,
+				},
+				ReadOpcode: 0x17, ReadParser: "anc",
+			},
+			{ID: "gameMode", Label: "Game Mode", Type: "toggle", Opcode: 0x09, ReadOpcode: 0x09},
+			{ID: "sleepMode", Label: "Sleep Mode", Type: "toggle", Opcode: 0x10, ReadOpcode: 0x10},
+			{ID: "ldac", Label: "LDAC", Type: "toggle", Opcode: 0x23, ReadOpcode: 0x23},
+			{ID: "multipoint", Label: "Multipoint", Type: "toggle", Opcode: 0x24, ReadOpcode: 0x24},
+			{ID: "windNoise", Label: "Wind Noise Reduction", Type: "toggle", Opcode: 0x2A, ReadOpcode: 0x2A},
+			{ID: "wearDetect", Label: "Wear Detection", Type: "toggle", Opcode: 0x2C, ReadOpcode: 0x2C},
+			{ID: "autoOff", Label: "Auto Off", Type: "slider", Min: 0, Max: 180, Step: 5, Opcode: 0x14, ReadOpcode: 0x14},
+			{ID: "balance", Label: "Balance", Type: "slider", Min: 0, Max: 100, Step: 1, Opcode: 0x16, ReadOpcode: 0x16},
+			{ID: "promptVolume", Label: "Prompt Volume", Type: "slider", Min: 0, Max: 255, Step: 1, Opcode: 0x1D, ReadOpcode: 0x1D},
+			{ID: "find", Label: "Find Earbuds", Type: "trigger", Opcode: 0x05},
+		},
+		BatteryChars: []string{"left", "right", "case"},
+	}
+}
+
+func (meloBudsN70Handler) HandleSet(d *daemon, actionID string, params []byte) error {
+	// Map handler action IDs to daemon action IDs
+	daemonAction := map[string]string{
+		"gameMode":      "game",
+		"sleepMode":     "sleep",
+		"windNoise":     "wind",
+		"wearDetect":    "wear",
+		"autoOff":       "autoOff",
+		"promptVolume":  "promptVol",
+		"balance":       "balance",
+		"anc":           "anc",
+		"ldac":          "ldac",
+		"multipoint":    "multipoint",
+		"find":          "find",
+	}[actionID]
+	if daemonAction == "" {
+		daemonAction = actionID
+	}
+	return d.setAction(daemonAction, params)
+}
+
+func (meloBudsN70Handler) HandleRead(d *daemon, actionID string) (interface{}, error) {
+	return nil, nil // handled by generic gatherStatus
+}
+
+func (meloBudsN70Handler) OnConnect(d *daemon) error {
+	// Subscribe to battery notifications (0008) for live updates
+	if d.batteryChar != nil {
+		return d.batteryChar.EnableNotifications(func(buf []byte) {
+			// Could push to clients via WebSocket/event stream in future
+			_ = buf
+		})
+	}
+	return nil
+}
+
+func (meloBudsN70Handler) OnDisconnect(d *daemon) {}
+
+// Register at init
+func init() {
+	RegisterModel("melobuds-n70", meloBudsN70Handler{})
+}
+
+// Registry maps model ID -> handler.
+var modelRegistry = map[string]ModelHandler{}
+
+func RegisterModel(modelID string, h ModelHandler) {
+	modelRegistry[modelID] = h
+}
+
+func GetHandler(modelID string) ModelHandler {
+	if h, ok := modelRegistry[modelID]; ok {
+		return h
+	}
+	return GenericHandler{}
 }
 
 func cacheFilePath() string {
@@ -258,7 +452,64 @@ func (d *daemon) setupDevice(dev bluetooth.Device) error {
 	}
 
 	go d.readLoop()
+
+	// Detect model and attach handler
+	d.detectAndAttachModel()
 	return nil
+}
+
+func (d *daemon) detectAndAttachModel() {
+	// Try firmware query (0x07) for model string
+	modelID := d.queryModelFromFirmware()
+	if modelID == "" {
+		// Fallback: try BlueZ device name (would need D-Bus; skip for now)
+		modelID = "generic"
+	}
+	d.modelID = modelID
+	d.handler = GetHandler(modelID)
+	_ = d.handler.OnConnect(d)
+}
+
+func (d *daemon) queryModelFromFirmware() string {
+	if d.versionChar == nil {
+		return ""
+	}
+	// Query firmware version (opcode 0x07)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	done := make(chan string, 1)
+	go func() {
+		p, err := d.query(0x07, 1500*time.Millisecond)
+		if err != nil || len(p) == 0 {
+			done <- ""
+			return
+		}
+		// Parse firmware string for model hints
+		fw := string(p)
+		model := detectModelFromFirmware(fw)
+		done <- model
+	}()
+	select {
+	case model := <-done:
+		return model
+	case <-ctx.Done():
+		return ""
+	}
+}
+
+func detectModelFromFirmware(fw string) string {
+	fw = strings.ToLower(fw)
+	switch {
+	case strings.Contains(fw, "melobuds") || strings.Contains(fw, "n70"):
+		return "melobuds-n70"
+	case strings.Contains(fw, "t13") || strings.Contains(fw, "ht10"):
+		return "t13"
+	case strings.Contains(fw, "ht03") || strings.Contains(fw, "a10"):
+		return "ht03"
+	case strings.Contains(fw, "t20") || strings.Contains(fw, "melobuds pro"):
+		return "melobuds-pro"
+	}
+	return ""
 }
 
 func findChar(s bluetooth.DeviceService, uuid bluetooth.UUID) *bluetooth.DeviceCharacteristic {
@@ -392,6 +643,8 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 		return d.gatherStatus()
 	case "battery":
 		return d.readBattery()
+	case "capabilities":
+		return d.handler.Capabilities(), nil
 	case "set":
 		action, _ := req.Args["action"].(string)
 		paramsRaw, _ := req.Args["params"].([]interface{})
@@ -401,14 +654,18 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 				params = append(params, byte(f))
 			}
 		}
-		return nil, d.setAction(action, params)
+		// Route through model handler for validation/special handling
+		return nil, d.handler.HandleSet(d, action, params)
 	case "find":
-		return nil, d.setAction("find", []byte{0x01})
+		return nil, d.handler.HandleSet(d, "find", []byte{0x01})
 	case "disconnect":
 		d.mu.Lock()
 		if d.connected {
+			d.handler.OnDisconnect(d)
 			_ = d.dev.Disconnect()
 			d.connected = false
+			d.modelID = ""
+			d.handler = GenericHandler{}
 		}
 		d.mu.Unlock()
 		return nil, nil
