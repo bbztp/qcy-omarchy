@@ -104,21 +104,6 @@ Panel {
     return rows
   }
 
-  function fmtAutoOff(a) {
-    if (!a) return "—"
-    if (a.minutes === null || a.minutes === undefined) return "Never"
-    return a.minutes + " min"
-  }
-  function fmtBalance(b) {
-    if (b === undefined || b === null) return "—"
-    if (b < 45) return "Left"
-    if (b > 55) return "Right"
-    return "Center"
-  }
-  function fmtPrompt(p) {
-    if (!p) return "—"
-    return p.value + (p.max ? " / " + p.max : "")
-  }
   function updatedLabel() {
     var tick = root.nowTick // binding dependency for the "ago" clock
     if (Qcy.error !== "") return Qcy.error
@@ -142,6 +127,54 @@ Panel {
     next["anc"] = key
     optimistic = next
     Qcy.set("ANC " + key, ["anc", key])
+  }
+
+  // ---- sliders -------------------------------------------------------------
+  // The value shown is the optimistic one while the setter is in flight, so the
+  // knob does not snap back to the last read value for the second or two the
+  // round-trip takes.
+
+  function sliderValue(key, fallback) {
+    if (optimistic[key] !== undefined) return optimistic[key]
+    var v = rep && rep[key] !== undefined && rep[key] !== null ? rep[key] : fallback
+    return v
+  }
+
+  function commitSlider(key, label, args, value) {
+    var next = Object.assign({}, optimistic)
+    next[key] = value
+    optimistic = next
+    Qcy.set(label, args(value))
+  }
+
+  // ---- auto power-off ------------------------------------------------------
+
+  readonly property var autoOffChoices: [
+    { label: "Never", value: "never" },
+    { label: "15m", value: "15" },
+    { label: "30m", value: "30" },
+    { label: "60m", value: "60" },
+    { label: "90m", value: "90" }
+  ]
+
+  function promptMax() {
+    var p = rep ? rep.promptVolume : null
+    if (p && p.max) return p.max
+    return 15
+  }
+
+  function currentAutoOff() {
+    if (optimistic["autoOff"] !== undefined) return String(optimistic["autoOff"])
+    var a = rep ? rep.autoOff : null
+    if (!a || a.minutes === null || a.minutes === undefined) return "never"
+    return String(a.minutes)
+  }
+
+  function setAutoOff(value) {
+    var next = Object.assign({}, optimistic)
+    next["autoOff"] = value
+    optimistic = next
+    Qcy.set("Auto power-off", ["auto-off", value])
   }
 
   Component.onCompleted: Qcy.settings = settings
@@ -424,6 +457,55 @@ Panel {
           }
         }
 
+        // ---------- Controls ----------
+        Column {
+          visible: !!root.rep
+          width: parent.width
+          spacing: Style.space(14)
+
+          PanelSectionHeader {
+            text: "CONTROLS"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+          }
+
+          ChoiceRow {
+            width: column.width
+            label: "Auto power-off"
+            model: root.autoOffChoices
+            current: root.currentAutoOff()
+            onPicked: function (v) { root.setAutoOff(v) }
+          }
+
+          SliderRow {
+            width: column.width
+            label: "Balance"
+            minimum: 0
+            maximum: 100
+            step: 1
+            suffix: "%"
+            value: root.sliderValue("balance", 50)
+            onReleased: function (v) { root.commitSlider("balance", "Balance", function (n) { return ["balance", String(Math.round(n))] }, Math.round(v)) }
+          }
+
+          // The device reports its prompt volume as 0..max; the slider follows
+          // that range instead of the CLI's 0-255, which this firmware ignores.
+          SliderRow {
+            width: column.width
+            label: "Prompt volume"
+            minimum: 0
+            maximum: root.promptMax()
+            step: 1
+            value: root.sliderValue("promptVolume", 6)
+            onReleased: function (v) { root.commitSlider("promptVolume", "Prompt volume", function (n) { return ["prompt-vol", String(Math.round(n))] }, Math.round(v)) }
+          }
+        }
+
+        PanelSeparator {
+          visible: !!root.rep
+          foreground: root.foreground
+        }
+
         // ---------- Readout ----------
         Column {
           visible: !!root.rep
@@ -432,21 +514,6 @@ Panel {
 
           PanelSeparator { foreground: root.foreground }
 
-          StatRow {
-            width: column.width
-            label: "Auto power-off"
-            value: root.fmtAutoOff(root.rep ? root.rep.autoOff : null)
-          }
-          StatRow {
-            width: column.width
-            label: "Balance"
-            value: root.fmtBalance(root.rep ? root.rep.balance : null)
-          }
-          StatRow {
-            width: column.width
-            label: "Prompt volume"
-            value: root.fmtPrompt(root.rep ? root.rep.promptVolume : null)
-          }
           StatRow {
             width: column.width
             label: "EQ preset"
@@ -600,6 +667,103 @@ Panel {
       font.pixelSize: Style.font.body
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
+    }
+  }
+
+  // A labelled slider with its current value on the right. The value only
+  // follows the thumb while dragging, so releasing it and letting the setter
+  // finish does not yank the knob backwards.
+  component SliderRow: Item {
+    id: srow
+    required property string label
+    required property real value
+    property real minimum: 0
+    property real maximum: 100
+    property real step: 1
+    property bool integer: true
+    property string suffix: ""
+    property string busyLabel: ""
+    signal moved(real v)
+    signal released(real v)
+
+    implicitHeight: srowLabel.implicitHeight + Style.space(10) + Style.spacing.controlHeight
+
+    Text {
+      id: srowLabel
+      text: srow.label
+      color: Qt.darker(root.foreground, 1.3)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+      anchors.left: parent.left
+      anchors.top: parent.top
+    }
+    Text {
+      id: srowValue
+      text: (srow.integer ? Math.round(srow.value) : srow.value.toFixed(2)) + srow.suffix
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+      font.bold: true
+      anchors.right: parent.right
+      anchors.top: parent.top
+    }
+
+    PanelSlider {
+      id: srowSlider
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      value: srow.integer ? Math.round(srow.value) : srow.value
+      minimum: srow.minimum
+      maximum: srow.maximum
+      step: srow.step
+      integer: srow.integer
+      bar: root.bar
+      fillColor: root.foreground
+      knobColor: root.foreground
+      trackColor: Qt.darker(root.foreground, 1.6)
+      onMoved: function (v) { srow.moved(v) }
+      onReleased: function (v) { srow.released(v) }
+    }
+  }
+
+  // A horizontal set of mutually exclusive choices.
+  component ChoiceRow: Item {
+    id: crow
+    required property string label
+    property var model: []
+    required property string current
+    signal picked(string value)
+
+    implicitHeight: crowLabel.implicitHeight + Style.space(8) + chipFlow.implicitHeight
+
+    Text {
+      id: crowLabel
+      text: crow.label
+      color: Qt.darker(root.foreground, 1.3)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+      anchors.left: parent.left
+      anchors.top: parent.top
+    }
+
+    Flow {
+      id: chipFlow
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.top: crowLabel.bottom
+      anchors.topMargin: Style.space(8)
+      spacing: Style.space(6)
+
+      Repeater {
+        model: crow.model
+        Chip {
+          required property var modelData
+          label: modelData.label
+          active: crow.current === modelData.value
+          onClicked: crow.picked(modelData.value)
+        }
+      }
     }
   }
 }
