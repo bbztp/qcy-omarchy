@@ -1731,8 +1731,13 @@ func cmdAutoOff(args []string) error {
 		return err
 	}
 	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
-		le := le16(want)
-		got, err := dc.setActionExpect("autoOff", le, le)
+		// The vendor app sends four bytes here — {lo, hi, 0, 0} — and the
+		// device echoes all four back (ffff0000 means "never"). This used to
+		// send only the two value bytes, which happened to confirm because
+		// confirmation is a prefix match, but it is not what the firmware is
+		// documented to expect.
+		le := append(le16(want), 0x00, 0x00)
+		got, err := dc.setActionExpect("autoOff", le, le16(want))
 		if err != nil {
 			return err
 		}
