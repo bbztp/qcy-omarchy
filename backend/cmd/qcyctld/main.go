@@ -917,6 +917,9 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 	if k, err := d.readKeys(); err == nil && len(k) > 0 {
 		rep["keys"] = bytesJSON(k)
 	}
+	if p, err := d.query(0x2D, 800*time.Millisecond); err == nil && len(p) >= 1 {
+		rep["spatial"] = bytesJSON(p)
+	}
 
 	// ANC
 	if p, err := d.query(0x17, 1500*time.Millisecond); err == nil && len(p) >= 3 {

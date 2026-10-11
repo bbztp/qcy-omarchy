@@ -191,10 +191,13 @@ func statusFromDaemon(raw map[string]interface{}) *statusReport {
 		b := int(p[0])
 		rep.Balance = &b
 	}
-	if raw := bytesOf(raw["keys"]); len(raw) > 0 {
-		k := &keysReport{Raw: fmt.Sprintf("%x", raw)}
-		for i := 0; i+1 < len(raw); i += 2 {
-			k.Pairs = append(k.Pairs, fmt.Sprintf("%02x:%02x", raw[i], raw[i+1]))
+	if p := bytesOf(raw["spatial"]); len(p) >= 1 {
+		rep.Spatial = &spatialReport{Enabled: p[0] == 0x01}
+	}
+	if p := bytesOf(raw["keys"]); len(p) > 0 {
+		k := &keysReport{Raw: fmt.Sprintf("%x", p)}
+		for i := 0; i+1 < len(p); i += 2 {
+			k.Pairs = append(k.Pairs, fmt.Sprintf("%02x:%02x", p[i], p[i+1]))
 		}
 		rep.Keys = k
 	}
@@ -415,6 +418,10 @@ func opcodeFor(action string) (byte, error) {
 		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
 		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
 		"eq": 0x22,
+		// 0x11 starts/stops the ear-tip fit check ([1,1] / [2,2]); 0x2D is
+		// spatial audio. Both names are provisional until exercised.
+		"fit":     0x11,
+		"spatial": 0x2D,
 		// Indicator blink — how you spot a lost earbud. See the note in the
 		// daemon's opcodeMap for why this is not an audible tone.
 		"find": 0x05,
@@ -491,6 +498,10 @@ func main() {
 		err = cmdBattery(args)
 	case "noise":
 		err = cmdNoise(args)
+	case "fit":
+		err = cmdFit(args)
+	case "spatial":
+		err = cmdSpatial(args)
 	case "anc":
 		err = cmdAnc(args)
 	case "game", "sleep", "ldac", "multipoint", "wind":
@@ -1124,6 +1135,7 @@ type statusReport struct {
 	Balance   *int            `json:"balance,omitempty"`
 	EQ        *eqReport       `json:"eq,omitempty"`
 	Keys      *keysReport     `json:"keys,omitempty"`
+	Spatial   *spatialReport  `json:"spatial,omitempty"`
 	Errors    []string        `json:"errors,omitempty"`
 }
 
@@ -1158,6 +1170,13 @@ type promptReport struct {
 // autoOffReport.Minutes is null when auto-off is disabled ("never").
 type autoOffReport struct {
 	Minutes *int `json:"minutes"`
+}
+
+// spatialReport is the spatial-audio toggle (cmdId 0x2D). Name and shape are
+// provisional: the device answers the query, but nothing on this hardware has
+// confirmed what the byte toggles.
+type spatialReport struct {
+	Enabled bool `json:"enabled"`
 }
 
 type wearReport struct {
@@ -1332,6 +1351,12 @@ func gatherStatus(c *client) *statusReport {
 			eq.Bands = append(eq.Bands, eqBandReport{Freq: b.freq, Gain: float64(b.gain) / 100})
 		}
 		rep.EQ = eq
+	}
+
+	if p, err := q16(0x2D); err != nil {
+		addErr(fmt.Errorf("spatial: %w", err))
+	} else if len(p) >= 1 {
+		rep.Spatial = &spatialReport{Enabled: p[0] == 0x01}
 	}
 
 	if q.keys != nil {
@@ -1652,6 +1677,58 @@ func cmdWear(args []string) error {
 			return fmt.Errorf("wear readback mismatch: want 0x%02x got %x", state, got)
 		}
 		fmt.Printf("wear=%s confirmed (enabled=0x%02x actions=%x)\n", args[0], got[0], got[1:])
+		return nil
+	})
+}
+
+// cmdFit drives the ear-tip fit check: the earbuds play a short sound and
+// report how well they are seated. Unverified on this firmware, so it reports
+// what it sent rather than claiming a result.
+func cmdFit(args []string) error {
+	if len(args) < 1 {
+		return errors.New("usage: qcyctl fit <start|stop> [seconds]")
+	}
+	action := args[0]
+	rest := args[1:]
+	if action != "start" && action != "stop" {
+		return fmt.Errorf("fit: expected start|stop, got %q", action)
+	}
+	scanSeconds, err := parseSeconds(rest, 30)
+	if err != nil {
+		return err
+	}
+	// The device distinguishes start (1,1) from stop (2,2) across both bytes.
+	first := byte(1)
+	if action == "stop" {
+		first = 2
+	}
+	payload := []byte{first, first}
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		if err := dc.setAction("fit", payload); err != nil {
+			return err
+		}
+		fmt.Printf("fit: %s sent (the earbuds play a sound and report the seal)\n", action)
+		return nil
+	})
+}
+
+func cmdSpatial(args []string) error {
+	if len(args) < 1 {
+		return errors.New("usage: qcyctl spatial <on|off> [seconds]")
+	}
+	state, err := parseOnOff(args[0])
+	if err != nil {
+		return err
+	}
+	scanSeconds, err := parseSeconds(args[1:], 30)
+	if err != nil {
+		return err
+	}
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		if _, err := dc.setActionExpect("spatial", []byte{state}, []byte{state}); err != nil {
+			return err
+		}
+		fmt.Printf("spatial=%s confirmed\n", args[0])
 		return nil
 	})
 }

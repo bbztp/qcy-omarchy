@@ -143,6 +143,38 @@ Panel {
     return rows
   }
 
+  function freqLabel(hz) {
+    if (!hz) return ""
+    if (hz >= 1000) {
+      var k = hz / 1000
+      return (k % 1 === 0 ? k : k.toFixed(1)) + "k"
+    }
+    return String(hz)
+  }
+
+  function eqBands() {
+    if (!rep || !rep.eq || !rep.eq.bands) return []
+    return rep.eq.bands
+  }
+
+  readonly property bool spatialKnown: !!(rep && rep.spatial)
+
+  property bool fitRunning: false
+
+  function startFit() {
+    fitRunning = true
+    Qcy.set("Ear-tip fit check", ["fit", "start"])
+    // The earbuds play a few seconds of sound while they measure the seal; the
+    // panel has no completion event to wait on, so clear the flag on a timer.
+    fitTimer.restart()
+  }
+
+  Timer {
+    id: fitTimer
+    interval: 9000
+    onTriggered: root.fitRunning = false
+  }
+
   function eqLabel() {
     if (!rep || !rep.eq || rep.eq.preset === null || rep.eq.preset === undefined) return "—"
     var p = rep.eq.preset
@@ -473,43 +505,6 @@ Panel {
               heroPillRight.height)
 
             // A compact charge pill: glyph plus percentage.
-            component ChargePill: BorderSurface {
-              id: pill
-              required property string glyph
-              required property int level
-              property bool charging: false
-
-              readonly property color pillColor: pill.level <= 15
-                ? Color.urgent
-                : (pill.level <= 30 ? root.accent : root.foreground)
-
-              implicitWidth: pillRow.implicitWidth + Style.space(20)
-              implicitHeight: pillRow.implicitHeight + Style.space(10)
-              radius: Style.cornerRadius
-              color: "transparent"
-              borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
-
-              Row {
-                id: pillRow
-                anchors.centerIn: parent
-                spacing: Style.space(6)
-
-                Text {
-                  text: pill.glyph
-                  color: pill.pillColor
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                }
-                Text {
-                  text: pill.level + "%"
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  font.bold: true
-                }
-              }
-            }
-
             Image {
               id: heroArt
               anchors.centerIn: parent
@@ -545,6 +540,9 @@ Panel {
           }
 
           Row {
+            // A Row cannot use anchors itself, and neither can its children —
+            // anchoring them makes Row stop positioning. Children get an
+            // explicit height and vertical alignment instead.
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: Style.space(8)
 
@@ -554,14 +552,16 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
               font.bold: true
-              anchors.verticalCenter: parent.verticalCenter
+              height: parent.height
+              verticalAlignment: Text.AlignVCenter
             }
             Text {
               text: "·"
               color: Qt.darker(root.foreground, 1.8)
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
-              anchors.verticalCenter: parent.verticalCenter
+              height: parent.height
+              verticalAlignment: Text.AlignVCenter
             }
             Text {
               text: root.heroStatus()
@@ -570,7 +570,8 @@ Panel {
               font.pixelSize: Style.font.caption
               font.bold: true
               font.letterSpacing: 0.8
-              anchors.verticalCenter: parent.verticalCenter
+              height: parent.height
+              verticalAlignment: Text.AlignVCenter
             }
           }
         }
@@ -691,123 +692,170 @@ Panel {
 
         PanelSeparator { foreground: root.foreground }
 
-        // ---------- Controls ----------
+        // ---------- Sound ----------
+        // Laid out the way a sound app does it: the EQ profile first with its
+        // curve, then the tone controls, then the listening controls. Every
+        // section hides itself when the device does not report the feature.
         Column {
           // Tab 1: only this section shows on the active tab.
           visible: root.tab === 1 && !!root.rep
           width: parent.width
-          spacing: Style.space(14)
+          spacing: Style.space(16)
 
-          PanelSectionHeader {
-            text: "CONTROLS"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
+          // ---- EQ profile + curve ----
+          Column {
+            width: parent.width
+            spacing: Style.space(8)
+
+            // Label on the left, value on the right. Row lays its children out directly,
+            // so the value is placed with an explicit x offset rather than an
+            // anchor — anchors conflict with Row and break its positioning.
+            Item {
+              width: parent.width
+              implicitHeight: eqName.implicitHeight
+
+              Text {
+                id: eqName
+                text: "EQUALIZER"
+                color: Qt.darker(root.foreground, 1.35)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 1.1
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+              }
+              Text {
+                text: root.eqLabel()
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
+
+            EqCurve {
+              width: parent.width
+              bands: root.eqBands()
+            }
+
+            // Presets are read-only: 0x22 both reads and writes, and writing
+            // overwrites the slot at that index with no way to read an
+            // inactive one back, so switching would destroy the target curve.
+            Text {
+              width: parent.width
+              text: "Reading only — switching presets would overwrite the target profile."
+              color: Qt.darker(root.foreground, 1.8)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.italic: true
+              wrapMode: Text.WordWrap
+            }
           }
 
-          ChoiceRow {
-            width: column.width
-            label: "Auto power-off"
-            model: root.autoOffChoices
-            current: root.currentAutoOff()
-            onPicked: function (v) { root.setAutoOff(v) }
+          PanelSeparator { foreground: root.foreground }
+
+          // ---- Tone ----
+          Column {
+            width: parent.width
+            spacing: Style.space(12)
+
+            Item {
+              width: parent.width
+              implicitHeight: spatialSwitch.implicitHeight
+
+              Text {
+                text: "Spatial audio"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              ToggleSwitch {
+                id: spatialSwitch
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                // Hidden when the device does not answer the spatial query,
+                // rather than offering a switch that does nothing.
+                visible: root.spatialKnown
+                checked: root.toggleState("spatial")
+                foreground: root.foreground
+                accent: root.accent
+                onToggled: {
+                  root.setToggle("spatial", "Spatial audio", !root.toggleState("spatial"))
+                }
+              }
+            }
+
+            SliderRow {
+              width: parent.width
+              label: "Balance"
+              minimum: 0
+              maximum: 100
+              step: 1
+              suffix: "%"
+              value: root.sliderValue("balance", 50)
+              onReleased: function (v) { root.commitSlider("balance", "Balance", function (n) { return ["balance", String(Math.round(n))] }, Math.round(v)) }
+            }
+
+            // The device reports its prompt volume as 0..max; the slider follows
+            // that range instead of the CLI's 0-255, which this firmware ignores.
+            SliderRow {
+              width: parent.width
+              label: "Prompt volume"
+              minimum: 0
+              maximum: root.promptMax()
+              step: 1
+              value: root.sliderValue("promptVolume", 6)
+              onReleased: function (v) { root.commitSlider("promptVolume", "Prompt volume", function (n) { return ["prompt-vol", String(Math.round(n))] }, Math.round(v)) }
+            }
+
+            ChoiceRow {
+              width: parent.width
+              label: "Auto power-off"
+              model: root.autoOffChoices
+              current: root.currentAutoOff()
+              onPicked: function (v) { root.setAutoOff(v) }
+            }
           }
 
-          SliderRow {
-            width: column.width
-            label: "Balance"
-            minimum: 0
-            maximum: 100
-            step: 1
-            suffix: "%"
-            value: root.sliderValue("balance", 50)
-            onReleased: function (v) { root.commitSlider("balance", "Balance", function (n) { return ["balance", String(Math.round(n))] }, Math.round(v)) }
-          }
+          PanelSeparator { foreground: root.foreground }
 
-          // The device reports its prompt volume as 0..max; the slider follows
-          // that range instead of the CLI's 0-255, which this firmware ignores.
-          SliderRow {
-            width: column.width
-            label: "Prompt volume"
-            minimum: 0
-            maximum: root.promptMax()
-            step: 1
-            value: root.sliderValue("promptVolume", 6)
-            onReleased: function (v) { root.commitSlider("promptVolume", "Prompt volume", function (n) { return ["prompt-vol", String(Math.round(n))] }, Math.round(v)) }
+          // ---- Fit ----
+          Item {
+            width: parent.width
+            implicitHeight: fitButton.implicitHeight
+
+            Text {
+              text: "Ear-tip fit check"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Chip {
+              id: fitButton
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              label: root.fitRunning ? "Playing…" : "Start"
+              active: root.fitRunning
+              onClicked: {
+                if (Qcy.settling) return
+                root.startFit()
+              }
+            }
           }
         }
 
         PanelSeparator {
-          visible: !!root.rep
-          foreground: root.foreground
-        }
-
-        // ---------- Readout ----------
-        Column {
-          // Tab 1: only this section shows on the active tab.
           visible: root.tab === 1 && !!root.rep
-          width: parent.width
-          spacing: Style.space(6)
-
-          PanelSeparator { foreground: root.foreground }
-
-          StatRow {
-            width: column.width
-            label: "EQ preset"
-            value: root.eqLabel()
-          }
-
-          // EQ curve as a small read-only bar chart (±8 dB around the midline).
-          Item {
-            visible: !!(root.rep && root.rep.eq && root.rep.eq.bands && root.rep.eq.bands.length > 0)
-            width: parent.width
-            implicitHeight: eqRow.implicitHeight
-
-            Row {
-              id: eqRow
-              anchors.right: parent.right
-              spacing: Style.space(6)
-
-              Repeater {
-                model: root.rep && root.rep.eq ? root.rep.eq.bands : []
-                Column {
-                  required property var modelData
-                  spacing: Style.space(3)
-
-                  Item {
-                    width: Style.space(12)
-                    height: Style.space(38)
-                    anchors.horizontalCenter: parent.horizontalCenter
-
-                    Rectangle {
-                      anchors.horizontalCenter: parent.horizontalCenter
-                      width: parent.width
-                      height: Math.max(1, Math.abs(modelData.gain) / 8 * (parent.height / 2))
-                      y: modelData.gain >= 0 ? parent.height / 2 - height : parent.height / 2
-                      color: root.accent
-                      opacity: 0.85
-                    }
-                    Rectangle {
-                      anchors.horizontalCenter: parent.horizontalCenter
-                      anchors.verticalCenter: parent.verticalCenter
-                      width: parent.width
-                      height: 1
-                      color: Qt.darker(root.foreground, 1.8)
-                    }
-                  }
-
-                  Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: modelData.freq >= 1000
-                      ? (modelData.freq % 1000 === 0 ? (modelData.freq / 1000) + "k" : (modelData.freq / 1000).toFixed(1) + "k")
-                      : String(modelData.freq)
-                    color: Qt.darker(root.foreground, 1.5)
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-                }
-              }
-            }
-          }
+          foreground: root.foreground
         }
 
         // ---------- Touch controls ----------
@@ -838,43 +886,21 @@ Panel {
 
             Repeater {
               model: root.touchRows()
-
-              component TouchCell: Row {
-                id: cell
-                required property string slot
-                required property string action
-
-                width: 150
-                spacing: Style.space(8)
-
-                Text {
-                  text: cell.slot
-                  color: Qt.darker(root.foreground, 1.4)
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  font.bold: true
-                  font.letterSpacing: 0.4
-                  width: Style.space(56)
-                }
-                Text {
-                  text: cell.action
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  width: parent.width - Style.space(64)
-                  elide: Text.ElideRight
-                }
+              TouchCell {
+                required property var modelData
+                slot: modelData.slot
+                action: modelData.action
               }
             }
           }
         }
 
         PanelSeparator {
-          visible: root.touchRows().length > 0
+          visible: root.tab === 2
           foreground: root.foreground
         }
 
-// ---------- Device info ----------
+        // ---------- Device info ----------
         // Firmware and model, plus the caveats that answer "why is there no
         // sound". Both live on the Settings tab, which is where a list of
         // static facts belongs.
@@ -1106,6 +1132,57 @@ Panel {
     }
   }
 
+  // The EQ response as a signed curve with a zero line, the axis labels and the
+  // per-band dots. Read-only — see the note above, writing a preset overwrites
+  // the slot in place.
+  component EqCurve: Item {
+    id: curve
+    required property var bands
+
+    readonly property real maxGain: 10
+    implicitHeight: Style.spacing.controlHeight * 2.1
+
+    Rectangle {
+      id: zeroLine
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      height: 1
+      color: Qt.darker(root.foreground, 1.9)
+    }
+
+    Repeater {
+      model: curve.bands
+      Item {
+        required property var modelData
+        width: curve.width / Math.max(1, curve.bands.length)
+        height: curve.height
+
+        readonly property real g: Math.max(-1, Math.min(1, (modelData.gain || 0) / curve.maxGain))
+
+        Rectangle {
+          id: dot
+          width: Style.space(5)
+          height: width
+          radius: width / 2
+          color: root.accent
+          x: (parent.width - width) / 2
+          y: parent.height / 2 - parent.g * (parent.height / 2 - width) - width / 2
+        }
+
+        Text {
+          text: curve.freqLabel(modelData.freq)
+          color: Qt.darker(root.foreground, 1.75)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption * 0.85
+          anchors.horizontalCenter: parent.horizontalCenter
+          anchors.top: parent.bottom
+          anchors.topMargin: Style.space(2)
+        }
+      }
+    }
+  }
+
   // A labelled slider with its current value on the right. The value only
   // follows the thumb while dragging, so releasing it and letting the setter
   // finish does not yank the knob backwards.
@@ -1160,6 +1237,64 @@ Panel {
       trackColor: Qt.darker(root.foreground, 1.6)
       onMoved: function (v) { srow.moved(v) }
       onReleased: function (v) { srow.released(v) }
+    }
+  }
+
+  component ChargePill: BorderSurface {
+    id: pill
+    required property string glyph
+    required property int level
+    property bool charging: false
+    readonly property color pillColor: pill.level <= 15
+      ? Color.urgent
+      : (pill.level <= 30 ? root.accent : root.foreground)
+    implicitWidth: pillRow.implicitWidth + Style.space(20)
+    implicitHeight: pillRow.implicitHeight + Style.space(10)
+    radius: Style.cornerRadius
+    color: "transparent"
+    borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
+    Row {
+      id: pillRow
+      anchors.centerIn: parent
+      spacing: Style.space(6)
+      Text {
+        text: pill.glyph
+        color: pill.pillColor
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+      }
+      Text {
+        text: pill.level + "%"
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        font.bold: true
+      }
+    }
+  }
+
+  component TouchCell: Row {
+    id: cell
+    required property string slot
+    required property string action
+    width: 150
+    spacing: Style.space(8)
+    Text {
+      text: cell.slot
+      color: Qt.darker(root.foreground, 1.4)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      font.bold: true
+      font.letterSpacing: 0.4
+      width: Style.space(56)
+    }
+    Text {
+      text: cell.action
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      width: parent.width - Style.space(64)
+      elide: Text.ElideRight
     }
   }
 
