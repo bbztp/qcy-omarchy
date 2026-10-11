@@ -1,47 +1,94 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Stylised MeloBuds-class stem earbuds, drawn for the panel rather than copied
-  from the product photography.
+  MeloBuds N70-class stem earbuds, drawn as a shaded render for the panel.
 
-  Line art with one tinted surface so it stays legible when the panel recolours
-  the whole illustration with the bar foreground via ColorOverlay. The tintable
-  surface carries the class "tint".
+  Uses explicit greys rather than currentColor: a tinted silhouette reads flat,
+  and this is meant to look like a product render. The titanium palette matches
+  the N70's "Titanium" colourway and stays legible on the panel background in
+  both light and dark themes.
 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 152 112" width="152" height="112">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 176 112" width="176" height="112">
   <defs>
-    <!-- One earbud, upright, centred on the origin. Stem starts at y=2. -->
+    <linearGradient id="body" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#4c5058"/>
+      <stop offset="0.42" stop-color="#2b2e34"/>
+      <stop offset="1" stop-color="#14161a"/>
+    </linearGradient>
+
+    <linearGradient id="cap" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#cdd2da"/>
+      <stop offset="0.35" stop-color="#8d939d"/>
+      <stop offset="1" stop-color="#4a4f58"/>
+    </linearGradient>
+
+    <linearGradient id="stem" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#121417"/>
+      <stop offset="0.28" stop-color="#42464f"/>
+      <stop offset="0.7" stop-color="#25282d"/>
+      <stop offset="1" stop-color="#0e1013"/>
+    </linearGradient>
+
+    <radialGradient id="grille" cx="0.42" cy="0.32" r="0.78">
+      <stop offset="0" stop-color="#5a5f68"/>
+      <stop offset="0.55" stop-color="#23262b"/>
+      <stop offset="1" stop-color="#0d0f12"/>
+    </radialGradient>
+
+    <linearGradient id="tip" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#3a3e46"/>
+      <stop offset="1" stop-color="#15171b"/>
+    </linearGradient>
+
+    <linearGradient id="sheen" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.3"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- One earbud. Housing centred at the origin, stem hanging below. -->
     <g id="bud">
-      <!-- Tinted housing surface, behind the line work. -->
-      <path class="tint"
-            d="M-20,-20 Q-20,-34 0,-34 Q20,-34 20,-20 Q20,-6 9,3 L-9,3 Q-20,-6 -20,-20 Z"/>
-      <!-- Stem, drawn as one continuous shape so there is no seam at the joint. -->
-      <path class="line"
-            d="M-9,3 L-5.2,3 L-4.4,56 Q-4.4,60 0,60 Q4.4,60 4.4,56 L5.2,3 L9,3"/>
-      <!-- Housing outline. -->
-      <path class="line"
-            d="M-20,-20 Q-20,-34 0,-34 Q20,-34 20,-20 Q20,-6 9,3 L-9,3 Q-20,-6 -20,-20 Z"/>
-      <!-- Touch surface: a flattened inset on the outer face. -->
-      <rect class="line thin" x="-10.5" y="-27" width="21" height="19" rx="8.5"/>
-      <!-- Driver, suggested as a faint ring behind the touch surface. -->
-      <circle class="line faint" cx="0" cy="-17.5" r="6.4"/>
-      <!-- Charging contacts on the stem. -->
-      <path class="line thin" d="M-2.6,47 L-2.6,52.5 M0,47 L0,52.5 M2.6,47 L2.6,52.5"/>
+      <!-- Silicone tip, angled up and out behind the housing. -->
+      <g transform="translate(-14,-27) rotate(-28)">
+        <path d="M0,0 C7.5,0 11,-6 11,-13 C11,-20 6,-25 0,-25 C-6,-25 -11,-20 -11,-13 C-11,-6 -7.5,0 0,0 Z"
+              fill="url(#tip)"/>
+        <ellipse cx="-1.5" cy="-24" rx="7" ry="2.6" fill="#0c0d10" opacity="0.8"/>
+      </g>
+
+      <!-- Stem, behind the housing so the joint is hidden. -->
+      <path d="M-10,4 L10,4 L8.6,50 Q8.6,55 0,55 Q-8.6,55 -8.6,50 Z" fill="url(#stem)"/>
+
+      <!-- Housing. -->
+      <path d="M0,-40 C15,-40 23.5,-30.5 23.5,-15.5 C23.5,-3.5 14.5,3 3,4.4
+               L-3,4.4 C-14.5,3 -23.5,-3.5 -23.5,-15.5 C-23.5,-30.5 -15,-40 0,-40 Z"
+            fill="url(#body)"/>
+
+      <!-- Metallic touch face. -->
+      <path d="M0,-34.5 C11.2,-34.5 17,-27.2 17,-15.5 C17,-7.2 10.8,-2 3.2,-1.3
+               L-3.2,-1.3 C-10.8,-2 -17,-7.2 -17,-15.5 C-17,-27.2 -11.2,-34.5 0,-34.5 Z"
+            fill="url(#cap)"/>
+
+      <!-- Driver grille behind the touch face. -->
+      <circle cx="0" cy="-18" r="7.2" fill="url(#grille)"/>
+
+      <!-- Specular sheen across the upper-left of the housing. -->
+      <path d="M0,-40 C-15,-40 -23.5,-30.5 -23.5,-15.5 C-23.5,-10.5 -21,-6 -17,-3
+               C-19,-8.5 -19.5,-12.5 -18,-17.5 C-15.5,-28.5 -8.5,-35.5 0,-37 Z"
+            fill="url(#sheen)"/>
+
+      <!-- Mic pinhole and charging contacts on the stem. -->
+      <ellipse cx="5" cy="30" rx="1.6" ry="2.2" fill="#0a0b0d"/>
+      <rect x="-3.2" y="41" width="2" height="5.5" rx="1" fill="#0a0b0d"/>
+      <rect x="1.2" y="41" width="2" height="5.5" rx="1" fill="#0a0b0d"/>
     </g>
   </defs>
 
   <g id="artwork">
-    <g transform="translate(50,52) rotate(-12)">
+    <!-- Far ear first so the near one overlaps it. -->
+    <g transform="translate(116,54) rotate(12) scale(0.95)">
       <use href="#bud"/>
     </g>
-    <g transform="translate(102,52) rotate(12)">
+    <g transform="translate(60,54) rotate(-10)">
       <use href="#bud"/>
     </g>
   </g>
-
-  <style>
-    .line  { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
-    .thin  { stroke-width: 1.5; }
-    .faint { stroke-width: 1.2; stroke-opacity: 0.45; }
-    .tint  { fill: currentColor; fill-opacity: 0.16; stroke: none; }
-  </style>
 </svg>

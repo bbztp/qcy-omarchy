@@ -34,6 +34,10 @@ Panel {
   property var optimistic: ({})
   property int nowTick: 0
 
+  // Which of the three panel tabs is showing. Kept here rather than in the
+  // panel body so the sections can bind their own visibility to it.
+  property int tab: 0
+
   readonly property var rep: Qcy.report
   readonly property var batt: Qcy.battery ? Qcy.battery : (rep ? rep.battery : null)
   readonly property var noise: rep ? rep.noise : null
@@ -372,11 +376,65 @@ Panel {
         anchors.fill: parent
         spacing: Style.space(14)
 
+        // ---------- Tabs ----------
+        // A single scrolling column was taller than the panel, so everything
+        // below the fold — including the touch-control map — was silently cut
+        // off. Splitting the same content into three short tabs keeps every
+        // section reachable and makes the panel read horizontally, the way the
+        // earbuds' own app is organised.
+        Row {
+          id: tabBar
+          width: parent.width
+          spacing: Style.space(6)
+
+          Repeater {
+            model: [
+                { label: "Device", index: 0 },
+                { label: "Sound", index: 1 },
+                { label: "Settings", index: 2 }
+              ]
+
+              component TabButton: BorderSurface {
+                id: tabBtn
+                required property string label
+                required property int index
+                readonly property bool active: root.tab === tabBtn.index
+
+                width: (tabBar.width - Style.space(6) * 2) / 3
+                implicitHeight: Style.spacing.controlHeight
+                radius: Style.cornerRadius
+                color: tabBtn.active
+                  ? Style.selectedFillFor(root.foreground, root.accent)
+                  : "transparent"
+                borderSpec: Border.controlSpec(
+                  tabBtn.active ? "selected" : "normal", root.foreground, root.accent)
+
+                Text {
+                  anchors.centerIn: parent
+                  text: tabBtn.label
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  font.bold: true
+                  font.letterSpacing: 0.6
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.tab = tabBtn.index
+                }
+              }
+            }
+        }
+
         // ---------- Hero ----------
         // Earbuds in the middle with their charge either side, the way the
         // earbuds' own app presents the device screen. Reading the panel should
         // not mean parsing a column of text lines.
         Column {
+          // Tab 0: only this section shows on the active tab.
+          visible: root.tab === 0
           width: parent.width
           spacing: Style.space(10)
 
@@ -427,17 +485,12 @@ Panel {
             Image {
               id: heroArt
               anchors.centerIn: parent
-              width: 152
+              width: 176
               height: 112
               source: "assets/earbuds.svg"
-              sourceSize: Qt.size(152, 112)
+              sourceSize: Qt.size(176, 112)
               fillMode: Image.PreserveAspectFit
               opacity: Qcy.connected ? 1.0 : 0.4
-            }
-            ColorOverlay {
-              anchors.fill: heroArt
-              source: heroArt
-              color: root.foreground
             }
 
             ChargePill {
@@ -498,8 +551,9 @@ Panel {
         // Left and right are shown beside the earbuds in the hero; only the
         // case needs its own row, and it is often the one people forget.
         BatteryGauge {
+          // Tab 0: only this section shows on the active tab.
+          visible: root.tab === 0 && !!(root.batt && root.batt.casePresent)
           width: parent.width
-          visible: !!(root.batt && root.batt.casePresent)
           label: "Case"
           level: root.batt ? root.batt.case : 0
           charging: root.batt ? root.batt.caseCharging : false
@@ -512,6 +566,8 @@ Panel {
 
         // ---------- Noise control ----------
         Column {
+          // Tab 0: only this section shows on the active tab.
+          visible: root.tab === 0
           width: parent.width
           spacing: Style.space(8)
 
@@ -543,6 +599,8 @@ Panel {
         // Two columns: a single stack of label+switch rows is what made the
         // panel feel like a wall of text. Short labels keep each cell readable.
         Grid {
+          // Tab 0: only this section shows on the active tab.
+          visible: root.tab === 0
           width: parent.width
           columns: 2
           columnSpacing: Style.space(18)
@@ -595,7 +653,8 @@ Panel {
 
         // ---------- Controls ----------
         Column {
-          visible: !!root.rep
+          // Tab 1: only this section shows on the active tab.
+          visible: root.tab === 1 && !!root.rep
           width: parent.width
           spacing: Style.space(14)
 
@@ -644,7 +703,8 @@ Panel {
 
         // ---------- Readout ----------
         Column {
-          visible: !!root.rep
+          // Tab 1: only this section shows on the active tab.
+          visible: root.tab === 1 && !!root.rep
           width: parent.width
           spacing: Style.space(6)
 
@@ -715,7 +775,8 @@ Panel {
         // now: a full gesture editor needs the function-id vocabulary, which
         // is device-side and undocumented.
         Column {
-          visible: root.touchRows().length > 0
+          // Tab 2: only this section shows on the active tab.
+          visible: root.tab === 2 && root.touchRows().length > 0
           width: parent.width
           spacing: Style.space(8)
 
@@ -773,7 +834,45 @@ Panel {
           foreground: root.foreground
         }
 
-// ---------- Actions ----------
+// ---------- Device info ----------
+        // Firmware and model, plus the caveats that answer "why is there no
+        // sound". Both live on the Settings tab, which is where a list of
+        // static facts belongs.
+        Column {
+          visible: root.tab === 2
+          width: parent.width
+          spacing: Style.space(8)
+
+          PanelSectionHeader {
+            text: "DEVICE"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+          }
+
+          StatRow {
+            width: column.width
+            label: "Model"
+            value: root.modelName
+          }
+          StatRow {
+            width: column.width
+            label: "Firmware"
+            value: root.rep && root.rep.firmware && root.rep.firmware.left
+              ? root.rep.firmware.left : "—"
+          }
+          StatRow {
+            width: column.width
+            label: "EQ preset"
+            value: root.rep && root.rep.eq ? ("#" + root.rep.eq.preset) : "—"
+          }
+        }
+
+        PanelSeparator {
+          visible: root.tab === 2
+          foreground: root.foreground
+        }
+
+        // ---------- Actions ----------
         Row {
           spacing: Style.space(8)
 
