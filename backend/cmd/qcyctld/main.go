@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,8 +57,9 @@ type daemon struct {
 	scanSeconds  int
 
 	// Model detection & routing
-	modelID string
-	handler ModelHandler
+	deviceName string
+	modelID    string
+	handler    ModelHandler
 }
 
 type frame struct {
@@ -149,22 +151,73 @@ type ModelHandler interface {
 type GenericHandler struct{}
 
 func (GenericHandler) Capabilities() Capabilities {
+	// Mirror the shared QCY opcode set rather than advertising a stripped-down
+	// UI: these are the actions the daemon actually accepts for any model.
 	return Capabilities{
 		ModelID:     "generic",
-		DisplayName: "QCY Earbuds (Generic)",
-		Features:    []FeatureFlag{FeatureBatteryCase},
+		DisplayName: "QCY Earbuds",
+		Features: []FeatureFlag{
+			FeatureANC, FeatureGameMode, FeatureSleepMode,
+			FeatureLDAC, FeatureMultipoint, FeatureWindNoise,
+			FeatureWearDetect, FeatureAutoOff, FeatureBalance,
+			FeaturePromptVolume, FeatureFind, FeatureBatteryCase,
+		},
 		Actions: []ActionSpec{
+			{ID: "anc", Label: "ANC", Type: "enum", Opcode: 0x17},
+			{ID: "gameMode", Label: "Game Mode", Type: "toggle", Opcode: 0x09},
+			{ID: "sleepMode", Label: "Sleep Mode", Type: "toggle", Opcode: 0x10},
+			{ID: "ldac", Label: "LDAC", Type: "toggle", Opcode: 0x23},
+			{ID: "multipoint", Label: "Multipoint", Type: "toggle", Opcode: 0x24},
+			{ID: "windNoise", Label: "Wind Noise Reduction", Type: "toggle", Opcode: 0x2A},
+			{ID: "wearDetect", Label: "Wear Detection", Type: "toggle", Opcode: 0x2C},
+			{ID: "autoOff", Label: "Auto Off", Type: "slider", Opcode: 0x14},
+			{ID: "balance", Label: "Balance", Type: "slider", Opcode: 0x16},
+			{ID: "promptVolume", Label: "Prompt Volume", Type: "slider", Opcode: 0x1D},
 			{ID: "find", Label: "Find Earbuds", Type: "trigger", Opcode: 0x05},
 		},
 		BatteryChars: []string{"left", "right", "case"},
 	}
 }
 
-func (GenericHandler) HandleSet(d *daemon, actionID string, params []byte) error {
-	if actionID == "find" {
-		return d.setAction("find", []byte{0x01})
+// bytesJSON renders a raw opcode payload as a JSON array of numbers. A []byte
+// would marshal to a base64 string, which the client's []interface{} decoder
+// rejects — the field would silently vanish from the response.
+func bytesJSON(b []byte) []int {
+	out := make([]int, len(b))
+	for i, c := range b {
+		out[i] = int(c)
 	}
-	return fmt.Errorf("generic handler: unknown action %s", actionID)
+	return out
+}
+
+// decodeParams accepts the setter body either as a JSON array of numbers (the
+// current wire format) or as a base64 string (older clients marshalled []byte
+// directly). A missing body is legitimate for opcodes that take no argument.
+func decodeParams(v interface{}) []byte {
+	switch p := v.(type) {
+	case []interface{}:
+		out := make([]byte, 0, len(p))
+		for _, e := range p {
+			if f, ok := e.(float64); ok {
+				out = append(out, byte(f))
+			}
+		}
+		return out
+	case string:
+		b, err := base64.StdEncoding.DecodeString(p)
+		if err != nil {
+			return nil
+		}
+		return b
+	}
+	return nil
+}
+
+// HandleSet falls back to the daemon's opcode table. Unknown models must still
+// be able to drive the shared QCY opcode set — rejecting here would break every
+// setter the moment detection lands on an unrecognised string.
+func (GenericHandler) HandleSet(d *daemon, actionID string, params []byte) error {
+	return d.setAction(actionID, params)
 }
 
 func (GenericHandler) HandleRead(d *daemon, actionID string) (interface{}, error) {
@@ -294,7 +347,7 @@ func loadCachedAddr() (bluetooth.Address, bool) {
 	return addr, true
 }
 
-func saveCachedAddr(addr bluetooth.Address) {
+func saveCachedAddr(addr bluetooth.Address, name string) {
 	p := cacheFilePath()
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return
@@ -303,7 +356,26 @@ func saveCachedAddr(addr bluetooth.Address) {
 	if addr.IsRandom() {
 		random = "1"
 	}
-	_ = os.WriteFile(p, []byte(addr.String()+" "+random+"\n"), 0o644)
+	// Third field is the advertised name, used for model detection on the fast
+	// path (which never scans and therefore never sees an advertisement).
+	line := addr.String() + " " + random
+	if name != "" {
+		line += " " + strings.ReplaceAll(name, " ", "_")
+	}
+	_ = os.WriteFile(p, []byte(line+"\n"), 0o644)
+}
+
+// loadCachedName returns the name stored alongside a cached address.
+func loadCachedName() string {
+	b, err := os.ReadFile(cacheFilePath())
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(string(b))
+	if len(fields) < 3 {
+		return ""
+	}
+	return strings.ReplaceAll(fields[2], "_", " ")
 }
 
 func (d *daemon) connect(ctx context.Context) error {
@@ -323,8 +395,9 @@ func (d *daemon) connect(ctx context.Context) error {
 	// Fast path: cached address
 	if addr, ok := loadCachedAddr(); ok {
 		if dev, err := d.dialLE(adapter, addr, 2*time.Second); err == nil {
+			d.deviceName = loadCachedName()
 			if err := d.setupDevice(dev); err == nil {
-				saveCachedAddr(addr)
+				saveCachedAddr(addr, d.deviceName)
 				d.connected = true
 				return nil
 			}
@@ -335,12 +408,19 @@ func (d *daemon) connect(ctx context.Context) error {
 	// Scan path
 	scanner := quicky.NewScanner()
 	addrCh := make(chan bluetooth.Address, 1)
+	nameCh := make(chan string, 1)
 	scanErrCh := make(chan error, 1)
 	go func() {
 		scanErrCh <- scanner.Scan(func(r quicky.ScanResult) {
 			select {
 			case addrCh <- r.Address:
 			default:
+			}
+			if r.Name != "" {
+				select {
+				case nameCh <- r.Name:
+				default:
+				}
 			}
 		})
 	}()
@@ -379,13 +459,24 @@ func (d *daemon) connect(ctx context.Context) error {
 		return fmt.Errorf("connect LE %s: %w", addr, err)
 	}
 
+	d.deviceName = loadScanName(nameCh)
 	if err := d.setupDevice(dev); err != nil {
 		_ = dev.Disconnect()
 		return err
 	}
-	saveCachedAddr(addr)
+	saveCachedAddr(addr, d.deviceName)
 	d.connected = true
 	return nil
+}
+
+// loadScanName picks up the advertised name observed during the scan, if any.
+func loadScanName(ch chan string) string {
+	select {
+	case n := <-ch:
+		return n
+	default:
+		return ""
+	}
 }
 
 func (d *daemon) dialLE(adapter *bluetooth.Adapter, addr bluetooth.Address, timeout time.Duration) (bluetooth.Device, error) {
@@ -449,25 +540,36 @@ func (d *daemon) setupDevice(dev bluetooth.Device) error {
 }
 
 func (d *daemon) detectAndAttachModel() {
-	modelID := detectModelFromVersion(d.readVersionString())
+	// The advertised name is the authoritative signal; the 0007 firmware string
+	// is only a corroborating hint (it is a bare "1.2.3" on this hardware).
+	modelID := detectModelFromName(d.deviceName)
+	if modelID == "generic" {
+		modelID = detectModelFromVersion(d.readVersionString())
+	}
 	d.modelID = modelID
 	d.handler = GetHandler(modelID)
 	_ = d.handler.OnConnect(d)
 }
 
-// readVersionString reads characteristic 0007 (firmware) as text. It is a
+// readVersionRaw reads characteristic 0007 (firmware) as raw bytes. It is a
 // single GATT read — no command round-trip — so it is cheap enough to run on
-// every connect. Returns "" when the characteristic is absent or unreadable.
-func (d *daemon) readVersionString() string {
+// every connect. Returns nil when the characteristic is absent or unreadable.
+func (d *daemon) readVersionRaw() []byte {
 	if d.versionChar == nil {
-		return ""
+		return nil
 	}
 	var buf [8]byte
 	n, err := d.versionChar.Read(buf[:])
 	if err != nil || n == 0 {
-		return ""
+		return nil
 	}
-	return string(buf[:n])
+	return append([]byte(nil), buf[:n]...)
+}
+
+// readVersionString returns the firmware as a printable string, for model
+// detection. The bytes are not text, so they are only useful as an opaque key.
+func (d *daemon) readVersionString() string {
+	return string(d.readVersionRaw())
 }
 
 // detectModelFromVersion maps the firmware string onto a registered model id.
@@ -476,6 +578,19 @@ func detectModelFromVersion(fw string) string {
 	fw = strings.ToLower(fw)
 	switch {
 	case strings.Contains(fw, "melobuds") || strings.Contains(fw, "n70"):
+		return "melobuds-n70"
+	}
+	return "generic"
+}
+
+// detectModelFromName maps the advertised Bluetooth name onto a registered model
+// id. This is the only source that actually identifies a model: the 0007
+// characteristic holds a bare numeric firmware ("1.2.3") with no model string in
+// it, so it cannot be used to tell an N70 from anything else.
+func detectModelFromName(name string) string {
+	n := strings.ToLower(name)
+	switch {
+	case strings.Contains(n, "melobuds n70"), strings.Contains(n, "n70"):
 		return "melobuds-n70"
 	}
 	return "generic"
@@ -503,7 +618,11 @@ func (d *daemon) markDisconnected() {
 
 func (d *daemon) readLoop() {
 	for buf := range d.notifyCh {
-		frames, _ := parseFrames(buf)
+		frames, err := parseFrames(buf)
+		if err != nil {
+			dbg("notify unparsed raw=%x: %v\n", buf, err)
+			continue
+		}
 		for _, f := range frames {
 			d.frames <- f
 		}
@@ -511,41 +630,67 @@ func (d *daemon) readLoop() {
 	d.markDisconnected()
 }
 
+// dbg writes diagnostics to stderr when QCYCTL_DEBUG is set. Off by default:
+// the per-frame chatter is far too noisy for a service log.
+func dbg(format string, args ...interface{}) {
+	if os.Getenv("QCYCTL_DEBUG") == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, format, args...)
+}
+
+// parseFrames decodes a notification payload into frames. Layout per block is
+// <opcode> <paramLen> <params...>, where the block body (opcode onwards) is
+// bodyLen bytes long. A single notification may carry several blocks, so this
+// loops until the buffer is consumed.
 func parseFrames(buf []byte) ([]frame, error) {
 	var out []frame
-	i := 0
-	for i < len(buf) {
-		if i+1 >= len(buf) {
-			return out, errors.New("truncated frame")
+	off := 0
+	for off < len(buf) {
+		if buf[off] != 0xff {
+			return out, fmt.Errorf("bad SOF 0x%02x at offset %d", buf[off], off)
 		}
-		if buf[i] != 0xFF {
-			return out, fmt.Errorf("expected 0xFF at %d, got 0x%02x", i, buf[i])
+		if off+2 > len(buf) {
+			return out, errors.New("truncated header")
 		}
-		bodyLen := int(buf[i+1])
-		if i+2+bodyLen > len(buf) {
-			return out, errors.New("frame exceeds buffer")
+		bodyLen := int(buf[off+1])
+		end := off + 2 + bodyLen
+		if end > len(buf) {
+			return out, errors.New("truncated body")
 		}
-		opcode := buf[i+2]
-		paramLen := bodyLen - 2
-		var params []byte
-		if paramLen > 0 {
-			params = buf[i+3 : i+3+paramLen]
+		body := buf[off+2 : end]
+		bo := 0
+		for bo < len(body) {
+			if bo+2 > len(body) {
+				return out, errors.New("truncated block header")
+			}
+			op := body[bo]
+			n := int(body[bo+1])
+			bo += 2
+			if bo+n > len(body) {
+				return out, errors.New("truncated block params")
+			}
+			out = append(out, frame{cmd: op, params: append([]byte(nil), body[bo:bo+n]...)})
+			bo += n
 		}
-		out = append(out, frame{cmd: opcode, params: params})
-		i += 2 + bodyLen
+		off = end
+	}
+	if len(out) == 0 {
+		return nil, errors.New("no frames")
 	}
 	return out, nil
 }
 
+// buildFrame encodes a command as FF <bodyLen> <opcode> <paramLen> <params...>.
+// A query is simply a command carrying the reserved 0xFE opcode whose single
+// parameter is the opcode being asked about — the same encoding the proven
+// direct client uses. This must stay byte-identical to parseFrames above and to
+// the client in the qcyctl backend.
 func buildFrame(opcode byte, params []byte) []byte {
-	bodyLen := len(params) + 2
-	pkt := make([]byte, 3+bodyLen)
-	pkt[0] = 0xFF
-	pkt[1] = byte(bodyLen)
-	pkt[2] = 0xFE
-	pkt[3] = opcode
-	copy(pkt[4:], params)
-	return pkt
+	p := make([]byte, 0, 4+len(params))
+	p = append(p, 0xff, byte(len(params)+2), opcode, byte(len(params)))
+	p = append(p, params...)
+	return p
 }
 
 func (d *daemon) send(opcode byte, params []byte) error {
@@ -556,6 +701,7 @@ func (d *daemon) send(opcode byte, params []byte) error {
 	}
 	_, err2 := d.cmdChar.Write(pkt)
 	if err2 != nil {
+		dbg("  -> write failed: %v / %v\n", err, err2)
 		d.markDisconnected()
 		return fmt.Errorf("write 0x%02x: %v", opcode, err2)
 	}
@@ -576,12 +722,55 @@ func (d *daemon) wait(opcode byte, timeout time.Duration) ([]byte, error) {
 	}
 }
 
+// query sends a query frame and waits for the matching reply. These earbuds
+// frequently emit the pre-change state as the immediate reply and only settle
+// on a later, unsolicited notification, so a single send+wait times out on most
+// opcodes. Mirrors the proven client.setConfirm loop in the qcyctl backend:
+// re-query periodically and return the first frame that matches.
 func (d *daemon) query(opcode byte, timeout time.Duration) ([]byte, error) {
 	d.drain()
 	if err := d.send(0xFE, []byte{opcode}); err != nil {
 		return nil, err
 	}
-	return d.wait(opcode, timeout)
+	deadline := time.After(timeout)
+	requery := time.After(500 * time.Millisecond)
+	queries := 0
+	var last []byte
+	for {
+		select {
+		case f := <-d.frames:
+			if f.cmd != opcode {
+				continue
+			}
+			last = f.params
+			// A reply that carries real data is the settled state. Replies that
+			// echo the pre-change value keep arriving, so treat an all-0xFF or
+			// empty body as "not yet" and let the re-query continue.
+			if len(f.params) > 0 && !allFF(f.params) {
+				return f.params, nil
+			}
+		case <-requery:
+			if queries < 5 {
+				_ = d.send(0xFE, []byte{opcode})
+				queries++
+				requery = time.After(500 * time.Millisecond)
+			}
+		case <-deadline:
+			if last != nil {
+				return last, nil
+			}
+			return nil, fmt.Errorf("no response for opcode 0x%02x within %s", opcode, timeout)
+		}
+	}
+}
+
+func allFF(b []byte) bool {
+	for _, c := range b {
+		if c != 0xff {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *daemon) drain() {
@@ -616,13 +805,8 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 		return d.handler.Capabilities(), nil
 	case "set":
 		action, _ := req.Args["action"].(string)
-		paramsRaw, _ := req.Args["params"].([]interface{})
-		var params []byte
-		for _, p := range paramsRaw {
-			if f, ok := p.(float64); ok {
-				params = append(params, byte(f))
-			}
-		}
+		params := decodeParams(req.Args["params"])
+		dbg("set action=%q params=%x\n", action, params)
 		// Route through model handler for validation/special handling
 		return nil, d.handler.HandleSet(d, action, params)
 	case "find":
@@ -659,6 +843,9 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 			"casePresent": box != 0x00 && box != 0x7f,
 		}
 	}
+	if fw := d.readVersionRaw(); len(fw) > 0 {
+		rep["firmwareBytes"] = bytesJSON(fw)
+	}
 
 	// ANC
 	if p, err := d.query(0x17, 1500*time.Millisecond); err == nil && len(p) >= 3 {
@@ -683,7 +870,7 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 	}
 	for name, op := range other {
 		if p, err := d.query(op, 1500*time.Millisecond); err == nil {
-			rep[name] = p
+			rep[name] = bytesJSON(p)
 		}
 	}
 	return rep, nil

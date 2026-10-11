@@ -129,7 +129,106 @@ func (dc *daemonClient) status() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return data.(map[string]interface{}), nil
+	raw, ok := data.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("daemon returned a non-object status")
+	}
+	rep := statusFromDaemon(raw)
+	return structToMap(rep)
+}
+
+// statusFromDaemon turns the daemon's raw per-opcode dump into the same schema
+// the direct client produces, so the UI cannot tell which path served it. The
+// daemon deliberately returns unparsed bytes; all decoding lives here, beside
+// the helpers the direct path already uses.
+func statusFromDaemon(raw map[string]interface{}) *statusReport {
+	rep := &statusReport{Toggles: map[string]bool{}}
+
+	if b, ok := raw["battery"].(map[string]interface{}); ok {
+		rep.Battery = &batteryReport{
+			Left: intOf(b["left"]), Right: intOf(b["right"]), Case: intOf(b["case"]),
+			LeftCharging: boolOf(b["leftCharging"]), RightCharging: boolOf(b["rightCharging"]),
+			CaseCharging: boolOf(b["caseCharging"]), CasePresent: boolOf(b["casePresent"]),
+		}
+	}
+	if p := bytesOf(raw["firmwareBytes"]); len(p) > 0 {
+		l, r, err := parseVersion(p)
+		if err == nil {
+			rep.Firmware = &fwReport{Left: l, Right: r}
+		}
+	}
+	if a, ok := raw["anc"].(map[string]interface{}); ok {
+		mr, sr, v := intOf(a["modeRaw"]), intOf(a["sceneRaw"]), intOf(a["value"])
+		rep.Noise = &noiseReport{
+			Mode: noiseModeName(byte(mr)), Scene: noiseSceneName(byte(mr), byte(sr)),
+			ModeRaw: mr, SceneRaw: sr, Value: v,
+		}
+	}
+	if t, ok := raw["toggles"].(map[string]interface{}); ok {
+		for k, v := range t {
+			rep.Toggles[k] = boolOf(v)
+		}
+	}
+	if p := bytesOf(raw["promptVol"]); len(p) >= 1 {
+		pr := &promptReport{Value: int(p[0])}
+		if len(p) >= 2 {
+			pr.Max = int(p[1])
+		}
+		rep.PromptVol = pr
+	}
+	if p := bytesOf(raw["autoOff"]); len(p) >= 2 {
+		ao := &autoOffReport{}
+		if v := u16le(p, 0); v != 0xFFFF {
+			m := int(v)
+			ao.Minutes = &m
+		}
+		rep.AutoOff = ao
+	}
+	if p := bytesOf(raw["wear"]); len(p) >= 1 {
+		rep.Wear = &wearReport{Enabled: p[0] == 0x01}
+	}
+	if p := bytesOf(raw["balance"]); len(p) >= 1 {
+		b := int(p[0])
+		rep.Balance = &b
+	}
+	if p := bytesOf(raw["eq"]); len(p) > 0 {
+		if preset, bands, err := parseEq(p); err == nil {
+			eq := &eqReport{Preset: int(preset)}
+			for _, b := range bands {
+				eq.Bands = append(eq.Bands, eqBandReport{Freq: b.freq, Gain: float64(b.gain) / 100})
+			}
+			rep.EQ = eq
+		}
+	}
+	return rep
+}
+
+func intOf(v interface{}) int {
+	if f, ok := v.(float64); ok {
+		return int(f)
+	}
+	return 0
+}
+
+func boolOf(v interface{}) bool {
+	b, _ := v.(bool)
+	return b
+}
+
+
+// bytesOf converts a JSON array of numbers back into the raw opcode payload.
+func bytesOf(v interface{}) []byte {
+	arr, ok := v.([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]byte, 0, len(arr))
+	for _, e := range arr {
+		if f, ok := e.(float64); ok {
+			out = append(out, byte(f))
+		}
+	}
+	return out
 }
 
 func (dc *daemonClient) battery() (map[string]interface{}, error) {
@@ -141,9 +240,17 @@ func (dc *daemonClient) battery() (map[string]interface{}, error) {
 }
 
 func (dc *daemonClient) setAction(action string, params []byte) error {
+	// params must go over the wire as a JSON array of numbers. A []byte would
+	// marshal to a base64 string, which the daemon's []interface{} assertion
+	// rejects — the setter then goes out with an empty body and the earbuds
+	// silently ignore it.
+	list := make([]int, len(params))
+	for i, b := range params {
+		list[i] = int(b)
+	}
 	args := map[string]interface{}{
 		"action": action,
-		"params": params,
+		"params": list,
 	}
 	_, err := dc.request("set", args)
 	return err
