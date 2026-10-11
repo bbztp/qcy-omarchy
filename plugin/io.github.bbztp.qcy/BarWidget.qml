@@ -373,10 +373,7 @@ Panel {
                 required property var modelData
                 label: modelData.label
                 active: root.currentAnc() === modelData.key
-                onClicked: {
-              if (Qcy.settling) return
-              root.setAnc(modelData.key)
-            }
+                onClicked: root.setAnc(modelData.key)
               }
             }
           }
@@ -415,7 +412,6 @@ Panel {
                 foreground: root.foreground
                 accent: root.accent
                 onToggled: function() {
-                  if (Qcy.settling) return
                   root.setToggle(modelData.key, modelData.label, !root.toggleState(modelData.key))
                 }
               }
@@ -512,17 +508,12 @@ Panel {
 
           Chip {
             label: "Find my earbuds"
-            onClicked: {
-              if (Qcy.settling) return
-              Qcy.set("Find my earbuds", ["find"])
-            }
+            onClicked: Qcy.set("Find my earbuds", ["find"])
           }
           Chip {
             label: Qcy.loading ? "Reading…" : "Refresh"
             active: Qcy.loading
-            onClicked: {
-              if (!Qcy.loading) Qcy.refresh()
-            }
+            onClicked: if (!Qcy.loading) Qcy.refresh()
           }
         }
 

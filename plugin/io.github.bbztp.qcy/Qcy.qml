@@ -90,14 +90,18 @@ Singleton {
   // optimistically; a read in flight is killed, and its onExited — which fires
   // only once the process is truly gone — starts the setter, so the two never
   // overlap on the adapter.
+  //
+  // A click that arrives while a setter is still going out REPLACES the queued
+  // one instead of being dropped: the first click of a session also has to pay
+  // the daemon's lazy LE connect, and silently swallowing the clicks made during
+  // that window is what made the panel feel stuck. Last click wins.
   function set(action, args) {
-    if (setProc.running) return
     _pendingSet = { action: action, args: args }
     if (statusProc.running || batteryProc.running) {
       _preempting = true
       if (statusProc.running) { statusProc.signal(9); statusProc.running = false }
       if (batteryProc.running) { batteryProc.signal(9); batteryProc.running = false }
-    } else {
+    } else if (!setProc.running) {
       _drain()
     }
   }
