@@ -147,6 +147,14 @@ Panel {
   property var eqBandModel: []
   property string _eqSig: ""
 
+  function updateEqBands() {
+    var b = rep && rep.eq ? rep.eq.bands : null
+    var sig = b ? b.map(function (x) { return x.freq + "/" + x.gain }).join(",") : ""
+    if (sig === root._eqSig) return
+    root._eqSig = sig
+    root.eqBandModel = b ? b : []
+  }
+
   // Preset management
   property int _eqPreset: 0
   property var _eqPresetSig: ""
