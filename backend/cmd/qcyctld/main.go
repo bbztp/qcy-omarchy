@@ -30,6 +30,10 @@ const (
 	verUUID      = "00000007-0000-1000-8000-00805f9b34fb"
 	keysUUID     = "0000000d-0000-1000-8000-00805f9b34fb"
 	eqPresetUUID = "0000000b-0000-1000-8000-00805f9b34fb"
+
+	// How long the indicator blinks for a find-my-earbuds request before the
+	// daemon turns it back off by itself.
+	findBlinkDuration = 15 * time.Second
 )
 
 var (
@@ -847,7 +851,25 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 		}
 		return bytesJSON(got), nil
 	case "find":
-		return nil, errors.New("find is not supported: opcode 0x05 is the LED flash command and no find opcode has been verified on this device")
+		// Start the indicator blink, then stop it by itself. Leaving the LED on
+		// forever would drain the case and be confusing, and there is no user
+		// watching the panel to press a second button.
+		if _, err := d.handler.HandleSet(d, "find", []byte{0x01}, nil); err != nil {
+			return nil, err
+		}
+		go func() {
+			time.Sleep(findBlinkDuration)
+			d.mu.Lock()
+			still := d.connected
+			d.mu.Unlock()
+			if !still {
+				return
+			}
+			if _, err := d.setAction("find", []byte{0x00}, nil); err != nil {
+				dbg("find auto-stop failed: %v\n", err)
+			}
+		}()
+		return nil, nil
 	case "keys":
 		k, err := d.readKeys()
 		if err != nil {
@@ -959,6 +981,11 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
 		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
 		"eq": 0x22,
+		// Find my earbuds = make the indicator LED blink. An audible tone is
+		// useless here: a lost earbud is by definition not in your ear, so it
+		// could never play anything you could hear. 0x05 is Quicky's
+		// NewLightFlashCommand and is what actually lets you spot them.
+		"find": 0x05,
 	}
 	// Refused on purpose — writing this REBOOTS the MeloBuds N70:
 	//
@@ -972,10 +999,6 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 	// Dual Device Connection in the APP each time." Do not "fix" that.
 	if action == "ldac" {
 		return nil, errors.New("ldac is disabled: writing it reboots this N70 and, unlike multipoint, the restart is not documented behaviour")
-	}
-	// 0x05 is the LED flash command, not "find my earbuds" — see below.
-	if action == "find" {
-		return nil, errors.New("find is not supported: opcode 0x05 is the LED flash command and no find opcode has been verified on this device")
 	}
 	opcode, ok := opcodeMap[action]
 	if !ok {

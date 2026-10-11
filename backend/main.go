@@ -263,7 +263,11 @@ func (dc *daemonClient) setAction(action string, params []byte) error {
 }
 
 func (dc *daemonClient) find() error {
-	_, err := dc.request("find", nil)
+	return dc.findTone(0x00)
+}
+
+func (dc *daemonClient) findTone(tone byte) error {
+	_, err := dc.request("find", map[string]interface{}{"params": numList([]byte{tone})})
 	return err
 }
 
@@ -312,6 +316,7 @@ type daemonAPI interface {
 	// expected payload, for the setters whose end state must be known
 	// (balance, prompt volume, auto-off).
 	setActionExpect(action string, params, expect []byte) ([]byte, error)
+	findTone(tone byte) error
 	keys() ([]byte, error)
 	keysSet(raw []byte) error
 }
@@ -365,7 +370,23 @@ func (w *daemonClientWrapper) setAction(action string, params []byte) error {
 }
 
 func (w *daemonClientWrapper) find() error {
-	return w.setAction("find", []byte{0x01})
+	return w.findTone(0x01)
+}
+
+// findTone starts the indicator blink (0x05). In direct mode there is no daemon
+// to auto-stop it, so the caller is expected to run `qcyctl find off` if the
+// blink should end early.
+func (w *daemonClientWrapper) findTone(arg byte) error {
+	opcode, err := opcodeFor("find")
+	if err != nil {
+		return err
+	}
+	w.drain()
+	if err := w.send(opcode, []byte{arg}); err != nil {
+		return err
+	}
+	_, _ = w.wait(opcode, 250*time.Millisecond)
+	return nil
 }
 
 func (w *daemonClientWrapper) setActionExpect(action string, params, expect []byte) ([]byte, error) {
@@ -394,16 +415,14 @@ func opcodeFor(action string) (byte, error) {
 		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
 		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
 		"eq": 0x22,
+		// Indicator blink — how you spot a lost earbud. See the note in the
+		// daemon's opcodeMap for why this is not an audible tone.
+		"find": 0x05,
 	}
 	// Writing ldac (0x23) reboots this N70 and, unlike multipoint, the restart
 	// is not documented behaviour. Mirrors the daemon's guard.
 	if action == "ldac" {
 		return 0, errors.New("ldac is disabled: writing it reboots this N70 and, unlike multipoint, the restart is not documented behaviour")
-	}
-	// 0x05 is the LED flash command, not "find my earbuds"; refuse rather than
-	// blink the indicator. See the same guard in the daemon's setAction.
-	if action == "find" {
-		return 0, errors.New("find is not supported: opcode 0x05 is the LED flash command and no find opcode has been verified on this device")
 	}
 	opcode, ok := opcodeMap[action]
 	if !ok {
@@ -1622,15 +1641,31 @@ func cmdWear(args []string) error {
 }
 
 func cmdFind(args []string) error {
-	scanSeconds, err := parseSeconds(args, 30)
+	// `qcyctl find [on|off]` — blinks the indicator for findBlinkDuration, after
+	// which the daemon switches it back off by itself.
+	arg := []byte{0x01}
+	rest := args
+	if len(args) > 0 {
+		state, err := parseOnOff(args[0])
+		if err != nil {
+			return fmt.Errorf("find: %w (expected on|off)", err)
+		}
+		arg = []byte{state}
+		rest = args[1:]
+	}
+	scanSeconds, err := parseSeconds(rest, 30)
 	if err != nil {
 		return err
 	}
 	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
-		if err := dc.find(); err != nil {
+		if err := dc.findTone(arg[0]); err != nil {
 			return err
 		}
-		fmt.Println("find: triggered")
+		if arg[0] == 0x01 {
+			fmt.Println("find: indicator blinking (auto-stops)")
+		} else {
+			fmt.Println("find: indicator off")
+		}
 		return nil
 	})
 }
