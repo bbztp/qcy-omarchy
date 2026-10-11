@@ -160,6 +160,11 @@ type daemonAPI interface {
 	battery() (map[string]interface{}, error)
 	setAction(action string, params []byte) error
 	find() error
+	capabilities() (interface{}, error)
+}
+
+func (dc *daemonClient) capabilities() (interface{}, error) {
+	return dc.request("capabilities", nil)
 }
 
 // runViaDaemon tries the daemon first; on failure falls back to direct mode.
@@ -217,6 +222,12 @@ func (w *daemonClientWrapper) setAction(action string, params []byte) error {
 
 func (w *daemonClientWrapper) find() error {
 	return w.setAction("find", []byte{0x01})
+}
+
+func (w *daemonClientWrapper) capabilities() (interface{}, error) {
+	// Fallback: return generic capabilities from the daemon's generic? but we don't have daemon instance.
+	// Direct mode: return empty or construct; not used if daemon exists.
+	return map[string]interface{}{}, nil
 }
 
 func structToMap(v interface{}) (map[string]interface{}, error) {

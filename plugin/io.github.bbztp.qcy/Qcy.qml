@@ -64,6 +64,8 @@ Singleton {
   property string error: ""
   property double updatedAt: 0     // Date.now() of the last successful read
   property string busyAction: ""   // label of an in-flight setter, for UI feedback
+  property int _setSeq: 0
+  property int _lastSeenSetSeq: -1
 
   // Only one qcyctl may touch the LE adapter at a time (see note in connectQCY).
   // Reads are low priority and run in the background; a user action PREEMPTS a
@@ -87,7 +89,8 @@ Singleton {
   // overlap on the adapter.
   function set(action, args) {
     if (setProc.running) return
-    _pendingSet = { action: action, args: args }
+    _setSeq++
+    _pendingSet = { action: action, args: args, seq: _setSeq }
     if (statusProc.running || batteryProc.running) {
       _preempting = true
       if (statusProc.running) { statusProc.signal(9); statusProc.running = false }
@@ -96,10 +99,11 @@ Singleton {
       _drain()
     }
   }
-  function _startSet(action, args) {
+  function _startSet(action, args, seq) {
     _preempting = false
     error = ""
     busyAction = action
+    root._lastSeenSetSeq = seq || root._setSeq
     setProc.command = [root.binary].concat(args, [String(root.scanSeconds)])
     setProc.running = true
   }
@@ -123,13 +127,14 @@ Singleton {
     if (_pendingSet) {
       var s = _pendingSet
       _pendingSet = null
-      _startSet(s.action, s.args)
+      _startSet(s.action, s.args, s.seq)
       return
     }
     if (_wantBattery && connected) pollBattery()
   }
 
   function _applyStatus(text) {
+    if (setProc.running || _pendingSet) return
     var trimmed = text ? String(text).trim() : ""
     if (trimmed === "") return
     try {
@@ -141,6 +146,7 @@ Singleton {
   }
 
   function _applyBattery(text) {
+    if (setProc.running || _pendingSet) return
     var trimmed = text ? String(text).trim() : ""
     if (trimmed === "") return
     try {
@@ -205,7 +211,6 @@ Singleton {
     command: [root.binary, "battery", "--json", String(root.scanSeconds)]
     onRunningChanged: root.batteryLoading = running
     onExited: function (exitCode) {
-      root._preempting = false
       root._drain()
     }
     stdout: StdioCollector {

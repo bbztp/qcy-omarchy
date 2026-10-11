@@ -177,7 +177,9 @@ Panel {
   // A fresh report supersedes any optimistic toggle state.
   Connections {
     target: Qcy
-    function onUpdatedAtChanged() { root.optimistic = ({}) }
+    function onUpdatedAtChanged() {
+      if (Qcy.busyAction === "") root.optimistic = ({})
+    }
     function onConnectedChanged() {
       root.optimistic = ({})
       if (!Qcy.connected) root.close()
@@ -371,7 +373,10 @@ Panel {
                 required property var modelData
                 label: modelData.label
                 active: root.currentAnc() === modelData.key
-                onClicked: root.setAnc(modelData.key)
+                onClicked: {
+              if (Qcy.setProc && Qcy.setProc.running) return
+              root.setAnc(modelData.key)
+            }
               }
             }
           }
@@ -409,7 +414,10 @@ Panel {
                 busy: Qcy.busyAction !== "" || Qcy.loading
                 foreground: root.foreground
                 accent: root.accent
-                onToggled: root.setToggle(modelData.key, modelData.label, !root.toggleState(modelData.key))
+                onToggled: function() {
+                  if (Qcy.setProc && Qcy.setProc.running) return
+                  root.setToggle(modelData.key, modelData.label, !root.toggleState(modelData.key))
+                }
               }
             }
           }
@@ -504,7 +512,10 @@ Panel {
 
           Chip {
             label: "Find my earbuds"
-            onClicked: Qcy.set("Find my earbuds", ["find"])
+            onClicked: {
+              if (Qcy.setProc && Qcy.setProc.running) return
+              Qcy.set("Find my earbuds", ["find"])
+            }
           }
           Chip {
             label: Qcy.loading ? "Reading…" : "Refresh"
