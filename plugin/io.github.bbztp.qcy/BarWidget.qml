@@ -1377,7 +1377,10 @@ Panel {
         Chip {
           required property var modelData
           label: modelData.label
-          active: crow.current === modelData.value
+          // Compared as strings: the caller's `current` is a string while
+          // model values may be numbers, and "0" === 0 is false in JS, which
+          // left the intensity pills never appearing selected.
+          active: String(crow.current) === String(modelData.value)
           onClicked: crow.picked(modelData.value)
         }
       }
