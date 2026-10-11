@@ -61,9 +61,11 @@ Panel {
     { key: "antiwind", label: "Anti-wind" },
     { key: "transparency", label: "Transparency" }
   ]
+  // LDAC and multipoint are deliberately absent: writing their opcodes reboots
+  // this N70, so the backend refuses them and there is no point offering a
+  // switch that resets the earbuds. Both are still read back in the status
+  // report, so a future verified opcode can restore them here.
   readonly property var toggleDefs: [
-    { key: "ldac", label: "LDAC (hi-res audio)" },
-    { key: "multipoint", label: "Multipoint" },
     { key: "game", label: "Game mode (low latency)" },
     { key: "sleep", label: "Sleep mode" },
     { key: "wind", label: "Wind noise reduction" }

@@ -908,16 +908,26 @@ func (d *daemon) readBattery() (map[string]interface{}, error) {
 
 func (d *daemon) setAction(action string, params []byte) error {
 	opcodeMap := map[string]byte{
-		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
-		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
+		"anc": 0x17, "game": 0x09, "sleep": 0x10, "wind": 0x2A,
+		"promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
 		"eq": 0x22,
 	}
-	// NOTE: 0x05 is deliberately absent. It maps to the LED flash command
-	// (command.NewLightFlashCommand), not to "find my earbuds" — sending it
-	// would blink the indicator light instead. No opcode for a real
-	// find-my-buds command has been verified on this hardware, so guessing one
-	// could put the earbuds into an unknown state. Until one is confirmed, the
-	// action is refused rather than mapped to something else.
+	// Refused on purpose — every one of these was observed to REBOOT the
+	// MeloBuds N70 when written, which is firmware, not a cosmetic glitch:
+	//
+	//   ldac       0x23  Quicky's LDAC.go, but the N70 diverges and faults
+	//   multipoint 0x24  no implementation exists in Quicky at all
+	//
+	// Both still answer a read query, so reading them is harmless and they
+	// stay queryable in the status report; only the setter is refused.
+	refused := map[string]string{
+		"ldac":       "ldac is disabled: writing it reboots this N70 (Quicky's 0x23 does not match this firmware)",
+		"multipoint": "multipoint is disabled: writing it reboots this N70 and no 0x24 implementation is verified",
+	}
+	if msg, bad := refused[action]; bad {
+		return errors.New(msg)
+	}
+	// 0x05 is the LED flash command, not "find my earbuds" — see below.
 	if action == "find" {
 		return errors.New("find is not supported: opcode 0x05 is the LED flash command and no find opcode has been verified on this device")
 	}
