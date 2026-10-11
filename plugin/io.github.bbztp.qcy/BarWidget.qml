@@ -183,9 +183,9 @@ Panel {
     return root._eqPreset
   }
 
-  // Master gain, in dB (float, as the daemon reports it), +-8 dB.
-  readonly property real masterGainMin: -8
-  readonly property real masterGainMax: 8
+  // Master gain, in dB (float, as the daemon reports it), +-12 dB.
+  readonly property real masterGainMin: -12
+  readonly property real masterGainMax: 12
   property real _masterGainDb: 0
   property string _masterGainSig: ""
 
@@ -202,11 +202,12 @@ Panel {
     return root._masterGainDb
   }
 
-  // EQ writes are only safe against a full 10-band report: the opcode carries
-  // every band, so a partial read would write garbage over the others.
+  // The daemon reports every band with a non-zero frequency (1..20); the
+  // backend patches the full payload it read, so any non-empty report is
+  // writable. An empty list means the read failed or returned no EQ data.
   function eqWritable() {
     var b = rep && rep.eq ? rep.eq.bands : null
-    return !!b && b.length === 10
+    return !!b && b.length >= 1 && b.length <= 20
   }
 
   function eqSetMasterGain(v) {
@@ -1394,7 +1395,9 @@ Panel {
             : String(hz)
           color: Qt.darker(root.foreground, 1.75)
           font.family: root.fontFamily
-          font.pixelSize: Style.font.caption * 0.85
+          // Many bands (custom curves use up to 20) means narrow slots: shrink
+          // the label with the count so neighbours do not overlap.
+          font.pixelSize: Style.font.caption * (curve.bands.length > 10 ? 0.65 : 0.85)
           anchors.horizontalCenter: parent.horizontalCenter
           y: curve.plotHeight + Style.space(2)
         }

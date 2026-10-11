@@ -928,8 +928,9 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 	case "eqApply":
 		// Read-modify-write of 0x22 under one txMu, with a backup of the
 		// pre-write payload. Args, all optional (none = rewrite unchanged):
-		//   gains      [10]int  band gains, centi-dB
-		//   masterGain int      master gain, centi-dB
+		//   gains      [10]int  band gains for positions 0-9, centi-dB (positions
+		//                       10+ keep what the device reported)
+		//   masterGain int      master gain, centi-dB (-1200..+1200)
 		//   slot       int      target slot byte
 		op, err := eqOpFromArgs(req.Args)
 		if err != nil {
@@ -1295,6 +1296,7 @@ func (d *daemon) eqApply(op qcycore.EqOp) (*qcycore.EqResult, error) {
 	}
 	return &qcycore.EqResult{
 		EqSnapshot:    snap,
+		FullLength:    qcycore.FullLength(next),
 		Previous:      hex.EncodeToString(cur),
 		BackupFirst:   bk.First,
 		BackupHistory: bk.History,

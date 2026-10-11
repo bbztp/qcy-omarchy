@@ -14,34 +14,44 @@ import (
 
 // EQ payload (opcode 0x22), as observed on the MeloBuds N70:
 //
-//	[slot:1][masterGain:int16 LE, centi-dB][10 x (freq:u16 LE, gain:int16 LE, q:u16 LE, type:u8)]
+//	[slot:1][masterGain:int16 LE, centi-dB][20 x (freq:u16 LE, gain:int16 LE, q:u16 LE, type:u8)]
 //
-// 3 + 10*7 = 73 bytes (EqLen), the part whose layout is known and the only
-// part ever written. The device REPORTS 143 bytes (EqReadLen): the 73 known
-// bytes followed by 70 bytes that have always read zero. Frequencies, Q and
-// type are NOT fixed: the vendor's hearing-test slot uses its own values, so a
-// writer must preserve them.
+// 3 + 20*7 = 143 bytes (EqReadLen), what the device reports. A band position
+// whose freq is 0 is empty. Factory presets use a few positions, the user's
+// custom curve may use up to 20 (positions 10-19 form the "tail" starting at
+// byte 73). Frequencies, Q and type are NOT fixed, so a writer must preserve
+// them.
+//
+// Write format: 73 bytes (EqLen, positions 0-9 only) is PROVEN on the device
+// and is used whenever bytes 73.. carry no band (all zero, or only the 0xFF
+// "empty" type marker; see TailBlank). When the tail holds a band
+// (any other non-zero byte) the full read length is sent instead (format NOT proven on the device);
+// results then carry fullLength=true.
 const (
 	EqOpcode = 0x22
-	// EqLen is the known/written length; EqReadLen the length the device reports.
+	// EqLen is the proven write length; EqReadLen the length the device reports.
 	EqLen      = 73
 	EqReadLen  = 143
-	EqBands    = 10
+	EqBands    = 10 // positions addressable by `eq set` / EqOp.Gains
+	EqMaxBands = 20 // positions in the full payload
 	eqBandSize = 7
 	eqHeader   = 3
 
-	// MaxCenti is the accepted range for both master gain and band gains, in
-	// centi-dB (+/-8 dB).
+	// MaxCenti is the accepted range for band gains, in centi-dB (+/-8 dB).
 	MaxCenti = 800
 	MaxDB    = 8.0
+	// MasterMaxCenti / MasterMaxDB: the master gain range (+/-12 dB).
+	MasterMaxCenti = 1200
+	MasterMaxDB    = 12.0
 )
 
 // EqBand is one parametric band as stored in the payload.
 type EqBand struct {
-	Freq int     `json:"freq"`
-	Gain float64 `json:"gain"` // dB
-	Q    int     `json:"q"`
-	Type int     `json:"type"`
+	Index int     `json:"index"` // position in the payload (0-19)
+	Freq  int     `json:"freq"`
+	Gain  float64 `json:"gain"` // dB
+	Q     int     `json:"q"`
+	Type  int     `json:"type"`
 }
 
 // EqSnapshot is a decoded 0x22 payload. MasterGain and band gains are in dB.
@@ -56,9 +66,10 @@ type EqSnapshot struct {
 // where the pre-write payload was saved.
 type EqResult struct {
 	EqSnapshot
-	Previous      string `json:"previous"`      // payload before the write, hex
-	BackupFirst   string `json:"backupFirst"`   // immutable first-seen backup of that slot
-	BackupHistory string `json:"backupHistory"` // append-only history entry for this write
+	Previous      string `json:"previous"`             // payload before the write, hex
+	FullLength    bool   `json:"fullLength,omitempty"` // true: the full-length (unproven) write format was used
+	BackupFirst   string `json:"backupFirst"`          // immutable first-seen backup of that slot
+	BackupHistory string `json:"backupHistory"`        // append-only history entry for this write
 }
 
 // EqOp describes a patch. Nil fields mean "keep what the device has".
@@ -69,11 +80,9 @@ type EqOp struct {
 }
 
 // ValidateEq checks a payload read from the device is usable for a
-// read-modify-write: at least EqLen bytes (EqReadLen expected), not the
-// all-0xFF "no data" filler, and with an all-zero tail beyond EqLen. A
-// non-zero tail has unknown semantics, so it is refused rather than
-// silently truncated by a 73-byte write. Reporting uses the more tolerant
-// DecodeEq.
+// read-modify-write: at least EqLen bytes (EqReadLen expected) and not the
+// all-0xFF "no data" filler. A non-zero tail is allowed; ApplyEq then writes
+// the full length. Reporting uses the more tolerant DecodeEq.
 func ValidateEq(p []byte) error {
 	if len(p) < EqLen {
 		return fmt.Errorf("eq: unexpected payload length %d (want at least %d, device reports %d)", len(p), EqLen, EqReadLen)
@@ -81,13 +90,30 @@ func ValidateEq(p []byte) error {
 	if IsAllFF(p) {
 		return fmt.Errorf("eq: device returned an all-0xFF payload (no real EQ data); refusing to back up or write over it")
 	}
-	for i := EqLen; i < len(p); i++ {
-		if p[i] != 0 {
-			return fmt.Errorf("eq: payload tail not zero (byte %d = 0x%02x), refusing to write: unknown semantics", i, p[i])
-		}
-	}
 	return nil
 }
+
+// TailBlank reports whether bytes EqLen.. of p hold no band: every byte is zero,
+// except that a band's type byte may be 0xFF, which is how the device marks an
+// empty position (factory presets report freq 0, gain 0, q 0, type 0xFF in
+// every unused position, including positions 10-19). Such a tail carries no
+// information, so the proven 73-byte write format applies.
+func TailBlank(p []byte) bool {
+	for i := EqLen; i < len(p); i++ {
+		if p[i] == 0 {
+			continue
+		}
+		if p[i] == 0xff && (i-eqHeader)%eqBandSize == eqBandSize-1 {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// FullLength reports whether the payload to send uses the unproven full-length
+// format (longer than EqLen).
+func FullLength(sent []byte) bool { return len(sent) > EqLen }
 
 // IsAllFF reports whether b is non-empty and every byte is 0xFF, the device's
 // "no data yet" filler. A read-modify-write must never treat it as live state.
@@ -116,16 +142,21 @@ func DecodeEq(p []byte) (EqSnapshot, error) {
 		Bands:      []EqBand{},
 	}
 	n := (len(p) - eqHeader) / eqBandSize
-	if n > EqBands {
-		n = EqBands
+	if n > EqMaxBands {
+		n = EqMaxBands
 	}
 	for i := 0; i < n; i++ {
 		b := eqHeader + i*eqBandSize
+		freq := le16(p, b)
+		if freq == 0 {
+			continue
+		}
 		s.Bands = append(s.Bands, EqBand{
-			Freq: int(le16(p, b)),
-			Gain: float64(int16(le16(p, b+2))) / 100,
-			Q:    int(le16(p, b+4)),
-			Type: int(p[b+6]),
+			Index: i,
+			Freq:  int(freq),
+			Gain:  float64(int16(le16(p, b+2))) / 100,
+			Q:     int(le16(p, b+4)),
+			Type:  int(p[b+6]),
 		})
 	}
 	return s, nil
@@ -135,29 +166,42 @@ func le16(p []byte, off int) uint16 { return uint16(p[off]) | uint16(p[off+1])<<
 
 func masterCenti(p []byte) int { return int(int16(le16(p, 1))) }
 
-// CentiFromDB converts dB to centi-dB, rejecting NaN, Inf and anything outside
-// +/-8 dB BEFORE any integer conversion (a float outside int range converts to
-// an arbitrary value in Go).
+// CentiFromDB converts a band gain in dB to centi-dB, rejecting NaN, Inf and
+// anything outside +/-8 dB BEFORE any integer conversion (a float outside int
+// range converts to an arbitrary value in Go).
 func CentiFromDB(db float64) (int, error) {
+	return centiInRange(db, MaxDB)
+}
+
+// MasterCentiFromDB is CentiFromDB for the master gain (+/-12 dB).
+func MasterCentiFromDB(db float64) (int, error) {
+	return centiInRange(db, MasterMaxDB)
+}
+
+func centiInRange(db, max float64) (int, error) {
 	if math.IsNaN(db) || math.IsInf(db, 0) {
 		return 0, fmt.Errorf("gain %v is not a finite number", db)
 	}
-	if db < -MaxDB || db > MaxDB {
-		return 0, fmt.Errorf("gain %.2f dB is outside the supported range of -%g..+%g dB", db, MaxDB, MaxDB)
+	if db < -max || db > max {
+		return 0, fmt.Errorf("gain %.2f dB is outside the supported range of -%g..+%g dB", db, max, max)
 	}
 	return int(math.Round(db * 100)), nil
 }
 
-// ApplyEq returns the EqLen-byte payload to write: the first EqLen bytes of cur
-// with op applied. Only the fields named in op change; frequency, Q and type of
-// every band are carried over byte for byte. The (all-zero, validated) tail the
-// device reports beyond EqLen is not sent: the 73-byte form is the proven
-// write format.
+// ApplyEq returns the payload to write: a copy of cur with op applied. Only the
+// fields named in op change; everything else (every band's freq/Q/type, bands
+// 10-19, unknown bytes) is carried over byte for byte. The length is EqLen (the
+// proven format) when bytes EqLen.. of cur are blank (TailBlank), otherwise the full
+// length read (unproven; see FullLength).
 func ApplyEq(cur []byte, op EqOp) ([]byte, error) {
 	if err := ValidateEq(cur); err != nil {
 		return nil, err
 	}
-	out := append([]byte(nil), cur[:EqLen]...)
+	n := len(cur)
+	if TailBlank(cur) {
+		n = EqLen
+	}
+	out := append([]byte(nil), cur[:n]...)
 	if op.Slot != nil {
 		if *op.Slot < 0 || *op.Slot > 255 {
 			return nil, fmt.Errorf("eq: slot must be 0-255, got %d", *op.Slot)
@@ -166,8 +210,8 @@ func ApplyEq(cur []byte, op EqOp) ([]byte, error) {
 	}
 	if op.MasterCenti != nil {
 		c := *op.MasterCenti
-		if c < -MaxCenti || c > MaxCenti {
-			return nil, fmt.Errorf("eq: master gain %d centi-dB outside +/-%d", c, MaxCenti)
+		if c < -MasterMaxCenti || c > MasterMaxCenti {
+			return nil, fmt.Errorf("eq: master gain %d centi-dB outside +/-%d", c, MasterMaxCenti)
 		}
 		out[1], out[2] = byte(int16(c)), byte(int16(c)>>8)
 	}
@@ -184,24 +228,16 @@ func ApplyEq(cur []byte, op EqOp) ([]byte, error) {
 }
 
 // EqMatch returns the predicate that decides whether a device echo confirms a
-// write of sent (EqLen bytes). The echo may be EqLen or EqReadLen long; only
-// its first EqLen bytes are compared: slot, master gain and the gain of all 10
-// bands. op is kept for call-site compatibility.
+// write of sent. Zero tolerance: the echo must be at least as long as sent and
+// its first len(sent) bytes (slot, master gain, every band written) must equal
+// sent exactly. The echo may be longer (73 sent, 143 echoed). op is kept for
+// call-site compatibility.
 func EqMatch(sent []byte, op EqOp) func([]byte) bool {
 	return func(got []byte) bool {
-		if len(got) < EqLen || len(sent) != EqLen {
+		if len(sent) < EqLen || len(got) < len(sent) {
 			return false
 		}
-		if !bytes.HasPrefix(got, sent[:eqHeader]) {
-			return false
-		}
-		for i := 0; i < EqBands; i++ {
-			off := eqHeader + i*eqBandSize + 2
-			if got[off] != sent[off] || got[off+1] != sent[off+1] {
-				return false
-			}
-		}
-		return true
+		return bytes.Equal(got[:len(sent)], sent)
 	}
 }
 

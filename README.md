@@ -76,7 +76,11 @@ payload of the currently **active** slot, as read from the earbuds, is saved to
 `~/.local/share/qcy-omarchy/backups/`. This is not a backup of whatever the
 slot you overwrite held before: a slot's contents cannot be read while it is
 inactive. `qcyctl eq set` overwrites the target EQ slot and refuses to run
-without `--yes`.
+without `--yes`; it changes only band positions 0-9 and leaves positions 10+
+(custom curves may use up to 20 bands) as read. The master gain range is
+-12..+12 dB. When a curve uses positions 10+, the write sends the full
+143-byte payload (`fullLength: true` in `--json` output, plus a warning): the
+73-byte write is proven on the earbuds, the 143-byte one is not.
 
 ## `qcyctl`
 

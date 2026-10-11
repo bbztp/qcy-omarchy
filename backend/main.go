@@ -582,6 +582,7 @@ func (w *daemonClientWrapper) eqApply(op qcycore.EqOp) (*qcycore.EqResult, error
 	}
 	return &qcycore.EqResult{
 		EqSnapshot:    snap,
+		FullLength:    qcycore.FullLength(next),
 		Previous:      hex.EncodeToString(cur),
 		BackupFirst:   bk.First,
 		BackupHistory: bk.History,
@@ -726,9 +727,9 @@ func usage() {
   qcyctl balance <left|center|right|0-100> [seconds]
   qcyctl eq get [--json] [seconds]
   qcyctl eq set <g1,g2,...,g10> --yes [--preset N] [--master-gain dB] [--json] [seconds]
-        (dB, -8..+8; patches the live payload, keeps freq/Q/type; backs the slot up first)
+        (dB, -12..+12; patches the live payload, keeps freq/Q/type; backs the slot up first)
   qcyctl eq preset <n> [seconds]   (unsupported on models without characteristic 000B)
-  qcyctl master-gain <dB> [--json] [seconds]   (-8..+8; only the master gain changes)
+  qcyctl master-gain <dB> [--json] [seconds]   (-12..+12; only the master gain changes)
   qcyctl keys get [seconds]
   qcyctl keys set <keyId:funId> [<keyId:funId> ...] [seconds]
 All setters read back by querying the opcode (FF 03 FE 01 <opcode>) and fail non-zero on mismatch.`)
@@ -1369,15 +1370,19 @@ type wearReport struct {
 }
 
 type eqBandReport struct {
-	Freq int     `json:"freq"`
-	Gain float64 `json:"gain"`
+	Index int     `json:"index"`
+	Freq  int     `json:"freq"`
+	Gain  float64 `json:"gain"`
+	Q     int     `json:"q"`
+	Type  int     `json:"type"`
 }
 
 // eqReport is the EQ section of `status --json`.
 //
 //	preset        active slot (byte 0 of the raw 0x22 payload)
-//	masterGain    master gain in dB (int16 centi-dB / 100), -8..+8
-//	bands[].gain  per-band gain in dB; bands[].freq in Hz as stored on the device
+//	masterGain    master gain in dB (int16 centi-dB / 100), -12..+12
+//	bands[]       every band position with freq != 0 (up to 20), in order:
+//	              index (0-19), freq in Hz as stored on the device, gain in dB, q, type
 type eqReport struct {
 	Preset     int            `json:"preset"`
 	MasterGain float64        `json:"masterGain"`
@@ -1392,7 +1397,7 @@ func eqReportFrom(p []byte) (*eqReport, error) {
 	}
 	eq := &eqReport{Preset: s.Slot, MasterGain: s.MasterGain}
 	for _, b := range s.Bands {
-		eq.Bands = append(eq.Bands, eqBandReport{Freq: b.Freq, Gain: b.Gain})
+		eq.Bands = append(eq.Bands, eqBandReport{Index: b.Index, Freq: b.Freq, Gain: b.Gain, Q: b.Q, Type: b.Type})
 	}
 	return eq, nil
 }
@@ -2098,13 +2103,13 @@ func cmdEqGet(args []string) error {
 }
 
 // parseDBArg parses a dB value for the master gain, rejecting NaN/Inf and
-// anything outside +/-8 dB before it is ever converted to an integer.
+// anything outside +/-12 dB before it is ever converted to an integer.
 func parseDBArg(what, s string) (int, error) {
 	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
 	if err != nil {
 		return 0, fmt.Errorf("%s: invalid value %q", what, s)
 	}
-	c, err := qcycore.CentiFromDB(v)
+	c, err := qcycore.MasterCentiFromDB(v)
 	if err != nil {
 		return 0, fmt.Errorf("%s: %w", what, err)
 	}
@@ -2189,6 +2194,7 @@ func cmdEqSet(args []string) error {
 			return printJSON(res)
 		}
 		fmt.Printf("eq set confirmed: preset=%d masterGain=%+.2fdB %s\n", res.Slot, res.MasterGain, fmtEq(&res.EqSnapshot))
+		warnFullLength(res)
 		fmt.Printf("backup: %s\n", res.BackupHistory)
 		return nil
 	})
@@ -2198,7 +2204,7 @@ func cmdEqSet(args []string) error {
 // every band's freq/gain/Q/type and the rest of the payload are carried over
 // from what the device reports.
 func cmdMasterGain(args []string) error {
-	const usage = "usage: qcyctl master-gain <dB> [--json] [seconds]   (dB in -8..+8)"
+	const usage = "usage: qcyctl master-gain <dB> [--json] [seconds]   (dB in -12..+12)"
 	jsonOut := false
 	var pos []string
 	for _, a := range args {
@@ -2229,6 +2235,7 @@ func cmdMasterGain(args []string) error {
 			return printJSON(res)
 		}
 		fmt.Printf("master-gain=%+.2fdB slot=%d confirmed\n", res.MasterGain, res.Slot)
+		warnFullLength(res)
 		fmt.Printf("backup: %s\n", res.BackupHistory)
 		return nil
 	})
@@ -2266,6 +2273,14 @@ func cmdEqPreset(args []string) error {
 		fmt.Printf("eq preset=%d confirmed\n", buf[0])
 		return nil
 	})
+}
+
+// warnFullLength tells the user the write used the full-length 0x22 format,
+// which (unlike the 73-byte one) has not been proven on the device.
+func warnFullLength(res *qcycore.EqResult) {
+	if res.FullLength {
+		fmt.Fprintf(os.Stderr, "warning: fullLength=true: wrote the full %d-byte payload because bytes 73.. are non-zero; this format is NOT proven on the device (readback was confirmed byte for byte)\n", len(res.Payload)/2)
+	}
 }
 
 func fmtEq(s *qcycore.EqSnapshot) string {

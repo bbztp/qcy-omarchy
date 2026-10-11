@@ -24,8 +24,9 @@ func TestEqReportFromUnitsAndSlot(t *testing.T) {
 	if r.Preset != 11 || r.MasterGain != 1.5 {
 		t.Fatalf("preset=%d masterGain=%v", r.Preset, r.MasterGain)
 	}
-	if len(r.Bands) != 10 || r.Bands[0].Freq != 40 || r.Bands[0].Gain != -2.5 {
-		t.Fatalf("bands[0] = %+v", r.Bands[0])
+	// only band 0 has a frequency; empty (freq 0) positions are not reported
+	if len(r.Bands) != 1 || r.Bands[0].Freq != 40 || r.Bands[0].Gain != -2.5 || r.Bands[0].Index != 0 {
+		t.Fatalf("bands = %+v", r.Bands)
 	}
 }
 
@@ -42,7 +43,7 @@ func TestStatusFromDaemonEq(t *testing.T) {
 
 func TestMasterGainRejectsBeforeConnecting(t *testing.T) {
 	// All of these must fail in validation, never reaching Bluetooth.
-	for _, v := range []string{"NaN", "Inf", "-Inf", "8.5", "-9", "1e400", "abc", ""} {
+	for _, v := range []string{"NaN", "Inf", "-Inf", "12.5", "-13", "1e400", "abc", ""} {
 		if err := cmdMasterGain([]string{v}); err == nil {
 			t.Errorf("master-gain %q accepted", v)
 		}

@@ -102,23 +102,35 @@ Level behaviour on this model:
 
 ## EQ
 
-**Verified read and write on `0x22`.** The device **reports 143 bytes**: 73 known bytes followed by 70 bytes that
-have always read zero. Only the 73 known bytes are ever written (the 73-byte
-form is the proven write format). The known layout:
+**Verified read and write on `0x22`.** The device **reports 143 bytes**:
 
 ```
-[slot:1][masterGain:int16 LE][10 x (freq:u16 LE, gain:int16 LE, q:u16 LE, type:u8)]
- byte 0   bytes 1-2            bytes 3-72, 7 bytes per band
+[slot:1][masterGain:int16 LE, centi-dB][20 x (freq:u16 LE, gain:int16 LE, q:u16 LE, type:u8)]
+ byte 0   bytes 1-2                      bytes 3-142, 7 bytes per band position
 ```
+
+A position with `freq` 0 is empty (factory presets mark it `0,0,0,type 0xFF`,
+the custom slot leaves it all zero). The factory preset "Classico" (slot 6)
+uses 5 positions; the user's custom curve (slot 11) uses 13 (positions 0-12;
+positions 10-19 are the "tail", bytes 73-142).
+
+**Write format.** The 73-byte write (positions 0-9, tail omitted) is the
+**proven** format and is used whenever the tail holds no band (all zero, or
+only the `0xFF` type marker of an empty position). If any position 10-19 is
+populated, the write sends the full length read (143 bytes). That format is
+**not proven on the device**; the result then carries `fullLength: true` and
+the CLI prints a warning. In both cases everything not named in the command is
+carried over byte for byte from the payload just read.
 
 - **Slot** (byte 0): the active preset slot. Slot 11 is the manufacturer's
   hearing-test profile; the plugin maps slots 0-4 to Pop, Rock, Classical, Jazz
   and Bass Booster (names not independently verified). The device only reports the *active* slot; an inactive
   slot cannot be read back.
 - **Master gain** (bytes 1-2): signed int16 in centi-dB, so `0x0096` is
-  +1.50 dB. The client accepts -8..+8 dB (-800..+800) and rejects NaN, Inf and
-  anything outside that range before converting to an integer.
-- **Bands** (bytes 3-72): `[freq:2][gain:2][q:2][type:1]` each. Gain is signed
+  +1.50 dB. The client accepts -12..+12 dB (-1200..+1200) and rejects NaN, Inf
+  and anything outside that range before converting to an integer. Band gains
+  stay limited to -8..+8 dB.
+- **Bands** (bytes 3-142): `[freq:2][gain:2][q:2][type:1]` each. Gain is signed
   centi-dB. **Frequency, Q and type are not fixed**: the hearing-test slot (11)
   carries per-user values, so a writer must preserve them. An earlier
   implementation synthesised a fixed 31 Hz ... 16 kHz table with Q=1.00 and
@@ -127,10 +139,12 @@ form is the proven write format). The known layout:
 ### Units in `status --json`
 
 `eq.preset` is the active slot (byte 0), `eq.masterGain` is the master gain in
-**dB** (float, int16 / 100), and `eq.bands[].gain` is in dB too, `freq` in Hz as
-stored on the device. `qcyctl eq get --json` and the results of the write
-commands additionally carry each band's `q` and `type`, the raw `payload` (hex)
-and `slot`.
+**dB** (float, int16 / 100). `eq.bands[]` lists every position with `freq` != 0
+(up to 20), in order, each `{index, freq, gain, q, type}`: `index` is the
+position (0-19), `freq` in Hz as stored on the device, `gain` in dB. `qcyctl eq
+get --json` and the results of the write commands additionally carry the raw
+`payload` (hex) and `slot`; write results add `fullLength: true` when the
+unproven full-length format was used.
 
 ### Writing: read, patch, back up, write, confirm
 
@@ -141,19 +155,20 @@ bytes that were asked for:
 | Command | Bytes changed |
 |---|---|
 | `qcyctl master-gain <dB>` | 1-2 only |
-| `qcyctl eq set <g1..g10> --yes` | the 10 band gains; master gain kept unless `--master-gain dB` |
+| `qcyctl eq set <g1..g10> --yes` | the gains of positions 0-9 only; positions 10+ stay as read; master gain kept unless `--master-gain dB` |
 | `qcyctl eq set ... --preset N` | byte 0 as well: the current curve is written into slot N, which also makes N active |
 
 Order of operations (done under one transaction lock in the daemon):
 
-1. read `0x22` (143 bytes expected; at least 73 accepted; refused if all 0xFF or
-   if any byte beyond 73 is non-zero, since its meaning is unknown);
-2. patch a copy of the first 73 bytes;
+1. read `0x22` (143 bytes expected; at least 73 accepted; refused if all 0xFF);
+2. patch a copy of the payload: the first 73 bytes when the tail holds no band,
+   otherwise the full length read (`fullLength: true`, unproven);
 3. **save the full payload read in step 1** (all 143 bytes; see Backups); if this fails the write is
    **aborted** and the error is returned;
-4. write the patched 73-byte payload;
-5. confirm by readback (echo may be 143 bytes; the first 73 are compared): slot,
-   master gain and every band gain must echo.
+4. write the patched payload;
+5. confirm by readback with zero tolerance: the echo (which may be longer than
+   what was sent) must equal every byte sent: slot, master gain and every
+   band written.
 
 The earbuds first answer a query with the pre-change state, so confirmation
 keeps re-querying until the echo matches or the deadline passes.
@@ -191,7 +206,7 @@ restore command yet.
   gains in dB. Out-of-range values are rejected, not clamped. Without
   `--preset` the target is the currently active slot; without `--master-gain`
   the device's current master gain is kept.
-- `qcyctl master-gain <dB> [--json] [seconds]`: master gain in dB, -8..+8.
+- `qcyctl master-gain <dB> [--json] [seconds]`: master gain in dB, -12..+12.
 - `qcyctl eq preset <n>`: writes characteristic `000B`; fails on this model
   because the characteristic is absent.
 

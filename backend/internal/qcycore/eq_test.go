@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"math"
 	"os"
-	"strings"
 	"testing"
 	"time"
 )
@@ -120,15 +119,12 @@ func TestApplyRejectsBadInput(t *testing.T) {
 	if _, err := ApplyEq(cur[:72], EqOp{}); err == nil {
 		t.Fatal("72-byte payload accepted")
 	}
-	if _, err := ApplyEq(append(cur, 1), EqOp{}); err == nil {
-		t.Fatal("74-byte payload with non-zero tail accepted")
-	}
-	hi, lo := 801, -801
+	hi, lo := 1201, -1201
 	if _, err := ApplyEq(cur, EqOp{MasterCenti: &hi}); err == nil {
-		t.Fatal("master 801 accepted")
+		t.Fatal("master 1201 accepted")
 	}
 	if _, err := ApplyEq(cur, EqOp{MasterCenti: &lo}); err == nil {
-		t.Fatal("master -801 accepted")
+		t.Fatal("master -1201 accepted")
 	}
 	g := [EqBands]int{}
 	g[4] = 900
@@ -272,17 +268,155 @@ func TestRealPayload143(t *testing.T) {
 	}
 }
 
-func TestEqRejectsNonZeroTailAndShort(t *testing.T) {
-	cur := real143(t)
-	cur[100] = 1
-	if err := ValidateEq(cur); err == nil || !strings.Contains(err.Error(), "tail not zero") {
-		t.Fatalf("non-zero tail: %v", err)
-	}
-	m := 0
-	if _, err := ApplyEq(cur, EqOp{MasterCenti: &m}); err == nil {
-		t.Fatal("ApplyEq accepted non-zero tail")
-	}
+func TestEqAllFFAndShortRejected(t *testing.T) {
 	if err := ValidateEq(bytes.Repeat([]byte{0xff}, EqReadLen)); err == nil {
 		t.Fatal("143x0xFF accepted")
+	}
+	if err := ValidateEq(real143(t)[:EqLen-1]); err == nil {
+		t.Fatal("72-byte payload accepted")
+	}
+}
+
+// Real payloads read from the device (slot 11 custom, 13 bands; slot 6 factory
+// Classico, 5 bands with 0xFF empty-type markers in every unused position).
+const (
+	realCustom11  = "0b50fb320064003c0002c80076fd3c000284039cff460002f00ac800780002401f44fd5e01023f002c014600027d000000460002fa000000460002f4010000460002e8036400460002d0076400460002a00f6400460002401f900146000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+	realClassico6 = "0650fb3c002c01320002c8000cfe46000284039cff460002f00ac800780002401f44fd5e0102000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff"
+)
+
+func mustHex(t *testing.T, s string) []byte {
+	t.Helper()
+	p, err := hex.DecodeString(s)
+	if err != nil || len(p) != EqReadLen {
+		t.Fatalf("fixture: %v len %d", err, len(p))
+	}
+	return p
+}
+
+func TestRealCustomDecodes13Bands(t *testing.T) {
+	cur := mustHex(t, realCustom11)
+	s, err := DecodeEq(cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Slot != 11 || s.MasterGain != -12 || len(s.Bands) != 13 {
+		t.Fatalf("slot=%d master=%v bands=%d", s.Slot, s.MasterGain, len(s.Bands))
+	}
+	for i, b := range s.Bands {
+		if b.Index != i {
+			t.Fatalf("band %d has index %d", i, b.Index)
+		}
+	}
+	if s.Bands[12].Freq != 8000 || s.Bands[12].Gain != 4 || s.Bands[12].Q != 70 || s.Bands[1].Gain != -6.5 {
+		t.Fatalf("bands = %+v", s.Bands)
+	}
+}
+
+func TestRealClassicoDecodes5Bands(t *testing.T) {
+	s, err := DecodeEq(mustHex(t, realClassico6))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Slot != 6 || s.MasterGain != -12 || len(s.Bands) != 5 || s.Bands[4].Freq != 8000 || s.Bands[4].Gain != -7 {
+		t.Fatalf("%+v", s)
+	}
+}
+
+func TestRealCustomMasterPatchSendsFull143(t *testing.T) {
+	cur := mustHex(t, realCustom11)
+	if TailBlank(cur) {
+		t.Fatal("custom tail considered blank")
+	}
+	m := -600
+	next, err := ApplyEq(cur, EqOp{MasterCenti: &m})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next) != EqReadLen || !FullLength(next) {
+		t.Fatalf("len %d", len(next))
+	}
+	for i := range cur {
+		if (i == 1 || i == 2) == (next[i] == cur[i]) && i > 2 {
+			t.Fatalf("byte %d unexpectedly changed", i)
+		}
+		if i != 1 && i != 2 && next[i] != cur[i] {
+			t.Fatalf("byte %d changed: %02x -> %02x", i, cur[i], next[i])
+		}
+	}
+	if int16(uint16(next[1])|uint16(next[2])<<8) != -600 {
+		t.Fatalf("master bytes %x", next[1:3])
+	}
+	// the echo must match all 143 bytes
+	match := EqMatch(next, EqOp{MasterCenti: &m})
+	if !match(next) {
+		t.Fatal("exact echo not confirmed")
+	}
+	for _, off := range []int{0, 1, 5, 80, 142} {
+		bad := append([]byte(nil), next...)
+		bad[off] ^= 1
+		if match(bad) {
+			t.Fatalf("echo diverging at byte %d confirmed", off)
+		}
+	}
+	if match(next[:EqLen]) {
+		t.Fatal("73-byte echo confirmed a 143-byte write")
+	}
+	// positions 10+ stay as read when `eq set` patches positions 0-9
+	g := [EqBands]int{100, 100, 100, 100, 100, 100, 100, 100, 100, 100}
+	n2, err := ApplyEq(cur, EqOp{Gains: &g})
+	if err != nil || len(n2) != EqReadLen || !bytes.Equal(n2[73:], cur[73:]) {
+		t.Fatalf("eq set altered the tail or length: %v", err)
+	}
+}
+
+func TestRealClassicoMasterPatchSends73(t *testing.T) {
+	cur := mustHex(t, realClassico6)
+	if !TailBlank(cur) {
+		t.Fatal("Classico tail (0xFF type markers) not considered blank")
+	}
+	m := 0
+	next, err := ApplyEq(cur, EqOp{MasterCenti: &m})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next) != EqLen || FullLength(next) {
+		t.Fatalf("len %d", len(next))
+	}
+	want := append([]byte(nil), cur[:EqLen]...)
+	want[1], want[2] = 0, 0
+	if !bytes.Equal(next, want) {
+		t.Fatalf("got %x want %x", next, want)
+	}
+	// a 143-byte echo whose first 73 bytes match confirms
+	echo := append([]byte(nil), cur...)
+	echo[1], echo[2] = 0, 0
+	if !EqMatch(next, EqOp{MasterCenti: &m})(echo) {
+		t.Fatal("143-byte echo not confirmed")
+	}
+}
+
+func TestMasterRange12(t *testing.T) {
+	cur := mustHex(t, realClassico6)
+	for _, c := range []int{-1200, 1200} {
+		c := c
+		if _, err := ApplyEq(cur, EqOp{MasterCenti: &c}); err != nil {
+			t.Errorf("master %d rejected: %v", c, err)
+		}
+	}
+	for _, c := range []int{-1201, 1201, 40000} {
+		c := c
+		if _, err := ApplyEq(cur, EqOp{MasterCenti: &c}); err == nil {
+			t.Errorf("master %d accepted", c)
+		}
+	}
+	for _, db := range []float64{12, -12, 9.5, 0.5} {
+		if _, err := MasterCentiFromDB(db); err != nil {
+			t.Errorf("MasterCentiFromDB(%v): %v", db, err)
+		}
+	}
+	for _, db := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), 12.01, -12.01, 1e30} {
+		if _, err := MasterCentiFromDB(db); err == nil {
+			t.Errorf("MasterCentiFromDB(%v) accepted", db)
+		}
 	}
 }

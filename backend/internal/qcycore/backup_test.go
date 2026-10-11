@@ -152,9 +152,11 @@ func TestBackupKeepsFull143(t *testing.T) {
 	if len(strings.TrimSpace(string(raw))) != 2*EqReadLen {
 		t.Fatalf("backup holds %d hex chars", len(strings.TrimSpace(string(raw))))
 	}
-	bad := real143(t)
-	bad[120] = 7
-	if _, err := SaveEqBackupTo(dir, bad, time.Now()); err == nil {
-		t.Fatal("backup accepted non-zero tail")
+	// a payload with a populated tail is backed up whole
+	c := mustHex(t, realCustom11)
+	f2, err := SaveEqBackupTo(dir, c, time.Date(2026, 10, 11, 12, 0, 1, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
 	}
+	assertHex(t, f2.History, c)
 }
