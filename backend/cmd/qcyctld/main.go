@@ -930,9 +930,9 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 	if k, err := d.readKeys(); err == nil && len(k) > 0 {
 		rep["keys"] = bytesJSON(k)
 	}
-	if len(d.caps) > 0 {
+	if snap := d.capabilitiesSnapshot(); len(snap) > 0 {
 		caps := map[string]interface{}{}
-		for k, v := range d.caps {
+		for k, v := range snap {
 			caps[k] = v
 		}
 		rep["capabilities"] = caps
@@ -1121,6 +1121,22 @@ var optionalCmds = []struct {
 // Each probe query takes txMu itself, so it serialises against status reads
 // without holding the lock across the whole sweep — Go mutexes are not
 // reentrant, so holding it here and then calling query would deadlock.
+// capabilitiesSnapshot copies the probe results under the lock. Reading the map
+// directly raced the background probe, which writes it entry by entry while a
+// status request is walking it.
+func (d *daemon) capabilitiesSnapshot() map[string]bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.caps) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(d.caps))
+	for k, v := range d.caps {
+		out[k] = v
+	}
+	return out
+}
+
 func (d *daemon) probeCapabilities() {
 	d.mu.Lock()
 	if d.caps == nil {
@@ -1150,6 +1166,12 @@ func (d *daemon) probeCapabilities() {
 }
 
 func (d *daemon) readKeys() ([]byte, error) {
+	d.txMu.Lock()
+	defer d.txMu.Unlock()
+	return d.readKeysLocked()
+}
+
+func (d *daemon) readKeysLocked() ([]byte, error) {
 	if d.keysChar == nil {
 		return nil, errors.New("keys characteristic 000D not available on this device")
 	}
@@ -1164,6 +1186,8 @@ func (d *daemon) readKeys() ([]byte, error) {
 // writeKeys writes the remap table and reads it back, because the device sends
 // no ack for this characteristic — the readback is the only confirmation.
 func (d *daemon) writeKeys(raw []byte) error {
+	d.txMu.Lock()
+	defer d.txMu.Unlock()
 	if d.keysChar == nil {
 		return errors.New("keys characteristic 000D not available on this device")
 	}
@@ -1174,7 +1198,7 @@ func (d *daemon) writeKeys(raw []byte) error {
 		return fmt.Errorf("keys set write 000D: %w", err)
 	}
 	time.Sleep(150 * time.Millisecond)
-	got, err := d.readKeys()
+	got, err := d.readKeysLocked()
 	if err != nil {
 		return err
 	}

@@ -76,7 +76,6 @@ Singleton {
   // a slow read. Interrupted reads simply resume on their next tick.
   property bool _wantBattery: false
   property var _pendingSet: null
-  property bool _preempting: false
 
   // Read the full state from the earbuds. Low priority: if anything else is
   // using the adapter the read is skipped and retried on the next tick.
@@ -98,7 +97,6 @@ Singleton {
   function set(action, args) {
     _pendingSet = { action: action, args: args }
     if (statusProc.running || batteryProc.running) {
-      _preempting = true
       if (statusProc.running) { statusProc.signal(9); statusProc.running = false }
       if (batteryProc.running) { batteryProc.signal(9); batteryProc.running = false }
     } else if (!setProc.running) {
@@ -106,7 +104,6 @@ Singleton {
     }
   }
   function _startSet(action, args) {
-    _preempting = false
     error = ""
     busyAction = action
     setProc.command = [root.binary].concat(args, [String(root.scanSeconds)])
@@ -181,9 +178,10 @@ Singleton {
     command: [root.binary, "status", "--json", String(root.scanSeconds)]
     onRunningChanged: root.loading = running
     onExited: function (exitCode) {
-      var preempted = root._preempting
-      root._preempting = false
-      if (!preempted && exitCode !== 0 && root.report === null && root.connected)
+      // A read killed to make way for a click always exits non-zero, so the
+      // failure is only worth reporting when no setter is taking over. This
+      // used to be tracked with a flag that other callbacks had to clear.
+      if (!root.settling && exitCode !== 0 && root.report === null && root.connected)
         root.error = "Could not read the earbuds (exit " + exitCode + "). They may be busy; retrying."
       root._drain()
     }

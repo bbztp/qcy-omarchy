@@ -44,17 +44,8 @@ Panel {
   readonly property var togglesReport: rep && rep.toggles ? rep.toggles : ({})
 
   // Material Design Icons battery glyphs (Nerd Font), as used by omarchy.power.
-  readonly property var _chargeGlyphs: ["󰢜", "󰂆", "󰂇", "󰂈", "󰢝", "󰂉", "󰢞", "󰂊", "󰂋", "󰂅"]
   readonly property var _levelGlyphs: ["󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"]
-  // Shown while the earbuds are disconnected (a known-good Nerd Font glyph).
-  readonly property string _earbudsGlyph: "󰂲"
 
-  readonly property real level: {
-    if (Qcy.bluezBattery >= 0) return Qcy.bluezBattery
-    if (batt) return Math.min(batt.left, batt.right) / 100
-    return 0
-  }
-  readonly property bool charging: batt ? (batt.leftCharging || batt.rightCharging) : false
 
   readonly property var ancModes: [
     { key: "off", label: "Off" },
@@ -97,11 +88,6 @@ Panel {
   function levelGlyph(pct) {
     var idx = Math.max(0, Math.min(9, Math.floor((pct / 100) * 10)))
     return _levelGlyphs[idx]
-  }
-
-  function batteryGlyph() {
-    var idx = Math.max(0, Math.min(9, Math.floor(level * 10)))
-    return charging ? _chargeGlyphs[idx] : _levelGlyphs[idx]
   }
 
   function heroStatus() {
@@ -168,8 +154,6 @@ Panel {
     if (feature === "keys") return !!(rep && rep.keys)
     return true
   }
-
-  readonly property bool spatialKnown: has("spatial")
 
   property bool fitRunning: false
 
@@ -251,7 +235,7 @@ Panel {
     optimistic = next
     // The scene has to be re-sent with the new strength; the earbuds treat the
     // third ANC parameter as part of the same command.
-    Qcy.set("ANC strength", ["anc", currentAnc(), String(value)])
+    Qcy.set("ANC strength", ["anc", currentAnc(), "--level", String(value)])
   }
 
   // ---- sliders -------------------------------------------------------------
