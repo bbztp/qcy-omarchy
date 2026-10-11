@@ -275,7 +275,9 @@ func (meloBudsN70Handler) Capabilities() Capabilities {
 			{ID: "wearDetect", Label: "Wear Detection", Type: "toggle", Opcode: 0x2C, ReadOpcode: 0x2C},
 			{ID: "autoOff", Label: "Auto Off", Type: "slider", Min: 0, Max: 180, Step: 5, Opcode: 0x14, ReadOpcode: 0x14},
 			{ID: "balance", Label: "Balance", Type: "slider", Min: 0, Max: 100, Step: 1, Opcode: 0x16, ReadOpcode: 0x16},
-			{ID: "promptVolume", Label: "Prompt Volume", Type: "slider", Min: 0, Max: 255, Step: 1, Opcode: 0x1D, ReadOpcode: 0x1D},
+			// Max is the measured ceiling (0x1D reports max=15), not the byte
+			// width — the payload is one byte but the scale is 0..15.
+			{ID: "promptVolume", Label: "Prompt Volume", Type: "slider", Min: 0, Max: 15, Step: 1, Opcode: 0x1D, ReadOpcode: 0x1D},
 		},
 		BatteryChars: []string{"left", "right", "case"},
 	}
@@ -1006,24 +1008,35 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
 		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
 		"eq": 0x22,
+		// Wired so a model whose probe answers these can actually be driven by
+		// them; on units that stay silent the capability is false and the UI
+		// never offers the control.
+		"spatial": 0x2D, "fit": 0x11,
 		// Find my earbuds = make the indicator LED blink. An audible tone is
 		// useless here: a lost earbud is by definition not in your ear, so it
 		// could never play anything you could hear. 0x05 is Quicky's
 		// NewLightFlashCommand and is what actually lets you spot them.
 		"find": 0x05,
 	}
-	// Refused on purpose — writing this REBOOTS the MeloBuds N70:
+	// Refused on purpose — writing 0x23 REBOOTS the MeloBuds N70, and unlike
+	// multipoint below no documentation sanctions that restart, so it is a
+	// firmware fault rather than expected behaviour. Multipoint (0x24) also
+	// restarts the earbuds and that one is documented: the product notes state
+	// the earphones restart each time dual-device connection is toggled. Do not
+	// "fix" that.
 	//
-	//   ldac 0x23  Quicky's LDAC.go, but this N70 diverges from the firmware
-	//               Quicky targets and faults on the write. Unlike multipoint
-	//               below, no documentation sanctions this restart, so it is
-	//               treated as a fault rather than expected behaviour.
-	//
-	// Multipoint (0x24) DOES restart the earbuds, and that is documented: the
-	// N70 product notes state "The earphones will restart when you turn on/off
-	// Dual Device Connection in the APP each time." Do not "fix" that.
+	// ldac stays out of optionalCmds too — probing it would advertise a control
+	// whose only effect is rebooting the user's hardware. It is pinned false by
+	// readOnlyCmds, while gatherStatus still reads its state for display.
 	if action == "ldac" {
 		return nil, errors.New("ldac is disabled: writing it reboots this N70 and, unlike multipoint, the restart is not documented behaviour")
+	}
+	// Answering a query is not the same as honouring a write. promptVol is in
+	// this list because the earbuds report a perfectly plausible maximum and
+	// then discard every value sent to it; writing it would leave the user's
+	// volume changed on screen and unchanged in the hardware.
+	if reason, readOnly := readOnlyCmds[action]; readOnly {
+		return nil, fmt.Errorf("%s is read-only on this device: %s", action, reason)
 	}
 	opcode, ok := opcodeMap[action]
 	if !ok {
@@ -1108,14 +1121,53 @@ func (d *daemon) awaitValue(opcode byte, want []byte, timeout time.Duration) ([]
 // reply to its query.
 //
 // Only read-only queries are sent. Nothing here writes to the earbuds.
+//
+// validate, when set, rejects a reply that answers but does not describe a
+// usable setting — so a command that replies with a shape we cannot drive is
+// reported as absent rather than advertised as a dead control.
 var optionalCmds = []struct {
-	action string
-	opcode byte
+	action   string
+	opcode   byte
+	validate func([]byte) bool
 }{
-	{"spatial", 0x2D},
-	{"wear", 0x2C},
-	{"fit", 0x11},
-	{"ancLevel", 0x07},
+	{"spatial", 0x2D, nil},
+	{"wear", 0x2C, nil},
+	{"fit", 0x11, nil},
+	{"ancLevel", 0x07, nil},
+	{"promptVol", 0x1D, sanePromptVolume},
+}
+
+// readOnlyCmds are commands that answer a query yet must not be written.
+//
+// A query cannot tell us whether a setter works: the earbuds happily report
+// their prompt-volume maximum of 15 and then ignore every value written to it.
+// That reply is indistinguishable from a working setter that simply happens to
+// be at 6, so the only sound read-only test is liveness, and liveness is not
+// writability.
+//
+// Deciding by writing a probe value is not an option — a probe that changes
+// user state on every connection is worse than the broken control it replaces.
+// So writability is recorded here from the measured behaviour of this hardware
+// rather than inferred, and the query is left to answer the question it can
+// actually answer: does this unit have the command at all.
+var readOnlyCmds = map[string]string{
+	// 0x1D reads back 06 0f (value 6, max 15) for every value written. See
+	// PROTOCOL.md, "Prompt volume".
+	"promptVol": "reports a sane maximum but ignores every value written",
+	// 0x23 reboots the earbuds on write and nothing documents the restart.
+	"ldac": "writing it reboots the earbuds (undocumented firmware fault)",
+}
+
+// sanePromptVolume checks the 0x1D reply shape: [value, max]. This is NOT a
+// writability test — the hardware passes it while ignoring every write — it
+// only rejects a reply so malformed that there would be no slider range to
+// draw.
+func sanePromptVolume(p []byte) bool {
+	if len(p) < 2 {
+		return false
+	}
+	max := int(p[1])
+	return max > 0 && max <= 255 && int(p[0]) <= max
 }
 
 // Each probe query takes txMu itself, so it serialises against status reads
@@ -1149,7 +1201,14 @@ func (d *daemon) probeCapabilities() {
 	d.caps["balance"] = true
 	d.caps["autoOff"] = true
 	d.caps["eq"] = true
+	d.caps["wind"] = true
 	d.caps["keys"] = d.keysChar != nil
+
+	// Commands that exist but must not be driven. Set false up front so a
+	// failure to answer below cannot leave them looking available.
+	for action := range readOnlyCmds {
+		d.caps[action] = false
+	}
 	d.mu.Unlock()
 
 	// Read-only queries only. The timeout is short on purpose: these are
@@ -1157,10 +1216,17 @@ func (d *daemon) probeCapabilities() {
 	// silent, so there is no reason to wait long for an answer that is not
 	// coming.
 	for _, c := range optionalCmds {
-		_, err := d.query(c.opcode, 350*time.Millisecond)
+		if _, readOnly := readOnlyCmds[c.action]; readOnly {
+			continue // answering the query is not what makes it usable
+		}
+		p, err := d.query(c.opcode, 350*time.Millisecond)
+		ok := err == nil
+		if ok && c.validate != nil {
+			ok = c.validate(p)
+		}
 
 		d.mu.Lock()
-		d.caps[c.action] = err == nil
+		d.caps[c.action] = ok
 		d.mu.Unlock()
 	}
 }

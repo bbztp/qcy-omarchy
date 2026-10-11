@@ -39,25 +39,54 @@ answer a game-mode query with `0x02` when it is off.
 | `0x09` | game / low latency | `[1, 1|2]` | verified |
 | `0x0C` | ANC mode | `[1, mode]` | unverified |
 | `0x10` | sleep mode | `[1, 1|2]` | verified |
-| `0x11` | fit test | `[2, 1, 1]` start / `[2, 2, 2]` stop | unverified |
+| `0x11` | fit test | `[2, 1, 1]` start / `[2, 2, 2]` stop | unverified; no query reply on this model |
 | `0x14` | timed power-off | `[4, lo, hi, 0, 0]` | verified, 4 bytes not 2 |
 | `0x16` | L/R balance | `[1, value]` | verified |
 | `0x17` | ANC setting | `[3, mode, subScene, level]` | verified |
-| `0x1D` | prompt volume | `[1, value]` | verified read-only, writes ignored |
+| `0x1D` | prompt volume | `[1, value]` | verified read-only, writes ignored, max 15 |
 | `0x1E` | music control | `[1, action]` | unverified |
 | `0x20` | EQ v1 write | — | unverified |
 | `0x22` | EQ v2 read **and** write | see below | verified read-only |
-| `0x23` | LDAC | `[1, 1|2]` | verified: reboots the earbuds |
-| `0x24` | multipoint | `[1, 1|2]` | verified: reboots the earbuds, expected |
+| `0x23` | LDAC | `[1, 1\|2]` | verified: reboots the earbuds |
+| `0x24` | multipoint | `[1, 1\|2]` | verified: reboots the earbuds, expected |
+| `0x2A` | wind noise reduction | `[1, 1\|2]` | verified (added — was missing from this table) |
+| `0x2A` | wind detection | `[1, 1\|2]` | verified |
 | `0x2C` | wear detection | `[3, enabled, …]` | verified |
-| `0x2D` | spatial audio | `[1, 1|2]` | unverified |
+| `0x2D` | spatial audio | `[1, 1\|2]` | unverified; no query reply on this model |
 | `0x35` | EQ test | — | unverified |
 | `0x3D` | play a tone | `[1, toneId]` | verified: no audible effect |
 | `0x43` | touch remap | — | via characteristic `000d` |
 
 `0x07`, `0x11`, `0x2D` and `0x35` respond to a query on at least some
-firmware; `0x07` does not on this one, which is why ANC strength is carried in
-the third byte of `0x17` instead.
+firmware; on this unit only `0x07`, `0x11` and `0x2D` are ever asked, and all
+three stay silent, which is what makes `spatial`, `fit` and `ancLevel` report
+as unsupported.
+
+`0x07` not answering on this model is also why ANC strength is carried in the
+third byte of `0x17` instead of being set directly.
+
+## Setter behaviour measured on this unit
+
+Every wired setter was exercised through the daemon and read back with
+`qcyctl status --json`:
+
+| Setter | Result |
+|---|---|
+| balance `0x16` | honours the write |
+| auto-off `0x14` | honours the write |
+| game `0x09` | honours the write |
+| sleep `0x10` | honours the write |
+| wind `0x2A` | honours the write |
+| wear `0x2C` | honours the write |
+| prompt volume `0x1D` | **ignores the write**, always reports 6 of 15 |
+| ANC `0x17` | not exercised — rejected unless both earbuds are worn |
+| spatial `0x2D`, fit `0x11` | no query reply on this model |
+| eq `0x22` | read-only by design (see below) |
+| ldac `0x23` | reboots the earbuds; refused |
+
+Game, sleep and wind read back `false` after a reconnect and wind persisted
+across one, so treat their post-reconnect value as unsettled rather than as
+persisted state.
 
 ## ANC
 
@@ -116,8 +145,22 @@ the state they would actually be lost in.
 
 `0x1D` reads and writes cleanly but the device keeps reporting 6 regardless of
 what is written. The CLI's readback confirmation therefore fails loudly rather
-than reporting a success it cannot back up. Left as-is until the firmware
-behaviour is understood.
+than reporting a success it cannot back up.
+
+Measured on this unit: writing 0, 3, 9, 12 and 15 all read back `06 0f` —
+value 6, max 15. The write is accepted and discarded; the reply is not an echo
+of the last value sent.
+
+This is why prompt volume is listed in `readOnlyCmds` in the daemon rather than
+being probed. A query cannot establish writability: this device answers with a
+perfectly plausible maximum and then ignores the write, so the reply is
+indistinguishable from a working setter that happens to sit at 6. Probing by
+writing a different value would change the user's volume on every connection,
+so the measured behaviour is recorded instead. The `0x1D` query still runs, and
+`sanePromptVolume` still rejects a malformed reply — but both only answer "does
+this unit have the command", never "will it obey it".
+
+The reported maximum is 15, not the 255 the single-byte payload would allow.
 
 ## Characteristic layout (service `a001`)
 

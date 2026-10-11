@@ -439,6 +439,12 @@ func opcodeFor(action string) (byte, error) {
 	if action == "ldac" {
 		return 0, errors.New("ldac is disabled: writing it reboots this N70 and, unlike multipoint, the restart is not documented behaviour")
 	}
+	// promptVol (0x1D) answers a query with a plausible maximum and then
+	// discards every value written to it, so a write here would report a change
+	// the earbuds never made. See PROTOCOL.md, "Prompt volume".
+	if action == "promptVol" {
+		return 0, errors.New("prompt-vol is read-only on this device: it reports max=15 and ignores every value written")
+	}
 	opcode, ok := opcodeMap[action]
 	if !ok {
 		return 0, fmt.Errorf("unknown action: %s", action)
@@ -1791,11 +1797,13 @@ func cmdFind(args []string) error {
 
 func cmdPromptVol(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: qcyctl prompt-vol <0-255> [seconds]")
+		return errors.New("usage: qcyctl prompt-vol <0-15> [seconds]")
 	}
 	n, err := strconv.Atoi(args[0])
-	if err != nil || n < 0 || n > 255 {
-		return fmt.Errorf("prompt-vol: invalid value %q (0-255)", args[0])
+	// 0x1D carries one byte but the device reports max=15, so 0-255 was a
+	// range the hardware could never represent.
+	if err != nil || n < 0 || n > 15 {
+		return fmt.Errorf("prompt-vol: invalid value %q (0-15, the maximum this device reports)", args[0])
 	}
 	scanSeconds, err := parseSeconds(args[1:], 30)
 	if err != nil {
