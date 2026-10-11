@@ -61,14 +61,15 @@ Panel {
     { key: "antiwind", label: "Anti-wind" },
     { key: "transparency", label: "Transparency" }
   ]
-  // LDAC and multipoint are deliberately absent: writing their opcodes reboots
-  // this N70, so the backend refuses them and there is no point offering a
-  // switch that resets the earbuds. Both are still read back in the status
-  // report, so a future verified opcode can restore them here.
+  // LDAC is deliberately absent: writing 0x23 reboots this N70 and, unlike
+  // multipoint below, the restart is not documented behaviour. Multipoint IS
+  // listed because the N70 product notes state the earphones restart every time
+  // Dual Device Connection is toggled — that is expected, not a fault.
   readonly property var toggleDefs: [
     { key: "game", label: "Game mode (low latency)" },
-    { key: "sleep", label: "Sleep mode" },
-    { key: "wind", label: "Wind noise reduction" }
+    { key: "sleep", label: "Sleep mode (disables touch controls)" },
+    { key: "wind", label: "Wind noise detection" },
+    { key: "multipoint", label: "Multipoint — the earbuds restart when toggled" }
   ]
 
   function batteryGlyph() {

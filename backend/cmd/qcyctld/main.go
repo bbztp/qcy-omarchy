@@ -908,24 +908,22 @@ func (d *daemon) readBattery() (map[string]interface{}, error) {
 
 func (d *daemon) setAction(action string, params []byte) error {
 	opcodeMap := map[string]byte{
-		"anc": 0x17, "game": 0x09, "sleep": 0x10, "wind": 0x2A,
-		"promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
+		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
+		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
 		"eq": 0x22,
 	}
-	// Refused on purpose — every one of these was observed to REBOOT the
-	// MeloBuds N70 when written, which is firmware, not a cosmetic glitch:
+	// Refused on purpose — writing this REBOOTS the MeloBuds N70:
 	//
-	//   ldac       0x23  Quicky's LDAC.go, but the N70 diverges and faults
-	//   multipoint 0x24  no implementation exists in Quicky at all
+	//   ldac 0x23  Quicky's LDAC.go, but this N70 diverges from the firmware
+	//               Quicky targets and faults on the write. Unlike multipoint
+	//               below, no documentation sanctions this restart, so it is
+	//               treated as a fault rather than expected behaviour.
 	//
-	// Both still answer a read query, so reading them is harmless and they
-	// stay queryable in the status report; only the setter is refused.
-	refused := map[string]string{
-		"ldac":       "ldac is disabled: writing it reboots this N70 (Quicky's 0x23 does not match this firmware)",
-		"multipoint": "multipoint is disabled: writing it reboots this N70 and no 0x24 implementation is verified",
-	}
-	if msg, bad := refused[action]; bad {
-		return errors.New(msg)
+	// Multipoint (0x24) DOES restart the earbuds, and that is documented: the
+	// N70 product notes state "The earphones will restart when you turn on/off
+	// Dual Device Connection in the APP each time." Do not "fix" that.
+	if action == "ldac" {
+		return errors.New("ldac is disabled: writing it reboots this N70 and, unlike multipoint, the restart is not documented behaviour")
 	}
 	// 0x05 is the LED flash command, not "find my earbuds" — see below.
 	if action == "find" {

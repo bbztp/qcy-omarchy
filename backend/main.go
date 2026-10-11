@@ -305,17 +305,14 @@ func (w *daemonClientWrapper) battery() (map[string]interface{}, error) {
 
 func (w *daemonClientWrapper) setAction(action string, params []byte) error {
 	opcodeMap := map[string]byte{
-		"anc": 0x17, "game": 0x09, "sleep": 0x10, "wind": 0x2A,
-		"promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
+		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
+		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
 		"eq": 0x22,
 	}
-	// Writing ldac (0x23) or multipoint (0x24) reboots this N70; refuse rather
-	// than let a UI click reset the user's earbuds. Mirrors the daemon.
-	if msg, bad := map[string]string{
-		"ldac":       "ldac is disabled: writing it reboots this N70 (Quicky's 0x23 does not match this firmware)",
-		"multipoint": "multipoint is disabled: writing it reboots this N70 and no 0x24 implementation is verified",
-	}[action]; bad {
-		return errors.New(msg)
+	// Writing ldac (0x23) reboots this N70 and, unlike multipoint, the restart
+	// is not documented behaviour. Mirrors the daemon's guard.
+	if action == "ldac" {
+		return errors.New("ldac is disabled: writing it reboots this N70 and, unlike multipoint, the restart is not documented behaviour")
 	}
 	// 0x05 is the LED flash command, not "find my earbuds"; refuse rather than
 	// blink the indicator. See the same guard in the daemon's setAction.
