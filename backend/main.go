@@ -191,6 +191,13 @@ func statusFromDaemon(raw map[string]interface{}) *statusReport {
 		b := int(p[0])
 		rep.Balance = &b
 	}
+	if raw := bytesOf(raw["keys"]); len(raw) > 0 {
+		k := &keysReport{Raw: fmt.Sprintf("%x", raw)}
+		for i := 0; i+1 < len(raw); i += 2 {
+			k.Pairs = append(k.Pairs, fmt.Sprintf("%02x:%02x", raw[i], raw[i+1]))
+		}
+		rep.Keys = k
+	}
 	if p := bytesOf(raw["eq"]); len(p) > 0 {
 		if preset, bands, err := parseEq(p); err == nil {
 			eq := &eqReport{Preset: int(preset)}
@@ -260,12 +267,53 @@ func (dc *daemonClient) find() error {
 	return err
 }
 
+func (dc *daemonClient) setActionExpect(action string, params, expect []byte) ([]byte, error) {
+	data, err := dc.request("set", map[string]interface{}{
+		"action": action,
+		"params": numList(params),
+		"expect": numList(expect),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return bytesOf(data), nil
+}
+
+func (dc *daemonClient) keys() ([]byte, error) {
+	data, err := dc.request("keys", nil)
+	if err != nil {
+		return nil, err
+	}
+	return bytesOf(data), nil
+}
+
+func (dc *daemonClient) keysSet(raw []byte) error {
+	_, err := dc.request("keysSet", map[string]interface{}{"raw": numList(raw)})
+	return err
+}
+
+// numList renders a byte slice as a JSON array of numbers. A []byte marshals to
+// a base64 string, which the daemon's array decoder rejects.
+func numList(b []byte) []int {
+	out := make([]int, len(b))
+	for i, c := range b {
+		out[i] = int(c)
+	}
+	return out
+}
+
 // daemonAPI defines the interface for both daemon client and direct client wrapper.
 type daemonAPI interface {
 	status() (map[string]interface{}, error)
 	battery() (map[string]interface{}, error)
 	setAction(action string, params []byte) error
 	find() error
+	// setActionExpect writes a setter and waits for the device to report the
+	// expected payload, for the setters whose end state must be known
+	// (balance, prompt volume, auto-off).
+	setActionExpect(action string, params, expect []byte) ([]byte, error)
+	keys() ([]byte, error)
+	keysSet(raw []byte) error
 }
 
 // runViaDaemon tries the daemon first; on failure falls back to direct mode.
@@ -304,24 +352,9 @@ func (w *daemonClientWrapper) battery() (map[string]interface{}, error) {
 }
 
 func (w *daemonClientWrapper) setAction(action string, params []byte) error {
-	opcodeMap := map[string]byte{
-		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
-		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
-		"eq": 0x22,
-	}
-	// Writing ldac (0x23) reboots this N70 and, unlike multipoint, the restart
-	// is not documented behaviour. Mirrors the daemon's guard.
-	if action == "ldac" {
-		return errors.New("ldac is disabled: writing it reboots this N70 and, unlike multipoint, the restart is not documented behaviour")
-	}
-	// 0x05 is the LED flash command, not "find my earbuds"; refuse rather than
-	// blink the indicator. See the same guard in the daemon's setAction.
-	if action == "find" {
-		return errors.New("find is not supported: opcode 0x05 is the LED flash command and no find opcode has been verified on this device")
-	}
-	opcode, ok := opcodeMap[action]
-	if !ok {
-		return fmt.Errorf("unknown action: %s", action)
+	opcode, err := opcodeFor(action)
+	if err != nil {
+		return err
 	}
 	w.drain()
 	if err := w.send(opcode, params); err != nil {
@@ -333,6 +366,83 @@ func (w *daemonClientWrapper) setAction(action string, params []byte) error {
 
 func (w *daemonClientWrapper) find() error {
 	return w.setAction("find", []byte{0x01})
+}
+
+func (w *daemonClientWrapper) setActionExpect(action string, params, expect []byte) ([]byte, error) {
+	opcode, err := opcodeFor(action)
+	if err != nil {
+		return nil, err
+	}
+	// setConfirm writes, then keeps re-querying until the device reports the
+	// wanted value — these earbuds answer with the pre-change state first.
+	got, ok, err := w.setConfirm(opcode, params, 3*time.Second, func(p []byte) bool {
+		return bytes.HasPrefix(p, expect)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("readback mismatch for %s: want %x got %x", action, expect, got)
+	}
+	return got, nil
+}
+
+// opcodeFor maps a CLI action name to its opcode, refusing the ones that are
+// known-bad on this hardware. The daemon carries the same guard.
+func opcodeFor(action string) (byte, error) {
+	opcodeMap := map[string]byte{
+		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
+		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
+		"eq": 0x22,
+	}
+	// Writing ldac (0x23) reboots this N70 and, unlike multipoint, the restart
+	// is not documented behaviour. Mirrors the daemon's guard.
+	if action == "ldac" {
+		return 0, errors.New("ldac is disabled: writing it reboots this N70 and, unlike multipoint, the restart is not documented behaviour")
+	}
+	// 0x05 is the LED flash command, not "find my earbuds"; refuse rather than
+	// blink the indicator. See the same guard in the daemon's setAction.
+	if action == "find" {
+		return 0, errors.New("find is not supported: opcode 0x05 is the LED flash command and no find opcode has been verified on this device")
+	}
+	opcode, ok := opcodeMap[action]
+	if !ok {
+		return 0, fmt.Errorf("unknown action: %s", action)
+	}
+	return opcode, nil
+}
+
+func (w *daemonClientWrapper) keys() ([]byte, error) {
+	if w.q.keys == nil {
+		return nil, errors.New("keys characteristic 000D not available on this device")
+	}
+	var buf [64]byte
+	n, err := w.q.keys.Read(buf[:])
+	if err != nil {
+		return nil, fmt.Errorf("read keys 000D: %w", err)
+	}
+	return append([]byte(nil), buf[:n]...), nil
+}
+
+func (w *daemonClientWrapper) keysSet(raw []byte) error {
+	if w.q.keys == nil {
+		return errors.New("keys characteristic 000D not available on this device")
+	}
+	if len(raw) == 0 || len(raw)%2 != 0 {
+		return fmt.Errorf("keys set: payload must be non-empty keyId:funId pairs, got %d bytes", len(raw))
+	}
+	if _, err := w.q.keys.WriteWithoutResponse(raw); err != nil {
+		return fmt.Errorf("keys set write 000D: %w", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	got, err := w.keys()
+	if err != nil {
+		return err
+	}
+	if len(got) < len(raw) || !bytes.Equal(got[:len(raw)], raw) {
+		return fmt.Errorf("keys set readback mismatch: want %x got %x", raw, got)
+	}
+	return nil
 }
 
 func structToMap(v interface{}) (map[string]interface{}, error) {
@@ -1539,15 +1649,10 @@ func cmdPromptVol(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runClient(scanSeconds, func(c *client) error {
-		got, ok, err := c.setConfirm(0x1D, []byte{byte(n)}, 3*time.Second, func(p []byte) bool {
-			return len(p) >= 1 && p[0] == byte(n)
-		})
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		got, err := dc.setActionExpect("promptVol", []byte{byte(n)}, []byte{byte(n)})
 		if err != nil {
 			return err
-		}
-		if !ok {
-			return fmt.Errorf("prompt-vol readback mismatch: want 0x%02x got %x", n, got)
 		}
 		if len(got) >= 2 {
 			fmt.Printf("prompt-vol=%d confirmed (max=%d)\n", got[0], got[1])
@@ -1574,15 +1679,11 @@ func cmdAutoOff(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runClient(scanSeconds, func(c *client) error {
-		got, ok, err := c.setConfirm(0x14, le16(want), 3*time.Second, func(p []byte) bool {
-			return len(p) >= 2 && u16le(p, 0) == want
-		})
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		le := le16(want)
+		got, err := dc.setActionExpect("autoOff", le, le)
 		if err != nil {
 			return err
-		}
-		if !ok {
-			return fmt.Errorf("auto-off readback mismatch: want %04x got %x", want, got)
 		}
 		cur := ""
 		if len(got) >= 4 {
@@ -1616,17 +1717,14 @@ func cmdBalance(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runClient(scanSeconds, func(c *client) error {
-		got, ok, err := c.setConfirm(0x16, []byte{val}, 3*time.Second, func(p []byte) bool {
-			return len(p) >= 1 && p[0] == val
-		})
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		// Readback-confirmed: the end state is known, so wait for the device
+		// to report it rather than assuming the write landed.
+		got, err := dc.setActionExpect("balance", []byte{val}, []byte{val})
 		if err != nil {
 			return err
 		}
-		if !ok {
-			return fmt.Errorf("balance readback mismatch: want 0x%02x got %x", val, got)
-		}
-		fmt.Printf("balance=%s confirmed (0x%02x)\n", args[0], got[0])
+		fmt.Printf("balance=%d%% confirmed\n", got[0])
 		return nil
 	})
 }
@@ -1837,32 +1935,26 @@ func cmdKeysGet(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runClient(scanSeconds, func(c *client) error {
-		printKeys(c.q)
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		got, err := dc.keys()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("keys raw=%x\n", got)
+		fmt.Printf("keys pairs=%s\n", strings.Join(keyPairs(got), " "))
+		if len(got)%2 == 1 {
+			fmt.Printf("keys note: odd trailing byte 0x%02x\n", got[len(got)-1])
+		}
 		return nil
 	})
 }
 
-func printKeys(q *qcy) {
-	if q.keys == nil {
-		fmt.Fprintln(os.Stderr, "keys characteristic 000D not available")
-		return
-	}
-	var buf [64]byte
-	n, err := q.keys.Read(buf[:])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "read keys 000D: %v\n", err)
-		return
-	}
-	fmt.Printf("keys raw=%x\n", buf[:n])
+func keyPairs(raw []byte) []string {
 	var pairs []string
-	for i := 0; i+1 < n; i += 2 {
-		pairs = append(pairs, fmt.Sprintf("%02x:%02x", buf[i], buf[i+1]))
+	for i := 0; i+1 < len(raw); i += 2 {
+		pairs = append(pairs, fmt.Sprintf("%02x:%02x", raw[i], raw[i+1]))
 	}
-	fmt.Printf("keys pairs=%s\n", strings.Join(pairs, " "))
-	if n%2 == 1 {
-		fmt.Printf("keys note: odd trailing byte 0x%02x\n", buf[n-1])
-	}
+	return pairs
 }
 
 func cmdKeysSet(args []string) error {
@@ -1894,26 +1986,11 @@ func cmdKeysSet(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runClient(scanSeconds, func(c *client) error {
-		if c.q.keys == nil {
-			return errors.New("keys characteristic 000D not available")
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		if err := dc.keysSet(raw); err != nil {
+			return err
 		}
-		fmt.Printf("keys set tx=%x\n", raw)
-		n, err := c.q.keys.WriteWithoutResponse(raw)
-		if err != nil {
-			return fmt.Errorf("keys set write 000D: %w", err)
-		}
-		fmt.Printf("keys set write n=%d\n", n)
-		time.Sleep(150 * time.Millisecond)
-		var buf [64]byte
-		cnt, err := c.q.keys.Read(buf[:])
-		if err != nil {
-			return fmt.Errorf("keys set readback 000D: %w", err)
-		}
-		if cnt < len(raw) || !bytes.Equal(buf[:len(raw)], raw) {
-			return fmt.Errorf("keys set readback mismatch: want %x got %x", raw, buf[:cnt])
-		}
-		fmt.Printf("keys set confirmed raw=%x\n", buf[:cnt])
+		fmt.Printf("keys set confirmed raw=%x\n", raw)
 		return nil
 	})
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -137,8 +138,11 @@ type Capabilities struct {
 // ModelHandler defines the interface each model implements.
 type ModelHandler interface {
 	Capabilities() Capabilities
-	// HandleSet executes a setter action. Return nil on success.
-	HandleSet(d *daemon, actionID string, params []byte) error
+	// HandleSet executes a setter action. When expect is non-empty the daemon
+	// waits for the device to report that payload, so setters with a known end
+	// state (balance, prompt volume, auto-off) can be confirmed; toggles pass
+	// nil and return as soon as the write lands.
+	HandleSet(d *daemon, actionID string, params, expect []byte) ([]byte, error)
 	// HandleRead reads a specific state (optional, for non-standard reads).
 	HandleRead(d *daemon, actionID string) (interface{}, error)
 	// OnConnect called after successful connection (subscribe extra chars, etc).
@@ -215,8 +219,8 @@ func decodeParams(v interface{}) []byte {
 // HandleSet falls back to the daemon's opcode table. Unknown models must still
 // be able to drive the shared QCY opcode set — rejecting here would break every
 // setter the moment detection lands on an unrecognised string.
-func (GenericHandler) HandleSet(d *daemon, actionID string, params []byte) error {
-	return d.setAction(actionID, params)
+func (GenericHandler) HandleSet(d *daemon, actionID string, params, expect []byte) ([]byte, error) {
+	return d.setAction(actionID, params, expect)
 }
 
 func (GenericHandler) HandleRead(d *daemon, actionID string) (interface{}, error) {
@@ -268,7 +272,7 @@ func (meloBudsN70Handler) Capabilities() Capabilities {
 	}
 }
 
-func (meloBudsN70Handler) HandleSet(d *daemon, actionID string, params []byte) error {
+func (meloBudsN70Handler) HandleSet(d *daemon, actionID string, params, expect []byte) ([]byte, error) {
 	// Map handler action IDs to daemon action IDs
 	daemonAction := map[string]string{
 		"gameMode":     "game",
@@ -286,7 +290,7 @@ func (meloBudsN70Handler) HandleSet(d *daemon, actionID string, params []byte) e
 	if daemonAction == "" {
 		daemonAction = actionID
 	}
-	return d.setAction(daemonAction, params)
+	return d.setAction(daemonAction, params, expect)
 }
 
 func (meloBudsN70Handler) HandleRead(d *daemon, actionID string) (interface{}, error) {
@@ -519,6 +523,7 @@ func (d *daemon) setupDevice(dev bluetooth.Device) error {
 	d.versionChar = findChar(svc, verUUIDParsed)
 	d.keysChar = findChar(svc, keysUUIDParsed)
 	d.eqPresetChar = findChar(svc, eqPresetUUIDParsed)
+	probeCharacteristics(svc)
 
 	d.dev = dev
 	d.notifyCh = make(chan []byte, 16)
@@ -597,9 +602,32 @@ func detectModelFromName(name string) string {
 func findChar(s bluetooth.DeviceService, uuid bluetooth.UUID) *bluetooth.DeviceCharacteristic {
 	c, err := s.DiscoverCharacteristics([]bluetooth.UUID{uuid})
 	if err != nil || len(c) != 1 {
+		dbg("findChar %s: err=%v n=%d\n", uuid.String(), err, len(c))
 		return nil
 	}
 	return &c[0]
+}
+
+// probeCharacteristics is a QCYCTL_PROBE diagnostic: lists every characteristic
+// of the a001 service with its properties and whether it answers a read. It
+// exists because the touch-control characteristic 0x000D returns zero bytes on
+// this firmware, and the only way to tell "absent" from "silent" is to enumerate.
+func probeCharacteristics(svc bluetooth.DeviceService) {
+	if os.Getenv("QCYCTL_PROBE") == "" {
+		return
+	}
+	all, err := svc.DiscoverCharacteristics(nil)
+	if err != nil {
+		dbg("PROBE discover all: %v\n", err)
+		return
+	}
+	dbg("PROBE %d characteristics on a001\n", len(all))
+	for i := range all {
+		c := all[i]
+		var buf [64]byte
+		n, rerr := c.Read(buf[:])
+		dbg("PROBE  %s read=%d err=%v\n", c.UUID().String(), n, rerr)
+	}
 }
 
 func (d *daemon) markDisconnected() {
@@ -807,11 +835,28 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 	case "set":
 		action, _ := req.Args["action"].(string)
 		params := decodeParams(req.Args["params"])
-		dbg("SET action=%q params=%x\n", action, params)
-		// Route through model handler for validation/special handling
-		return nil, d.handler.HandleSet(d, action, params)
+		expect := decodeParams(req.Args["expect"])
+		dbg("SET action=%q params=%x expect=%x\n", action, params, expect)
+		// Route through the model handler for validation/special handling
+		got, err := d.handler.HandleSet(d, action, params, expect)
+		if err != nil {
+			return nil, err
+		}
+		if len(got) == 0 {
+			return nil, nil
+		}
+		return bytesJSON(got), nil
 	case "find":
 		return nil, errors.New("find is not supported: opcode 0x05 is the LED flash command and no find opcode has been verified on this device")
+	case "keys":
+		k, err := d.readKeys()
+		if err != nil {
+			return nil, err
+		}
+		return bytesJSON(k), nil
+	case "keysSet":
+		raw := decodeParams(req.Args["raw"])
+		return nil, d.writeKeys(raw)
 	case "disconnect":
 		d.mu.Lock()
 		if d.connected {
@@ -846,6 +891,9 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 	}
 	if fw := d.readVersionRaw(); len(fw) > 0 {
 		rep["firmwareBytes"] = bytesJSON(fw)
+	}
+	if k, err := d.readKeys(); err == nil && len(k) > 0 {
+		rep["keys"] = bytesJSON(k)
 	}
 
 	// ANC
@@ -906,7 +954,7 @@ func (d *daemon) readBattery() (map[string]interface{}, error) {
 	}, nil
 }
 
-func (d *daemon) setAction(action string, params []byte) error {
+func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error) {
 	opcodeMap := map[string]byte{
 		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
 		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
@@ -923,34 +971,116 @@ func (d *daemon) setAction(action string, params []byte) error {
 	// N70 product notes state "The earphones will restart when you turn on/off
 	// Dual Device Connection in the APP each time." Do not "fix" that.
 	if action == "ldac" {
-		return errors.New("ldac is disabled: writing it reboots this N70 and, unlike multipoint, the restart is not documented behaviour")
+		return nil, errors.New("ldac is disabled: writing it reboots this N70 and, unlike multipoint, the restart is not documented behaviour")
 	}
 	// 0x05 is the LED flash command, not "find my earbuds" — see below.
 	if action == "find" {
-		return errors.New("find is not supported: opcode 0x05 is the LED flash command and no find opcode has been verified on this device")
+		return nil, errors.New("find is not supported: opcode 0x05 is the LED flash command and no find opcode has been verified on this device")
 	}
 	opcode, ok := opcodeMap[action]
 	if !ok {
-		return fmt.Errorf("unknown action: %s", action)
+		return nil, fmt.Errorf("unknown action: %s", action)
 	}
 
 	d.mu.Lock()
 	if !d.connected {
 		d.mu.Unlock()
-		return errors.New("not connected")
+		return nil, errors.New("not connected")
 	}
 	d.mu.Unlock()
 
 	d.drain()
 	if err := d.send(opcode, params); err != nil {
-		return err
+		return nil, err
 	}
 
-	// Best-effort confirmation. Setters apply-and-go: the earbuds rarely echo a
-	// reply for these opcodes, so we give the ack a short grace period and then
-	// return success regardless. A long wait here would keep the client blocked
-	// (and the UI locked) for seconds on every single click.
+	// Two modes:
+	//
+	//   expect == nil — apply-and-go. Toggles and ANC do not reliably echo an
+	//     ack, and blocking the client for seconds on every click is what made
+	//     the panel feel stuck, so give the ack a short grace period and return.
+	//
+	//   expect != nil — readback-confirm, for the setters whose whole point is
+	//     a known end state (balance, prompt volume, auto-off). Mirrors the
+	//     direct client's setConfirm: keep re-querying until the device reports
+	//     the wanted value, because it often emits the pre-change state first.
+	if len(expect) > 0 {
+		got, err := d.awaitValue(opcode, expect, 3*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		return got, nil
+	}
 	_, _ = d.wait(opcode, 250*time.Millisecond)
+	return nil, nil
+}
+
+// awaitValue re-queries an opcode until the device reports the expected payload
+// or the deadline passes. These earbuds answer a query right after a write with
+// the value from BEFORE the change, so a single read is not a confirmation.
+//
+// The match is a PREFIX comparison: the device echoes the bytes we wrote
+// followed by extra state (prompt volume returns value+max, auto-off returns
+// reserve+current), so demanding an exact length would never confirm.
+func (d *daemon) awaitValue(opcode byte, want []byte, timeout time.Duration) ([]byte, error) {
+	deadline := time.After(timeout)
+	requery := time.After(400 * time.Millisecond)
+	queries := 0
+	var last []byte
+	for {
+		select {
+		case f := <-d.frames:
+			if f.cmd == opcode && bytes.HasPrefix(f.params, want) {
+				return f.params, nil
+			} else if f.cmd == opcode {
+				last = f.params
+			}
+		case <-requery:
+			if queries < 5 {
+				_ = d.send(0xFE, []byte{opcode})
+				queries++
+				requery = time.After(400 * time.Millisecond)
+			}
+		case <-deadline:
+			return nil, fmt.Errorf("readback mismatch for 0x%02x: want %x, device reported %x", opcode, want, last)
+		}
+	}
+}
+
+// readKeys reads the touch-control remap table from characteristic 000D. This
+// is a characteristic, not an opcode, so it does not go through the FF framing.
+func (d *daemon) readKeys() ([]byte, error) {
+	if d.keysChar == nil {
+		return nil, errors.New("keys characteristic 000D not available on this device")
+	}
+	var buf [64]byte
+	n, err := d.keysChar.Read(buf[:])
+	if err != nil {
+		return nil, fmt.Errorf("read keys 000D: %w", err)
+	}
+	return append([]byte(nil), buf[:n]...), nil
+}
+
+// writeKeys writes the remap table and reads it back, because the device sends
+// no ack for this characteristic — the readback is the only confirmation.
+func (d *daemon) writeKeys(raw []byte) error {
+	if d.keysChar == nil {
+		return errors.New("keys characteristic 000D not available on this device")
+	}
+	if len(raw) == 0 || len(raw)%2 != 0 {
+		return fmt.Errorf("keys set: payload must be non-empty keyId:funId pairs, got %d bytes", len(raw))
+	}
+	if _, err := d.keysChar.WriteWithoutResponse(raw); err != nil {
+		return fmt.Errorf("keys set write 000D: %w", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	got, err := d.readKeys()
+	if err != nil {
+		return err
+	}
+	if len(got) < len(raw) || !bytes.Equal(got[:len(raw)], raw) {
+		return fmt.Errorf("keys set readback mismatch: want %x got %x", raw, got)
+	}
 	return nil
 }
 
