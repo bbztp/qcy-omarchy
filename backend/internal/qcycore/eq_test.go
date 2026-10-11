@@ -2,8 +2,10 @@ package qcycore
 
 import (
 	"bytes"
+	"encoding/hex"
 	"math"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -118,8 +120,8 @@ func TestApplyRejectsBadInput(t *testing.T) {
 	if _, err := ApplyEq(cur[:72], EqOp{}); err == nil {
 		t.Fatal("72-byte payload accepted")
 	}
-	if _, err := ApplyEq(append(cur, 0), EqOp{}); err == nil {
-		t.Fatal("74-byte payload accepted")
+	if _, err := ApplyEq(append(cur, 1), EqOp{}); err == nil {
+		t.Fatal("74-byte payload with non-zero tail accepted")
 	}
 	hi, lo := 801, -801
 	if _, err := ApplyEq(cur, EqOp{MasterCenti: &hi}); err == nil {
@@ -215,5 +217,72 @@ func TestSaveEqBackupAllFFCreatesNothing(t *testing.T) {
 	}
 	if len(ents) != 0 {
 		t.Fatalf("backup files were created for an all-0xFF payload: %v", ents)
+	}
+}
+
+// realEq143 is the 0x22 payload (143 bytes) reported by the real device:
+// 73 known bytes followed by 70 zero bytes.
+const realEq143 = "0000001f00e0fc6400003e0000006400007d000000640000fa000000640000f4010000640000e8030000640000d0070000640000a00f0000640000401f0000640000803e000064000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+
+func real143(t *testing.T) []byte {
+	t.Helper()
+	p, err := hex.DecodeString(realEq143)
+	if err != nil || len(p) != EqReadLen {
+		t.Fatalf("fixture: %v len %d", err, len(p))
+	}
+	return p
+}
+
+func TestRealPayload143(t *testing.T) {
+	cur := real143(t)
+	if err := ValidateEq(cur); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateEq(cur[:EqLen]); err != nil {
+		t.Fatalf("73-byte payload rejected: %v", err)
+	}
+	m := -50
+	next, err := ApplyEq(cur, EqOp{MasterCenti: &m})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next) != EqLen {
+		t.Fatalf("write length %d, want %d", len(next), EqLen)
+	}
+	want := append([]byte(nil), cur[:EqLen]...)
+	want[1], want[2] = byte(int16(m)), byte(int16(m)>>8)
+	if !bytes.Equal(next, want) {
+		t.Fatalf("patched payload differs beyond bytes 1-2:\n got %x\nwant %x", next, want)
+	}
+	// echo of 143 bytes confirms; stale echo does not
+	echo := append(append([]byte(nil), next...), make([]byte, EqReadLen-EqLen)...)
+	match := EqMatch(next, EqOp{MasterCenti: &m})
+	if !match(echo) {
+		t.Fatal("143-byte echo not confirmed")
+	}
+	if match(cur) {
+		t.Fatal("pre-change 143-byte echo confirmed")
+	}
+	if match(echo[:EqLen-1]) {
+		t.Fatal("short echo confirmed")
+	}
+	s, err := DecodeEq(cur)
+	if err != nil || len(s.Bands) != EqBands || s.Bands[0].Freq != 31 || len(s.Payload) != 2*EqReadLen {
+		t.Fatalf("decode: %+v %v", s, err)
+	}
+}
+
+func TestEqRejectsNonZeroTailAndShort(t *testing.T) {
+	cur := real143(t)
+	cur[100] = 1
+	if err := ValidateEq(cur); err == nil || !strings.Contains(err.Error(), "tail not zero") {
+		t.Fatalf("non-zero tail: %v", err)
+	}
+	m := 0
+	if _, err := ApplyEq(cur, EqOp{MasterCenti: &m}); err == nil {
+		t.Fatal("ApplyEq accepted non-zero tail")
+	}
+	if err := ValidateEq(bytes.Repeat([]byte{0xff}, EqReadLen)); err == nil {
+		t.Fatal("143x0xFF accepted")
 	}
 }

@@ -138,3 +138,23 @@ func assertHex(t *testing.T, path string, want []byte) {
 		t.Fatalf("%s = %q, want %x", path, b, want)
 	}
 }
+
+func TestBackupKeepsFull143(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "backups")
+	p := real143(t)
+	f, err := SaveEqBackupTo(dir, p, time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHex(t, f.First, p)
+	assertHex(t, f.History, p)
+	raw, _ := os.ReadFile(f.First)
+	if len(strings.TrimSpace(string(raw))) != 2*EqReadLen {
+		t.Fatalf("backup holds %d hex chars", len(strings.TrimSpace(string(raw))))
+	}
+	bad := real143(t)
+	bad[120] = 7
+	if _, err := SaveEqBackupTo(dir, bad, time.Now()); err == nil {
+		t.Fatal("backup accepted non-zero tail")
+	}
+}

@@ -102,7 +102,9 @@ Level behaviour on this model:
 
 ## EQ
 
-**Verified read and write on `0x22`.** The payload is 73 bytes:
+**Verified read and write on `0x22`.** The device **reports 143 bytes**: 73 known bytes followed by 70 bytes that
+have always read zero. Only the 73 known bytes are ever written (the 73-byte
+form is the proven write format). The known layout:
 
 ```
 [slot:1][masterGain:int16 LE][10 x (freq:u16 LE, gain:int16 LE, q:u16 LE, type:u8)]
@@ -144,13 +146,14 @@ bytes that were asked for:
 
 Order of operations (done under one transaction lock in the daemon):
 
-1. read `0x22` (must be exactly 73 bytes);
-2. patch a copy;
-3. **save the payload read in step 1** (see Backups); if this fails the write is
+1. read `0x22` (143 bytes expected; at least 73 accepted; refused if all 0xFF or
+   if any byte beyond 73 is non-zero, since its meaning is unknown);
+2. patch a copy of the first 73 bytes;
+3. **save the full payload read in step 1** (all 143 bytes; see Backups); if this fails the write is
    **aborted** and the error is returned;
-4. write the patched payload;
-5. confirm by readback: slot and master gain must echo (for `master-gain`, the
-   first three bytes), and for `eq set` every band gain must too.
+4. write the patched 73-byte payload;
+5. confirm by readback (echo may be 143 bytes; the first 73 are compared): slot,
+   master gain and every band gain must echo.
 
 The earbuds first answer a query with the pre-change state, so confirmation
 keeps re-querying until the echo matches or the deadline passes.

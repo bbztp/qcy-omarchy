@@ -16,11 +16,16 @@ import (
 //
 //	[slot:1][masterGain:int16 LE, centi-dB][10 x (freq:u16 LE, gain:int16 LE, q:u16 LE, type:u8)]
 //
-// 3 + 10*7 = 73 bytes. Frequencies, Q and type are NOT fixed: the vendor's
-// hearing-test slot uses its own values, so a writer must preserve them.
+// 3 + 10*7 = 73 bytes (EqLen), the part whose layout is known and the only
+// part ever written. The device REPORTS 143 bytes (EqReadLen): the 73 known
+// bytes followed by 70 bytes that have always read zero. Frequencies, Q and
+// type are NOT fixed: the vendor's hearing-test slot uses its own values, so a
+// writer must preserve them.
 const (
-	EqOpcode   = 0x22
+	EqOpcode = 0x22
+	// EqLen is the known/written length; EqReadLen the length the device reports.
 	EqLen      = 73
+	EqReadLen  = 143
 	EqBands    = 10
 	eqBandSize = 7
 	eqHeader   = 3
@@ -63,14 +68,23 @@ type EqOp struct {
 	Slot        *int          // target slot byte (0-255)
 }
 
-// ValidateEq checks a payload is a full-size EQ payload (required before any
-// patch/write; reporting uses the more tolerant DecodeEq).
+// ValidateEq checks a payload read from the device is usable for a
+// read-modify-write: at least EqLen bytes (EqReadLen expected), not the
+// all-0xFF "no data" filler, and with an all-zero tail beyond EqLen. A
+// non-zero tail has unknown semantics, so it is refused rather than
+// silently truncated by a 73-byte write. Reporting uses the more tolerant
+// DecodeEq.
 func ValidateEq(p []byte) error {
-	if len(p) != EqLen {
-		return fmt.Errorf("eq: unexpected payload length %d (want %d)", len(p), EqLen)
+	if len(p) < EqLen {
+		return fmt.Errorf("eq: unexpected payload length %d (want at least %d, device reports %d)", len(p), EqLen, EqReadLen)
 	}
 	if IsAllFF(p) {
 		return fmt.Errorf("eq: device returned an all-0xFF payload (no real EQ data); refusing to back up or write over it")
+	}
+	for i := EqLen; i < len(p); i++ {
+		if p[i] != 0 {
+			return fmt.Errorf("eq: payload tail not zero (byte %d = 0x%02x), refusing to write: unknown semantics", i, p[i])
+		}
 	}
 	return nil
 }
@@ -134,14 +148,16 @@ func CentiFromDB(db float64) (int, error) {
 	return int(math.Round(db * 100)), nil
 }
 
-// ApplyEq returns a copy of cur with op applied. Only the fields named in op
-// change; frequency, Q and type of every band, and everything else in the
-// payload, are carried over byte for byte.
+// ApplyEq returns the EqLen-byte payload to write: the first EqLen bytes of cur
+// with op applied. Only the fields named in op change; frequency, Q and type of
+// every band are carried over byte for byte. The (all-zero, validated) tail the
+// device reports beyond EqLen is not sent: the 73-byte form is the proven
+// write format.
 func ApplyEq(cur []byte, op EqOp) ([]byte, error) {
 	if err := ValidateEq(cur); err != nil {
 		return nil, err
 	}
-	out := append([]byte(nil), cur...)
+	out := append([]byte(nil), cur[:EqLen]...)
 	if op.Slot != nil {
 		if *op.Slot < 0 || *op.Slot > 255 {
 			return nil, fmt.Errorf("eq: slot must be 0-255, got %d", *op.Slot)
@@ -168,21 +184,15 @@ func ApplyEq(cur []byte, op EqOp) ([]byte, error) {
 }
 
 // EqMatch returns the predicate that decides whether a device echo confirms a
-// write of sent. A master-gain-only op is confirmed by slot + master gain (the
-// first three bytes); anything that touches bands also requires every band gain
-// to read back.
+// write of sent (EqLen bytes). The echo may be EqLen or EqReadLen long; only
+// its first EqLen bytes are compared: slot, master gain and the gain of all 10
+// bands. op is kept for call-site compatibility.
 func EqMatch(sent []byte, op EqOp) func([]byte) bool {
 	return func(got []byte) bool {
-		if len(got) < eqHeader || len(sent) < eqHeader {
+		if len(got) < EqLen || len(sent) != EqLen {
 			return false
 		}
 		if !bytes.HasPrefix(got, sent[:eqHeader]) {
-			return false
-		}
-		if op.Gains == nil {
-			return true
-		}
-		if len(got) != EqLen || len(sent) != EqLen {
 			return false
 		}
 		for i := 0; i < EqBands; i++ {

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// payload11 is a 73-byte 0x22 payload: slot 11, master +1.50 dB, band 1 at
+// payload11 is a 73-byte 0x22 payload (the written form): slot 11, master +1.50 dB, band 1 at
 // 40 Hz / -2.5 dB (not the fixed 31 Hz table).
 func payload11() []byte {
 	p := make([]byte, 73)
