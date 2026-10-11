@@ -405,10 +405,15 @@ Panel {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 checked: root.toggleState(modelData.key)
-                busy: Qcy.busyAction !== "" || Qcy.loading
+                // Deliberately not bound to `busy`. ToggleSwitch swallows
+                // clicks while busy, and Qcy.loading is true for every
+                // background read the panel runs — so binding it here made the
+                // switches dead most of the time while the ANC chips (which
+                // have no such guard) kept working. Qcy.set() queues rather
+                // than drops, so overlapping clicks are safe.
                 foreground: root.foreground
                 accent: root.accent
-                onToggled: function() {
+                onToggled: {
                   root.setToggle(modelData.key, modelData.label, !root.toggleState(modelData.key))
                 }
               }

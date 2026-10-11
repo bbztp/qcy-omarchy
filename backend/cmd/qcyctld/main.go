@@ -607,6 +607,7 @@ func (d *daemon) markDisconnected() {
 	defer d.mu.Unlock()
 	if d.connected {
 		d.connected = false
+		dbg("DISCONNECTED: readLoop ended, notify channel closed\n")
 		if d.notifyCh != nil {
 			close(d.notifyCh)
 			d.notifyCh = nil
@@ -694,6 +695,7 @@ func buildFrame(opcode byte, params []byte) []byte {
 
 func (d *daemon) send(opcode byte, params []byte) error {
 	pkt := buildFrame(opcode, params)
+	dbg("TX 0x%02x %x\n", opcode, pkt)
 	_, err := d.cmdChar.WriteWithoutResponse(pkt)
 	if err == nil {
 		return nil
