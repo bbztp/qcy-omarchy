@@ -69,18 +69,6 @@ Panel {
   // multipoint below, the restart is not documented behaviour. Multipoint IS
   // listed because the N70 product notes state the earphones restart every time
   // Dual Device Connection is toggled — that is expected, not a fault.
-  // Toggles filtered by what the connected unit answered, so a model without
-  // game mode or spatial audio does not get a switch that does nothing.
-  readonly property var visibleToggles: {
-    var wanted = toggleDefs
-    var out = []
-    for (var i = 0; i < wanted.length; i++) {
-      var t = wanted[i]
-      if (t.requires === undefined || root.has(t.requires)) out.push(t)
-    }
-    return out
-  }
-
   readonly property var toggleDefs: [
     { key: "game", label: "Game mode" },
     { key: "sleep", label: "Sleep mode" },
@@ -672,9 +660,15 @@ Panel {
           rowSpacing: Style.space(12)
 
           Repeater {
-            model: root.visibleToggles
+            model: root.toggleDefs
             Item {
               required property var modelData
+              // Model stays constant and each row hides itself, rather than
+              // filtering the array: `rep` is a fresh object on every status
+              // read, so a derived array would give the Repeater a new model
+              // each time and rebuild every delegate mid-interaction, which
+              // drops clicks and flickers the panel.
+              visible: modelData.requires === undefined || root.has(modelData.requires)
               // Grid sizes cells for us; taking half the grid width keeps the
               // switch column aligned across both columns.
               width: (parent.width - Style.space(18)) / 2
@@ -1196,7 +1190,13 @@ Panel {
         }
 
         Text {
-          text: curve.freqLabel(modelData.freq)
+          // Computed here rather than via a panel helper: inside an inline
+          // component the name `root` resolves to this component, not the
+          // enclosing panel, so calling out to the panel's own function fails.
+          readonly property int hz: modelData.freq || 0
+          text: hz >= 1000
+            ? ((hz % 1000 === 0 ? (hz / 1000) : (hz / 1000).toFixed(1)) + "k")
+            : String(hz)
           color: Qt.darker(root.foreground, 1.75)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption * 0.85

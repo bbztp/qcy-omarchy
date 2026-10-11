@@ -64,8 +64,12 @@ type daemon struct {
 	// Model detection & routing
 	deviceName string
 	caps       map[string]bool
-	modelID    string
-	handler    ModelHandler
+	// txMu serialises BLE transactions. The frame channel is shared, so a
+	// background capability probe interleaving with a status read would drain
+	// the other one's replies and both would time out.
+	txMu    sync.Mutex
+	modelID string
+	handler ModelHandler
 }
 
 type frame struct {
@@ -557,7 +561,12 @@ func (d *daemon) detectAndAttachModel() {
 	d.modelID = modelID
 	d.handler = GetHandler(modelID)
 	_ = d.handler.OnConnect(d)
-	d.probeCapabilities()
+
+	// Probing costs a few round-trips and three of those commands go
+	// unanswered on some models, so it must not sit in front of the first
+	// status read the panel is waiting on. Run it after the connection is
+	// reported and let the next status pick up the result.
+	go d.probeCapabilities()
 }
 
 // readVersionRaw reads characteristic 0007 (firmware) as raw bytes. It is a
@@ -763,6 +772,8 @@ func (d *daemon) wait(opcode byte, timeout time.Duration) ([]byte, error) {
 // opcodes. Mirrors the proven client.setConfirm loop in the qcyctl backend:
 // re-query periodically and return the first frame that matches.
 func (d *daemon) query(opcode byte, timeout time.Duration) ([]byte, error) {
+	d.txMu.Lock()
+	defer d.txMu.Unlock()
 	d.drain()
 	if err := d.send(0xFE, []byte{opcode}); err != nil {
 		return nil, err
@@ -989,6 +1000,8 @@ func (d *daemon) readBattery() (map[string]interface{}, error) {
 }
 
 func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error) {
+	d.txMu.Lock()
+	defer d.txMu.Unlock()
 	opcodeMap := map[string]byte{
 		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
 		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
@@ -1105,7 +1118,11 @@ var optionalCmds = []struct {
 	{"ancLevel", 0x07},
 }
 
+// Each probe query takes txMu itself, so it serialises against status reads
+// without holding the lock across the whole sweep — Go mutexes are not
+// reentrant, so holding it here and then calling query would deadlock.
 func (d *daemon) probeCapabilities() {
+	d.mu.Lock()
 	if d.caps == nil {
 		d.caps = map[string]bool{}
 	}
@@ -1117,12 +1134,18 @@ func (d *daemon) probeCapabilities() {
 	d.caps["autoOff"] = true
 	d.caps["eq"] = true
 	d.caps["keys"] = d.keysChar != nil
+	d.mu.Unlock()
+
+	// Read-only queries only. The timeout is short on purpose: these are
+	// best-effort capability hints, and a model without the feature just stays
+	// silent, so there is no reason to wait long for an answer that is not
+	// coming.
 	for _, c := range optionalCmds {
-		if _, err := d.query(c.opcode, 600*time.Millisecond); err == nil {
-			d.caps[c.action] = true
-		} else {
-			d.caps[c.action] = false
-		}
+		_, err := d.query(c.opcode, 350*time.Millisecond)
+
+		d.mu.Lock()
+		d.caps[c.action] = err == nil
+		d.mu.Unlock()
 	}
 }
 
