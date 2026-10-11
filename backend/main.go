@@ -76,9 +76,9 @@ func mustUUID(s string) bluetooth.UUID {
 
 // daemonClient talks to qcyctld via Unix socket.
 type daemonClient struct {
-	conn   net.Conn
-	enc    *json.Encoder
-	dec    *json.Decoder
+	conn net.Conn
+	enc  *json.Encoder
+	dec  *json.Decoder
 }
 
 func dialDaemon(timeout time.Duration) (*daemonClient, error) {
@@ -215,7 +215,6 @@ func boolOf(v interface{}) bool {
 	return b
 }
 
-
 // bytesOf converts a JSON array of numbers back into the raw opcode payload.
 func bytesOf(v interface{}) []byte {
 	arr, ok := v.([]interface{})
@@ -308,7 +307,12 @@ func (w *daemonClientWrapper) setAction(action string, params []byte) error {
 	opcodeMap := map[string]byte{
 		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
 		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
-		"eq": 0x22, "find": 0x05,
+		"eq": 0x22,
+	}
+	// 0x05 is the LED flash command, not "find my earbuds"; refuse rather than
+	// blink the indicator. See the same guard in the daemon's setAction.
+	if action == "find" {
+		return errors.New("find is not supported: opcode 0x05 is the LED flash command and no find opcode has been verified on this device")
 	}
 	opcode, ok := opcodeMap[action]
 	if !ok {

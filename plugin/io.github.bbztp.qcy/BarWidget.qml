@@ -5,15 +5,15 @@ import qs.Commons
 import qs.Ui
 
 // QCY earbuds widget: the QCY wordmark in the bar and a popup with active
-// noise control, multipoint/LDAC/game toggles, find-my-buds, and a readout of
+// noise control, multipoint/LDAC/game toggles, and a readout of
 // the earbuds' state (firmware, per-ear battery, EQ curve, balance, auto-off).
 //
 // Actions apply immediately with optimistic UI; no wait for a scan. Full status
 // is read on (re)connect, on manual refresh, and once a minute while the panel
 // is open; battery is read on open and every 20s while open.
 //
-// Bar button — left click: panel · right click: re-read · middle click: find my earbuds
-// Panel — Esc: close · r: refresh · f: find my earbuds
+// Bar button — left click: panel · right click: re-read
+// Panel — Esc: close · r: refresh
 Panel {
   id: root
   moduleName: "io.github.bbztp.qcy"
@@ -206,7 +206,6 @@ Panel {
     function toggle() { root.toggle() }
     function refresh() { Qcy.refresh() }
     function battery() { Qcy.pollBattery() }
-    function find() { Qcy.set("Find my earbuds", ["find"]) }
   }
 
   // The QCY wordmark, tinted with the bar foreground. Wider than an icon slot,
@@ -242,10 +241,9 @@ Panel {
     foreground: root.foreground
     fixedWidth: root.vertical ? -1 : 44
     fixedHeight: root.vertical ? 44 : -1
-    tooltipText: "QCY Earbuds — left: panel · right: re-read · middle: find"
+    tooltipText: "QCY Earbuds — left: panel · right: re-read"
     onPressed: function (b) {
       if (b === Qt.RightButton) Qcy.refresh()
-      else if (b === Qt.MiddleButton) Qcy.set("Find my earbuds", ["find"])
       else root.toggle()
     }
     Loader {
@@ -272,7 +270,6 @@ Panel {
       onCloseRequested: root.close()
       onTextKey: function (t) {
         if (t === "r" || t === "R") Qcy.refresh()
-        else if (t === "f" || t === "F") Qcy.set("Find my earbuds", ["find"])
       }
 
       Column {
@@ -506,10 +503,6 @@ Panel {
         Row {
           spacing: Style.space(8)
 
-          Chip {
-            label: "Find my earbuds"
-            onClicked: Qcy.set("Find my earbuds", ["find"])
-          }
           Chip {
             label: Qcy.loading ? "Reading…" : "Refresh"
             active: Qcy.loading

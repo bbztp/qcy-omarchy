@@ -173,7 +173,6 @@ func (GenericHandler) Capabilities() Capabilities {
 			{ID: "autoOff", Label: "Auto Off", Type: "slider", Opcode: 0x14},
 			{ID: "balance", Label: "Balance", Type: "slider", Opcode: 0x16},
 			{ID: "promptVolume", Label: "Prompt Volume", Type: "slider", Opcode: 0x1D},
-			{ID: "find", Label: "Find Earbuds", Type: "trigger", Opcode: 0x05},
 		},
 		BatteryChars: []string{"left", "right", "case"},
 	}
@@ -264,7 +263,6 @@ func (meloBudsN70Handler) Capabilities() Capabilities {
 			{ID: "autoOff", Label: "Auto Off", Type: "slider", Min: 0, Max: 180, Step: 5, Opcode: 0x14, ReadOpcode: 0x14},
 			{ID: "balance", Label: "Balance", Type: "slider", Min: 0, Max: 100, Step: 1, Opcode: 0x16, ReadOpcode: 0x16},
 			{ID: "promptVolume", Label: "Prompt Volume", Type: "slider", Min: 0, Max: 255, Step: 1, Opcode: 0x1D, ReadOpcode: 0x1D},
-			{ID: "find", Label: "Find Earbuds", Type: "trigger", Opcode: 0x05},
 		},
 		BatteryChars: []string{"left", "right", "case"},
 	}
@@ -618,9 +616,10 @@ func (d *daemon) markDisconnected() {
 
 func (d *daemon) readLoop() {
 	for buf := range d.notifyCh {
+		dbg("notify raw=%x\n", buf)
 		frames, err := parseFrames(buf)
 		if err != nil {
-			dbg("notify unparsed raw=%x: %v\n", buf, err)
+			dbg("notify unparsed: %v\n", err)
 			continue
 		}
 		for _, f := range frames {
@@ -701,7 +700,7 @@ func (d *daemon) send(opcode byte, params []byte) error {
 	}
 	_, err2 := d.cmdChar.Write(pkt)
 	if err2 != nil {
-		dbg("  -> write failed: %v / %v\n", err, err2)
+		dbg("SET-FAIL 0x%02x: without-response=%v with-response=%v\n", opcode, err, err2)
 		d.markDisconnected()
 		return fmt.Errorf("write 0x%02x: %v", opcode, err2)
 	}
@@ -806,11 +805,11 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 	case "set":
 		action, _ := req.Args["action"].(string)
 		params := decodeParams(req.Args["params"])
-		dbg("set action=%q params=%x\n", action, params)
+		dbg("SET action=%q params=%x\n", action, params)
 		// Route through model handler for validation/special handling
 		return nil, d.handler.HandleSet(d, action, params)
 	case "find":
-		return nil, d.handler.HandleSet(d, "find", []byte{0x01})
+		return nil, errors.New("find is not supported: opcode 0x05 is the LED flash command and no find opcode has been verified on this device")
 	case "disconnect":
 		d.mu.Lock()
 		if d.connected {
@@ -909,7 +908,16 @@ func (d *daemon) setAction(action string, params []byte) error {
 	opcodeMap := map[string]byte{
 		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
 		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
-		"eq": 0x22, "find": 0x05,
+		"eq": 0x22,
+	}
+	// NOTE: 0x05 is deliberately absent. It maps to the LED flash command
+	// (command.NewLightFlashCommand), not to "find my earbuds" — sending it
+	// would blink the indicator light instead. No opcode for a real
+	// find-my-buds command has been verified on this hardware, so guessing one
+	// could put the earbuds into an unknown state. Until one is confirmed, the
+	// action is refused rather than mapped to something else.
+	if action == "find" {
+		return errors.New("find is not supported: opcode 0x05 is the LED flash command and no find opcode has been verified on this device")
 	}
 	opcode, ok := opcodeMap[action]
 	if !ok {
