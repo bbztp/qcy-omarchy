@@ -191,6 +191,14 @@ func statusFromDaemon(raw map[string]interface{}) *statusReport {
 		b := int(p[0])
 		rep.Balance = &b
 	}
+	if c, ok := raw["capabilities"].(map[string]interface{}); ok {
+		rep.Caps = map[string]bool{}
+		for k, v := range c {
+			if b, ok := v.(bool); ok {
+				rep.Caps[k] = b
+			}
+		}
+	}
 	if p := bytesOf(raw["spatial"]); len(p) >= 1 {
 		rep.Spatial = &spatialReport{Enabled: p[0] == 0x01}
 	}
@@ -1136,7 +1144,10 @@ type statusReport struct {
 	EQ        *eqReport       `json:"eq,omitempty"`
 	Keys      *keysReport     `json:"keys,omitempty"`
 	Spatial   *spatialReport  `json:"spatial,omitempty"`
-	Errors    []string        `json:"errors,omitempty"`
+	// Caps lists which optional commands this unit answered, so the panel can
+	// show only what the connected earbuds actually have.
+	Caps   map[string]bool `json:"capabilities,omitempty"`
+	Errors []string        `json:"errors,omitempty"`
 }
 
 type fwReport struct {

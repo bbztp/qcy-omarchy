@@ -69,6 +69,18 @@ Panel {
   // multipoint below, the restart is not documented behaviour. Multipoint IS
   // listed because the N70 product notes state the earphones restart every time
   // Dual Device Connection is toggled — that is expected, not a fault.
+  // Toggles filtered by what the connected unit answered, so a model without
+  // game mode or spatial audio does not get a switch that does nothing.
+  readonly property var visibleToggles: {
+    var wanted = toggleDefs
+    var out = []
+    for (var i = 0; i < wanted.length; i++) {
+      var t = wanted[i]
+      if (t.requires === undefined || root.has(t.requires)) out.push(t)
+    }
+    return out
+  }
+
   readonly property var toggleDefs: [
     { key: "game", label: "Game mode" },
     { key: "sleep", label: "Sleep mode" },
@@ -157,7 +169,19 @@ Panel {
     return rep.eq.bands
   }
 
-  readonly property bool spatialKnown: !!(rep && rep.spatial)
+  // What this unit actually answered, from the daemon's one-off probe. Falls
+  // back to the shape of the report when no probe has run, so the panel is
+  // never empty just because capabilities are missing.
+  readonly property var caps: (rep && rep.capabilities) ? rep.capabilities : null
+
+  function has(feature) {
+    if (caps) return caps[feature] === true
+    if (feature === "spatial") return !!(rep && rep.spatial)
+    if (feature === "keys") return !!(rep && rep.keys)
+    return true
+  }
+
+  readonly property bool spatialKnown: has("spatial")
 
   property bool fitRunning: false
 
@@ -648,7 +672,7 @@ Panel {
           rowSpacing: Style.space(12)
 
           Repeater {
-            model: root.toggleDefs
+            model: root.visibleToggles
             Item {
               required property var modelData
               // Grid sizes cells for us; taking half the grid width keeps the
@@ -781,7 +805,7 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
                 // Hidden when the device does not answer the spatial query,
                 // rather than offering a switch that does nothing.
-                visible: root.spatialKnown
+                visible: root.has("spatial")
                 checked: root.toggleState("spatial")
                 foreground: root.foreground
                 accent: root.accent
@@ -829,6 +853,7 @@ Panel {
           Item {
             width: parent.width
             implicitHeight: fitButton.implicitHeight
+            visible: root.has("fit")
 
             Text {
               text: "Ear-tip fit check"

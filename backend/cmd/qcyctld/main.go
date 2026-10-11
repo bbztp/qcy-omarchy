@@ -63,6 +63,7 @@ type daemon struct {
 
 	// Model detection & routing
 	deviceName string
+	caps       map[string]bool
 	modelID    string
 	handler    ModelHandler
 }
@@ -556,6 +557,7 @@ func (d *daemon) detectAndAttachModel() {
 	d.modelID = modelID
 	d.handler = GetHandler(modelID)
 	_ = d.handler.OnConnect(d)
+	d.probeCapabilities()
 }
 
 // readVersionRaw reads characteristic 0007 (firmware) as raw bytes. It is a
@@ -917,6 +919,13 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 	if k, err := d.readKeys(); err == nil && len(k) > 0 {
 		rep["keys"] = bytesJSON(k)
 	}
+	if len(d.caps) > 0 {
+		caps := map[string]interface{}{}
+		for k, v := range d.caps {
+			caps[k] = v
+		}
+		rep["capabilities"] = caps
+	}
 	if p, err := d.query(0x2D, 800*time.Millisecond); err == nil && len(p) >= 1 {
 		rep["spatial"] = bytesJSON(p)
 	}
@@ -1075,6 +1084,48 @@ func (d *daemon) awaitValue(opcode byte, want []byte, timeout time.Duration) ([]
 
 // readKeys reads the touch-control remap table from characteristic 000D. This
 // is a characteristic, not an opcode, so it does not go through the FF framing.
+
+// probeCapabilities asks the device about the optional commands once per
+// connection and records which ones it answers.
+//
+// The command space belongs to the protocol rather than to any one model, so a
+// fixed per-model feature list would be wrong for every earbud that is not the
+// one it was written against. Asking is both more accurate and how the
+// hardware itself reports: a unit that does not have a feature simply does not
+// reply to its query.
+//
+// Only read-only queries are sent. Nothing here writes to the earbuds.
+var optionalCmds = []struct {
+	action string
+	opcode byte
+}{
+	{"spatial", 0x2D},
+	{"wear", 0x2C},
+	{"fit", 0x11},
+	{"ancLevel", 0x07},
+}
+
+func (d *daemon) probeCapabilities() {
+	if d.caps == nil {
+		d.caps = map[string]bool{}
+	}
+	d.caps["anc"] = true
+	d.caps["game"] = true
+	d.caps["sleep"] = true
+	d.caps["multipoint"] = true
+	d.caps["balance"] = true
+	d.caps["autoOff"] = true
+	d.caps["eq"] = true
+	d.caps["keys"] = d.keysChar != nil
+	for _, c := range optionalCmds {
+		if _, err := d.query(c.opcode, 600*time.Millisecond); err == nil {
+			d.caps[c.action] = true
+		} else {
+			d.caps[c.action] = false
+		}
+	}
+}
+
 func (d *daemon) readKeys() ([]byte, error) {
 	if d.keysChar == nil {
 		return nil, errors.New("keys characteristic 000D not available on this device")
