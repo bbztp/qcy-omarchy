@@ -66,11 +66,22 @@ Panel {
   // listed because the N70 product notes state the earphones restart every time
   // Dual Device Connection is toggled — that is expected, not a fault.
   readonly property var toggleDefs: [
-    { key: "game", label: "Game mode (low latency)" },
-    { key: "sleep", label: "Sleep mode (disables touch controls)" },
-    { key: "wind", label: "Wind noise detection" },
-    { key: "multipoint", label: "Multipoint — the earbuds restart when toggled" }
+    { key: "game", label: "Game mode" },
+    { key: "sleep", label: "Sleep mode" },
+    { key: "wind", label: "Wind detection" },
+    { key: "multipoint", label: "Multipoint" }
   ]
+
+  // Notes shown once at the bottom rather than padded into the switch labels,
+  // where they blew the two-column layout out.
+  readonly property var notes:
+    "Multipoint restarts the earbuds — that is expected, not a fault.\n"
+    + "Sleep mode disables the touch controls; it has no audible effect."
+
+  function levelGlyph(pct) {
+    var idx = Math.max(0, Math.min(9, Math.floor((pct / 100) * 10)))
+    return _levelGlyphs[idx]
+  }
 
   function batteryGlyph() {
     var idx = Math.max(0, Math.min(9, Math.floor(level * 10)))
@@ -362,26 +373,99 @@ Panel {
         spacing: Style.space(14)
 
         // ---------- Hero ----------
-        Item {
+        // Earbuds in the middle with their charge either side, the way the
+        // earbuds' own app presents the device screen. Reading the panel should
+        // not mean parsing a column of text lines.
+        Column {
           width: parent.width
-          implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight)
+          spacing: Style.space(10)
 
-          Text {
-            id: heroIcon
-            text: Qcy.connected ? root.batteryGlyph() : root._earbudsGlyph
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.display
-            opacity: Qcy.connected ? 1.0 : 0.5
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(
+              Math.max(heroArt.height, heroPillLeft.height),
+              heroPillRight.height)
+
+            // A compact charge pill: glyph plus percentage.
+            component ChargePill: BorderSurface {
+              id: pill
+              required property string glyph
+              required property int level
+              property bool charging: false
+
+              readonly property color pillColor: pill.level <= 15
+                ? Color.urgent
+                : (pill.level <= 30 ? root.accent : root.foreground)
+
+              implicitWidth: pillRow.implicitWidth + Style.space(20)
+              implicitHeight: pillRow.implicitHeight + Style.space(10)
+              radius: Style.cornerRadius
+              color: "transparent"
+              borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
+
+              Row {
+                id: pillRow
+                anchors.centerIn: parent
+                spacing: Style.space(6)
+
+                Text {
+                  text: pill.glyph
+                  color: pill.pillColor
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+                Text {
+                  text: pill.level + "%"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                }
+              }
+            }
+
+            Image {
+              id: heroArt
+              anchors.centerIn: parent
+              width: 152
+              height: 112
+              source: "assets/earbuds.svg"
+              sourceSize: Qt.size(152, 112)
+              fillMode: Image.PreserveAspectFit
+              opacity: Qcy.connected ? 1.0 : 0.4
+            }
+            ColorOverlay {
+              anchors.fill: heroArt
+              source: heroArt
+              color: root.foreground
+            }
+
+            ChargePill {
+              id: heroPillLeft
+              anchors.right: heroArt.left
+              anchors.rightMargin: Style.space(10)
+              anchors.verticalCenter: heroArt.verticalCenter
+              visible: root.batt !== null
+              glyph: root.batt ? root.levelGlyph(root.batt.left) : ""
+              level: root.batt ? root.batt.left : 0
+              charging: root.batt ? root.batt.leftCharging : false
+            }
+
+            ChargePill {
+              id: heroPillRight
+              anchors.left: heroArt.right
+              anchors.leftMargin: Style.space(10)
+              anchors.verticalCenter: heroArt.verticalCenter
+              visible: root.batt !== null
+              glyph: root.batt ? root.levelGlyph(root.batt.right) : ""
+              level: root.batt ? root.batt.right : 0
+              charging: root.batt ? root.batt.rightCharging : false
+            }
           }
 
-          Column {
-            id: heroLabels
-            anchors.left: heroIcon.right
-            anchors.leftMargin: Style.space(14)
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(2)
+          Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Style.space(8)
 
             Text {
               text: root.modelName
@@ -389,8 +473,14 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
               font.bold: true
-              elide: Text.ElideRight
-              width: parent.width
+              anchors.verticalCenter: parent.verticalCenter
+            }
+            Text {
+              text: "·"
+              color: Qt.darker(root.foreground, 1.8)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.title
+              anchors.verticalCenter: parent.verticalCenter
             }
             Text {
               text: root.heroStatus()
@@ -398,34 +488,25 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               font.bold: true
-              font.letterSpacing: 1.1
-              elide: Text.ElideRight
-              width: parent.width
+              font.letterSpacing: 0.8
+              anchors.verticalCenter: parent.verticalCenter
             }
           }
         }
 
-        // ---------- Battery ----------
-        Column {
-          visible: root.batteryRows().length > 0
+// ---------- Case battery ----------
+        // Left and right are shown beside the earbuds in the hero; only the
+        // case needs its own row, and it is often the one people forget.
+        BatteryGauge {
           width: parent.width
-          spacing: Style.space(10)
-
-          Repeater {
-            model: root.batteryRows()
-            BatteryGauge {
-              required property var modelData
-              width: column.width
-              label: modelData.label
-              level: modelData.level
-              charging: modelData.charging
-              present: modelData.present
-            }
-          }
+          visible: !!(root.batt && root.batt.casePresent)
+          label: "Case"
+          level: root.batt ? root.batt.case : 0
+          charging: root.batt ? root.batt.caseCharging : false
         }
 
         PanelSeparator {
-          visible: root.batteryRows().length > 0
+          visible: !!(root.batt && root.batt.casePresent)
           foreground: root.foreground
         }
 
@@ -458,30 +539,39 @@ Panel {
 
         PanelSeparator { foreground: root.foreground }
 
-        // ---------- Toggles ----------
-        Column {
+        // ---------- Modes ----------
+        // Two columns: a single stack of label+switch rows is what made the
+        // panel feel like a wall of text. Short labels keep each cell readable.
+        Grid {
           width: parent.width
-          spacing: Style.space(10)
+          columns: 2
+          columnSpacing: Style.space(18)
+          rowSpacing: Style.space(12)
 
           Repeater {
             model: root.toggleDefs
             Item {
               required property var modelData
-              width: column.width
-              implicitHeight: Math.max(toggleLabel.implicitHeight, switchControl.implicitHeight)
+              // Grid sizes cells for us; taking half the grid width keeps the
+              // switch column aligned across both columns.
+              width: (parent.width - Style.space(18)) / 2
+              implicitHeight: Math.max(modeLabel.implicitHeight, modeSwitch.implicitHeight)
 
               Text {
-                id: toggleLabel
+                id: modeLabel
                 text: modelData.label
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
                 anchors.left: parent.left
+                anchors.right: modeSwitch.left
+                anchors.rightMargin: Style.space(10)
                 anchors.verticalCenter: parent.verticalCenter
+                elide: Text.ElideRight
               }
 
               ToggleSwitch {
-                id: switchControl
+                id: modeSwitch
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 checked: root.toggleState(modelData.key)
@@ -500,6 +590,8 @@ Panel {
             }
           }
         }
+
+        PanelSeparator { foreground: root.foreground }
 
         // ---------- Controls ----------
         Column {
@@ -633,34 +725,43 @@ Panel {
             fontFamily: root.fontFamily
           }
 
+          // Column-major via Grid: each cell is an independent row that sizes
+          // itself, so the action text can elide instead of spilling over its
+          // neighbour. The previous version hard-coded the cell width, which is
+          // what made the labels overlap.
           Grid {
             width: parent.width
             columns: 2
-            rowSpacing: Style.space(6)
-            columnSpacing: Style.space(16)
+            columnSpacing: Style.space(20)
+            rowSpacing: Style.space(7)
 
             Repeater {
               model: root.touchRows()
-              Row {
-                required property var modelData
-                width: (column.width - Style.space(16)) / 2
+
+              component TouchCell: Row {
+                id: cell
+                required property string slot
+                required property string action
+
+                width: 150
                 spacing: Style.space(8)
 
                 Text {
-                  text: modelData.slot
+                  text: cell.slot
                   color: Qt.darker(root.foreground, 1.4)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
                   font.bold: true
-                  width: Style.space(20)
+                  font.letterSpacing: 0.4
+                  width: Style.space(56)
                 }
                 Text {
-                  text: modelData.action
+                  text: cell.action
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
+                  width: parent.width - Style.space(64)
                   elide: Text.ElideRight
-                  width: parent.width - Style.space(28)
                 }
               }
             }
@@ -672,7 +773,7 @@ Panel {
           foreground: root.foreground
         }
 
-        // ---------- Actions ----------
+// ---------- Actions ----------
         Row {
           spacing: Style.space(8)
 
@@ -700,6 +801,19 @@ Panel {
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
+          width: parent.width
+        }
+
+        // Behaviour notes, so the "why is there no sound" questions have an
+        // answer in the panel rather than only in the commit log.
+        Text {
+          text: root.notes
+          color: Qt.darker(root.foreground, 1.7)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          font.italic: true
+          wrapMode: Text.WordWrap
+          lineHeight: 1.25
           width: parent.width
         }
       }

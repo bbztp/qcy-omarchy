@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Stylised MeloBuds-class stem earbuds, drawn for the panel rather than copied
+  from the product photography.
+
+  Line art with one tinted surface so it stays legible when the panel recolours
+  the whole illustration with the bar foreground via ColorOverlay. The tintable
+  surface carries the class "tint".
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 152 112" width="152" height="112">
+  <defs>
+    <!-- One earbud, upright, centred on the origin. Stem starts at y=2. -->
+    <g id="bud">
+      <!-- Tinted housing surface, behind the line work. -->
+      <path class="tint"
+            d="M-20,-20 Q-20,-34 0,-34 Q20,-34 20,-20 Q20,-6 9,3 L-9,3 Q-20,-6 -20,-20 Z"/>
+      <!-- Stem, drawn as one continuous shape so there is no seam at the joint. -->
+      <path class="line"
+            d="M-9,3 L-5.2,3 L-4.4,56 Q-4.4,60 0,60 Q4.4,60 4.4,56 L5.2,3 L9,3"/>
+      <!-- Housing outline. -->
+      <path class="line"
+            d="M-20,-20 Q-20,-34 0,-34 Q20,-34 20,-20 Q20,-6 9,3 L-9,3 Q-20,-6 -20,-20 Z"/>
+      <!-- Touch surface: a flattened inset on the outer face. -->
+      <rect class="line thin" x="-10.5" y="-27" width="21" height="19" rx="8.5"/>
+      <!-- Driver, suggested as a faint ring behind the touch surface. -->
+      <circle class="line faint" cx="0" cy="-17.5" r="6.4"/>
+      <!-- Charging contacts on the stem. -->
+      <path class="line thin" d="M-2.6,47 L-2.6,52.5 M0,47 L0,52.5 M2.6,47 L2.6,52.5"/>
+    </g>
+  </defs>
+
+  <g id="artwork">
+    <g transform="translate(50,52) rotate(-12)">
+      <use href="#bud"/>
+    </g>
+    <g transform="translate(102,52) rotate(12)">
+      <use href="#bud"/>
+    </g>
+  </g>
+
+  <style>
+    .line  { fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
+    .thin  { stroke-width: 1.5; }
+    .faint { stroke-width: 1.2; stroke-opacity: 0.45; }
+    .tint  { fill: currentColor; fill-opacity: 0.16; stroke: none; }
+  </style>
+</svg>
