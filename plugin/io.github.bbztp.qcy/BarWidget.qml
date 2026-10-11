@@ -82,6 +82,18 @@ Panel {
     "Multipoint restarts the earbuds — that is expected, not a fault.\n"
     + "Sleep mode disables the touch controls; it has no audible effect."
 
+  // The tooltip is the fastest read of the earbud state without opening the
+    // panel: both earbuds and the case, since that is the one that is easy to
+    // forget. Falls back to the model name until the first battery read lands.
+    function barTooltip() {
+      var name = root.modelName
+      if (!Qcy.connected) return name + " — not connected"
+      if (!batt) return name + " — reading battery…"
+      var parts = ["L " + batt.left + "%", "R " + batt.right + "%"]
+      if (batt.casePresent) parts.push("case " + batt.case + "%")
+      return name + " — " + parts.join(" · ")
+    }
+
   function levelGlyph(pct) {
     var idx = Math.max(0, Math.min(9, Math.floor((pct / 100) * 10)))
     return _levelGlyphs[idx]
@@ -340,7 +352,7 @@ Panel {
     foreground: root.foreground
     fixedWidth: root.vertical ? -1 : 44
     fixedHeight: root.vertical ? 44 : -1
-    tooltipText: "QCY Earbuds — left: panel · right: re-read"
+    tooltipText: root.barTooltip()
     onPressed: function (b) {
       if (b === Qt.RightButton) Qcy.refresh()
       else root.toggle()
@@ -389,43 +401,17 @@ Panel {
 
           Repeater {
             model: [
-                { label: "Device", index: 0 },
-                { label: "Sound", index: 1 },
-                { label: "Settings", index: 2 }
-              ]
-
-              component TabButton: BorderSurface {
-                id: tabBtn
-                required property string label
-                required property int index
-                readonly property bool active: root.tab === tabBtn.index
-
-                width: (tabBar.width - Style.space(6) * 2) / 3
-                implicitHeight: Style.spacing.controlHeight
-                radius: Style.cornerRadius
-                color: tabBtn.active
-                  ? Style.selectedFillFor(root.foreground, root.accent)
-                  : "transparent"
-                borderSpec: Border.controlSpec(
-                  tabBtn.active ? "selected" : "normal", root.foreground, root.accent)
-
-                Text {
-                  anchors.centerIn: parent
-                  text: tabBtn.label
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  font.bold: true
-                  font.letterSpacing: 0.6
-                }
-
-                MouseArea {
-                  anchors.fill: parent
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.tab = tabBtn.index
-                }
-              }
+              { label: "Device", index: 0 },
+              { label: "Sound", index: 1 },
+              { label: "Settings", index: 2 }
+            ]
+            TabButton {
+              required property var modelData
+              label: modelData.label
+              index: modelData.index
+              tabWidth: (tabBar.width - Style.space(6) * 2) / 3
             }
+          }
         }
 
         // ---------- Hero ----------
@@ -1120,6 +1106,43 @@ Panel {
       trackColor: Qt.darker(root.foreground, 1.6)
       onMoved: function (v) { srow.moved(v) }
       onReleased: function (v) { srow.released(v) }
+    }
+  }
+
+  // A tab in the panel's top bar. Declared at root scope: an inline component
+  // declared inside a Repeater is not valid QML and the delegate silently fails
+  // to instantiate, which is why the tab bar rendered empty.
+  component TabButton: BorderSurface {
+    id: tabBtn
+    required property string label
+    required property int index
+    property real tabWidth: 0
+
+    readonly property bool active: root.tab === tabBtn.index
+
+    width: tabBtn.tabWidth
+    implicitHeight: Style.spacing.controlHeight
+    radius: Style.cornerRadius
+    color: tabBtn.active
+      ? Style.selectedFillFor(root.foreground, root.accent)
+      : "transparent"
+    borderSpec: Border.controlSpec(
+      tabBtn.active ? "selected" : "normal", root.foreground, root.accent)
+
+    Text {
+      anchors.centerIn: parent
+      text: tabBtn.label
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      font.bold: true
+      font.letterSpacing: 0.6
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      cursorShape: Qt.PointingHandCursor
+      onClicked: root.tab = tabBtn.index
     }
   }
 
