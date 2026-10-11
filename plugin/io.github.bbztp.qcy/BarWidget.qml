@@ -80,8 +80,18 @@ Panel {
   function heroStatus() {
     if (!Qcy.connected) return "NOT CONNECTED"
     if (Qcy.loading) return "READING…"
-    if (rep && rep.firmware) return "FIRMWARE " + rep.firmware.left
+    if (rep && rep.firmware && rep.firmware.left) return "FIRMWARE " + rep.firmware.left
     return "CONNECTED"
+  }
+
+  // The model name BlueZ reports, trimmed of the vendor prefix so the header
+  // reads "MeloBuds N70" rather than repeating "QCY".
+  readonly property string modelName: {
+    var raw = ""
+    if (Qcy.device) raw = (Qcy.device.name || Qcy.device.deviceName || "")
+    var m = raw.match(/melobuds\s*(.+)/i)
+    if (m) return "MeloBuds " + m[1]
+    return raw || "QCY Earbuds"
   }
 
   function currentAnc() {
@@ -97,10 +107,12 @@ Panel {
   function batteryRows() {
     if (!batt) return []
     var rows = [
-      { label: "Left", level: batt.left, charging: batt.leftCharging },
-      { label: "Right", level: batt.right, charging: batt.rightCharging }
+      { label: "Left", level: batt.left, charging: batt.leftCharging, present: true },
+      { label: "Right", level: batt.right, charging: batt.rightCharging, present: true }
     ]
-    if (batt.casePresent) rows.push({ label: "Case", level: batt.case, charging: batt.caseCharging })
+    if (batt.casePresent) {
+      rows.push({ label: "Case", level: batt.case, charging: batt.caseCharging, present: true })
+    }
     return rows
   }
 
@@ -156,6 +168,42 @@ Panel {
     { label: "60m", value: "60" },
     { label: "90m", value: "90" }
   ]
+
+  // Touch-control remap table, decoded from the pairs reported for characteristic
+  // 000D. Ids follow Quicky's KeyID/FuncID vocabulary; an id outside it is shown
+  // as-is rather than guessed at.
+  readonly property var funcNames: ({
+    0x00: "Disabled", 0x01: "Play / pause", 0x02: "Previous", 0x03: "Next",
+    0x04: "Voice assistant", 0x05: "Volume up", 0x06: "Volume down",
+    0x07: "Game mode", 0x08: "Answer call", 0x09: "Reject call",
+    0x0a: "Hold call", 0x0b: "Redial"
+  })
+
+  readonly property var keyNames: ({
+    0x01: "L tap", 0x02: "R tap", 0x03: "L double", 0x04: "R double",
+    0x05: "L triple", 0x06: "R triple", 0x07: "L quad", 0x08: "R quad",
+    0x09: "L hold", 0x0a: "R hold",
+    0x15: "L tap (call)", 0x16: "R tap (call)", 0x17: "L double (call)",
+    0x18: "R double (call)", 0x19: "L triple (call)", 0x1a: "R triple (call)",
+    0x1b: "L quad (call)", 0x1c: "R quad (call)", 0x1d: "L hold (call)",
+    0x1e: "R hold (call)"
+  })
+
+  function touchRows() {
+    var k = rep ? rep.keys : null
+    if (!k || !k.pairs) return []
+    var rows = []
+    for (var i = 0; i < k.pairs.length; i++) {
+      var bits = k.pairs[i].split(":")
+      var kid = parseInt(bits[0], 16)
+      var fid = parseInt(bits[1], 16)
+      rows.push({
+        slot: root.keyNames[kid] || ("0x" + bits[0]),
+        action: root.funcNames[fid] || ("0x" + bits[1])
+      })
+    }
+    return rows
+  }
 
   function promptMax() {
     var p = rep ? rep.promptVolume : null
@@ -336,7 +384,7 @@ Panel {
             spacing: Style.space(2)
 
             Text {
-              text: "QCY Earbuds"
+              text: root.modelName
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
@@ -361,21 +409,17 @@ Panel {
         Column {
           visible: root.batteryRows().length > 0
           width: parent.width
-          spacing: Style.space(8)
-
-          PanelSectionHeader {
-            text: "BATTERY"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-          }
+          spacing: Style.space(10)
 
           Repeater {
             model: root.batteryRows()
-            StatRow {
+            BatteryGauge {
               required property var modelData
               width: column.width
               label: modelData.label
-              value: modelData.level + "%" + (modelData.charging ? "  󰂄 charging" : "")
+              level: modelData.level
+              charging: modelData.charging
+              present: modelData.present
             }
           }
         }
@@ -574,6 +618,60 @@ Panel {
           }
         }
 
+        // ---------- Touch controls ----------
+        // The remap table as read back from characteristic 000D. Read-only for
+        // now: a full gesture editor needs the function-id vocabulary, which
+        // is device-side and undocumented.
+        Column {
+          visible: root.touchRows().length > 0
+          width: parent.width
+          spacing: Style.space(8)
+
+          PanelSectionHeader {
+            text: "TOUCH CONTROLS"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+          }
+
+          Grid {
+            width: parent.width
+            columns: 2
+            rowSpacing: Style.space(6)
+            columnSpacing: Style.space(16)
+
+            Repeater {
+              model: root.touchRows()
+              Row {
+                required property var modelData
+                width: (column.width - Style.space(16)) / 2
+                spacing: Style.space(8)
+
+                Text {
+                  text: modelData.slot
+                  color: Qt.darker(root.foreground, 1.4)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  font.bold: true
+                  width: Style.space(20)
+                }
+                Text {
+                  text: modelData.action
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
+                  width: parent.width - Style.space(28)
+                }
+              }
+            }
+          }
+        }
+
+        PanelSeparator {
+          visible: root.touchRows().length > 0
+          foreground: root.foreground
+        }
+
         // ---------- Actions ----------
         Row {
           spacing: Style.space(8)
@@ -665,6 +763,91 @@ Panel {
       color: root.foreground
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+    }
+  }
+
+  // A horizontal charge gauge: label, a proportional bar, the percentage and a
+  // charging glyph. Reads at a glance the way the earbud's own LEDs do, which
+  // plain "Left 100%" rows do not.
+  component BatteryGauge: Item {
+    id: gauge
+    required property string label
+    required property int level
+    property bool charging: false
+    property bool present: true
+
+    readonly property color fillColor: gauge.level <= 15
+      ? Color.urgent
+      : (gauge.level <= 30 ? root.accent : root.foreground)
+
+    implicitHeight: gaugeTrack.height
+    visible: gauge.present
+
+    Text {
+      id: gaugeLabel
+      text: gauge.label
+      color: Qt.darker(root.foreground, 1.3)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      width: Style.space(44)
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+    }
+
+    Rectangle {
+      id: gaugeTrack
+      anchors.left: gaugeLabel.right
+      anchors.leftMargin: Style.space(10)
+      anchors.right: gaugePct.left
+      anchors.rightMargin: Style.space(10)
+      anchors.verticalCenter: parent.verticalCenter
+      height: Math.max(6, Math.round(Style.spacing.controlHeight * 0.22))
+      radius: height / 2
+      color: Qt.darker(root.foreground, 2.2)
+
+      Rectangle {
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: 1
+        anchors.topMargin: 1
+        anchors.bottomMargin: 1
+        width: Math.max(1, (parent.width - 2) * Math.max(0, Math.min(100, gauge.level)) / 100)
+        radius: parent.radius
+        color: gauge.fillColor
+
+        // A breathing highlight while charging, so the state reads without
+        // having to read the glyph.
+        SequentialAnimation on opacity {
+          running: gauge.charging
+          loops: Animation.Infinite
+          NumberAnimation { from: 0.55; to: 1.0; duration: 900; easing.type: Easing.InOutQuad }
+          NumberAnimation { from: 1.0; to: 0.55; duration: 900; easing.type: Easing.InOutQuad }
+        }
+      }
+    }
+
+    Text {
+      id: gaugePct
+      text: gauge.level + "%"
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      font.bold: true
+      anchors.right: gaugeCharge.left
+      anchors.rightMargin: gauge.charging ? Style.space(4) : 0
+      anchors.verticalCenter: parent.verticalCenter
+    }
+
+    Text {
+      id: gaugeCharge
+      text: "󰂄"
+      color: root.accent
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      visible: gauge.charging
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
     }
