@@ -14,8 +14,16 @@ vendor's low-energy GATT protocol) and shows their state:
   volume.
 
 It talks to the earbuds directly over Bluetooth Low Energy — no phone, no
-vendor app. A small user daemon, `qcyctld`, keeps the BLE connection open so
+vendor app. A small user daemon, `qcyctld`, holds the BLE connection so
 the widget's calls are fast; `qcyctl` is the matching Go CLI.
+
+The earbuds accept **one BLE client at a time**, so the daemon does not hold
+them permanently: it connects on the first request, keeps the link for an idle
+window (6 s by default, `QCYCTL_IDLE_SECONDS` or `qcyctld -idle N`, `0` = never
+release) and then disconnects, which frees the earbuds for the phone app. If
+the phone app (or anything else) holds them, requests fail with a `busy` error
+("earbuds are in use by another app"), the panel shows the last known state
+marked stale, and it recovers on the next refresh once the other app lets go.
 
 ## Requirements
 
@@ -97,6 +105,8 @@ qcyctl find                   # flash the earbuds
 Run `qcyctl` with no arguments for the full command list. Set `QCY_DEBUG=1` to
 trace the GATT traffic of the CLI on stderr; for the daemon set `QCYCTL_DEBUG=1`
 (e.g. `systemctl --user edit qcyctld.service`, then `journalctl --user -u qcyctld`).
+The same drop-in can set `Environment=QCYCTL_IDLE_SECONDS=<n>` to change the idle
+window.
 
 ## Layout
 

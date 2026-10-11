@@ -41,6 +41,35 @@ func TestStatusFromDaemonEq(t *testing.T) {
 	}
 }
 
+func TestStatusFromDaemonStaleFields(t *testing.T) {
+	stale := statusFromDaemon(map[string]interface{}{
+		"stale":      true,
+		"ageSeconds": float64(12),
+		"battery":    map[string]interface{}{"left": float64(80), "right": float64(70), "case": float64(50)},
+	})
+	m, err := structToMap(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m["stale"] != true || m["ageSeconds"] != float64(12) {
+		t.Fatalf("stale=%v ageSeconds=%v", m["stale"], m["ageSeconds"])
+	}
+	if b, _ := m["battery"].(map[string]interface{}); b["left"] != float64(80) {
+		t.Fatalf("battery lost: %v", m["battery"])
+	}
+
+	fresh, err := structToMap(statusFromDaemon(map[string]interface{}{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fresh["stale"]; ok {
+		t.Fatalf("fresh status carries stale: %v", fresh)
+	}
+	if _, ok := fresh["ageSeconds"]; ok {
+		t.Fatalf("fresh status carries ageSeconds: %v", fresh)
+	}
+}
+
 func TestMasterGainRejectsBeforeConnecting(t *testing.T) {
 	// All of these must fail in validation, never reaching Bluetooth.
 	for _, v := range []string{"NaN", "Inf", "-Inf", "12.5", "-13", "1e400", "abc", ""} {

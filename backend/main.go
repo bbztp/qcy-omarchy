@@ -155,6 +155,8 @@ func (dc *daemonClient) status() (map[string]interface{}, error) {
 // the helpers the direct path already uses.
 func statusFromDaemon(raw map[string]interface{}) *statusReport {
 	rep := &statusReport{Toggles: map[string]bool{}}
+	rep.Stale = boolOf(raw["stale"])
+	rep.AgeSeconds = intOf(raw["ageSeconds"])
 
 	if b, ok := raw["battery"].(map[string]interface{}); ok {
 		rep.Battery = &batteryReport{
@@ -1323,6 +1325,10 @@ type statusReport struct {
 	// show only what the connected earbuds actually have.
 	Caps   map[string]bool `json:"capabilities,omitempty"`
 	Errors []string        `json:"errors,omitempty"`
+	// Stale is set when the daemon served its last cached snapshot because the
+	// earbuds were busy; AgeSeconds is how old that snapshot is.
+	Stale      bool `json:"stale,omitempty"`
+	AgeSeconds int  `json:"ageSeconds,omitempty"`
 }
 
 type fwReport struct {

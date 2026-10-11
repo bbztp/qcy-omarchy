@@ -265,6 +265,32 @@ one JSON object per line, `{"cmd": ..., "args": {...}}`; replies are
 `{"ok": true, "data": ...}` or `{"ok": false, "error": "..."}`. Clients set a
 90 s deadline per round trip.
 
+### One client at a time, idle window
+
+The earbuds accept a single BLE central. `qcyctld` therefore connects lazily
+(nothing at startup, no background reconnect or probing) and releases the
+adapter again after an idle window:
+
+- the first request connects; further requests inside the window reuse the link;
+- every request restarts the idle timer, and the link is never dropped while a
+  transaction or a request is in flight;
+- when the window expires the daemon disables notifications and disconnects;
+- window: `QCYCTL_IDLE_SECONDS` (default 6) or `qcyctld -idle N`; `0` keeps the
+  link open for good (the previous behaviour). Positional `[scanSeconds]` is
+  unchanged.
+
+If the connect fails in a way that means another app holds the earbuds
+(`In Progress`, `Already Connected`, `Connection Refused`, `Resource Busy`), the
+daemon retries 3 times with a 1.5 s backoff, then answers
+`{"ok": false, "error": "earbuds are in use by another app (close the phone app and retry)", "code": "busy"}`.
+Further requests fail fast with the same answer for 3 s. `status` and `battery`
+instead return the last valid reading when one exists, with two extra fields,
+`"stale": true` and `"ageSeconds": N`; fresh readings carry neither. `code` is
+absent on every other error except `not_found`. `capabilities` is answered from the known model
+without connecting.
+
+If the scan finds nothing and no cached address answers, the daemon replies `{"ok": false, "error": "earbuds not found: powered off or out of range", "code": "not_found"}`: the earbuds are off or out of range, not held by another app. Only `In Progress`, `Already Connected`, `Connection Refused`, `Resource Busy` and `busy` count as `busy`; timeouts, aborts and `Not Connected` go on to the scan. A write that reaches the device drops the cached readings, so `status` and `battery` never answer `stale` after it.
+
 | `cmd` | `args` | `data` |
 |---|---|---|
 | `status` | none | raw per-opcode dump (`eq` is the raw 0x22 byte array) |

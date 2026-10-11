@@ -66,6 +66,13 @@ Singleton {
   property var report: null        // parsed `qcyctl status --json`
   property bool loading: false
   property string error: ""
+  // True when the last failure was the daemon's "busy" answer: the earbuds
+  // accept one BLE client at a time and another app (the phone) holds them.
+  property bool busy: false
+  // Age in seconds of a status served from the daemon's cache, or -1 when the
+  // report on screen is fresh.
+  property int staleAgeSeconds: -1
+  readonly property string busyMessage: "Earbuds are in use by another app \u2014 close it and refresh"
   property double updatedAt: 0     // Date.now() of the last successful read
   property string busyAction: ""   // label of an in-flight setter, for UI feedback
 
@@ -146,6 +153,16 @@ Singleton {
     try {
       report = JSON.parse(trimmed)
       updatedAt = Date.now()
+      if (report && report.stale === true) {
+        // Cached reading: the earbuds are held elsewhere right now.
+        var age = Math.max(0, Math.round(Number(report.ageSeconds) || 0))
+        staleAgeSeconds = age
+        busy = true
+        error = busyMessage + " (showing the last reading, " + age + " s old)"
+      } else {
+        staleAgeSeconds = -1
+        busy = false
+      }
     } catch (e) {
       error = "Could not parse qcyctl output"
     }
@@ -165,14 +182,29 @@ Singleton {
   // Short retry after a failed full read, on top of the slow panel poll: the
   // earbuds are often busy right after connect. Backoff 5s, 10s, 20s, 30s (cap),
   // giving up after _retryMax attempts until the next connect/manual refresh.
+  // When the daemon says the earbuds are in use by another app, hammering them
+  // only keeps the link contested: a single spaced retry (30 s) is enough.
   property int _retryCount: 0
   readonly property int _retryMax: 6
+  readonly property int _busyRetryMs: 30000
 
-  function _scheduleRetry() {
+  function _scheduleRetry(wasBusy) {
+    if (wasBusy) {
+      if (_retryCount >= 1) return
+      _retryCount = 1
+      retryTimer.interval = _busyRetryMs
+      retryTimer.restart()
+      return
+    }
     if (_retryCount >= _retryMax) return
     _retryCount++
     retryTimer.interval = Math.min(30000, 5000 * Math.pow(2, _retryCount - 1))
     retryTimer.restart()
+  }
+
+  // The daemon's busy error reaches qcyctl's stderr verbatim.
+  function _isBusyText(text) {
+    return !!text && String(text).indexOf("in use by another app") !== -1
   }
 
   Timer {
@@ -198,6 +230,8 @@ Singleton {
       report = null
       battery = null
       error = ""
+      busy = false
+      staleAgeSeconds = -1
       _wantBattery = false
       _pendingSet = null
     }
@@ -212,15 +246,26 @@ Singleton {
       // failure is only worth reporting when no setter is taking over. This
       // used to be tracked with a flag that other callbacks had to clear.
       var failed = exitCode !== 0 && !root.settling && root.connected
-      if (failed && root.report === null)
-        root.error = "Could not read the earbuds (exit " + exitCode + "). They may be busy; retrying."
-      if (failed) root._scheduleRetry()
-      else if (exitCode === 0) root._retryCount = 0
+      var wasBusy = failed && root._isBusyText(statusErr.text)
+      if (wasBusy) {
+        root.busy = true
+        root.error = root.busyMessage
+      } else if (failed && root.report === null) {
+        root.busy = false
+        root.error = "Could not read the earbuds (exit " + exitCode + ")"
+      }
+      if (failed) root._scheduleRetry(wasBusy)
+      else if (exitCode === 0 && !root.busy) root._retryCount = 0
+      else if (exitCode === 0 && root.staleAgeSeconds >= 0) root._scheduleRetry(true)
       root._drain()
     }
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root._applyStatus(text)
+    }
+    stderr: StdioCollector {
+      id: statusErr
+      waitForEnd: true
     }
   }
 
@@ -233,14 +278,22 @@ Singleton {
     }
     onExited: function (exitCode) {
       if (exitCode !== 0) {
-        root.error = "Command failed (exit " + exitCode + ")"
+        var wasBusy = root._isBusyText(setErr.text)
+        if (wasBusy) {
+          root.busy = true
+          root.error = root.busyMessage
+        } else {
+          root.error = "Command failed (exit " + exitCode + ")"
+        }
         root.setFailed()
-        root.refresh()
+        // No immediate re-read when the earbuds are held elsewhere: that would
+        // clear the message and only contest the link again.
+        if (!wasBusy) root.refresh()
       }
       root._drain()
     }
     stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { id: setErr; waitForEnd: true }
   }
 
   Process {

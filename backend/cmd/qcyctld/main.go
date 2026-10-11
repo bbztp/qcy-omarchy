@@ -3,11 +3,11 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"math"
 	"net"
@@ -20,7 +20,6 @@ import (
 	"syscall"
 	"time"
 
-	quicky "github.com/hui1601/Quicky/lib"
 	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore"
 	"tinygo.org/x/bluetooth"
 )
@@ -50,34 +49,43 @@ var (
 )
 
 type daemon struct {
-	// connMu serialises connect attempts so that a slow scan does not have to
-	// hold mu: status reads, markDisconnected and the capability snapshot only
-	// need mu, and must not stall behind a 15-30 s scan.
+	// connMu serialises connect/close of the BLE session so that a slow scan
+	// does not have to hold mu: status reads, markDisconnected and the
+	// capability snapshot only need mu, and must not stall behind a scan.
 	connMu sync.Mutex
-	// mu guards connection state (connected, notifyCh, caps, handler, modelID).
-	mu           sync.Mutex
-	adapter      *bluetooth.Adapter
-	dev          bluetooth.Device
-	cmdChar      bluetooth.DeviceCharacteristic
-	notifyChar   bluetooth.DeviceCharacteristic
-	batteryChar  *bluetooth.DeviceCharacteristic
-	versionChar  *bluetooth.DeviceCharacteristic
-	keysChar     *bluetooth.DeviceCharacteristic
-	eqPresetChar *bluetooth.DeviceCharacteristic
-	notifyCh     chan []byte
-	frames       chan frame
-	connected    bool
-	scanSeconds  int
+	// mu guards connection state (connected, sess, caps, handler, modelID, the
+	// idle timer and the status cache). Never held across BLE I/O or a sleep.
+	mu         sync.Mutex
+	dialer     dialer
+	sess       session
+	frames     chan frame
+	connected  bool
+	deviceName string
 
 	// Model detection & routing
-	deviceName string
-	caps       map[string]bool
+	caps   map[string]bool
+	probed bool
 	// txMu serialises BLE transactions. The frame channel is shared, so a
 	// background capability probe interleaving with a status read would drain
 	// the other one's replies and both would time out.
 	txMu    sync.Mutex
 	modelID string
 	handler ModelHandler
+
+	// Connection lifecycle (see lifecycle.go).
+	cfg         lifecycleConfig
+	now         func() time.Time
+	sleep       func(time.Duration)
+	inflight    int // requests and background holds in progress
+	idleGen     uint64
+	idleTimer   *time.Timer
+	busyUntil   time.Time
+	closing     bool   // set at shutdown: no new link may be opened (guarded by mu)
+	roundSeq    uint64 // connect rounds finished; lets queued requests share a failed round
+	lastErr     error  // error of the last failed round (nil after a success)
+	writeGen    uint64 // bumped by every write; guards the status cache
+	lastStatus  *snapshot
+	lastBattery *snapshot
 }
 
 type frame struct {
@@ -94,6 +102,9 @@ type response struct {
 	OK    bool        `json:"ok"`
 	Data  interface{} `json:"data,omitempty"`
 	Error string      `json:"error,omitempty"`
+	// Code is a stable machine-readable error class ("busy"); empty for
+	// ordinary errors, which clients tell apart by Error alone.
+	Code string `json:"code,omitempty"`
 }
 
 func mustUUID(s string) bluetooth.UUID {
@@ -399,186 +410,6 @@ func loadCachedName() string {
 	return strings.ReplaceAll(fields[2], "_", " ")
 }
 
-func (d *daemon) connect(ctx context.Context) error {
-	d.connMu.Lock()
-	defer d.connMu.Unlock()
-
-	d.mu.Lock()
-	already := d.connected
-	d.mu.Unlock()
-	if already {
-		return nil
-	}
-
-	adapter := bluetooth.DefaultAdapter
-	if err := adapter.Enable(); err != nil {
-		return fmt.Errorf("enable adapter: %w", err)
-	}
-	d.adapter = adapter
-
-	// Fast path: cached address
-	if addr, ok := loadCachedAddr(); ok {
-		if dev, err := d.dialLE(adapter, addr, 2*time.Second); err == nil {
-			d.deviceName = loadCachedName()
-			if err := d.setupDevice(dev); err == nil {
-				saveCachedAddr(addr, d.deviceName)
-				d.setConnected()
-				return nil
-			}
-			_ = dev.Disconnect()
-		}
-	}
-
-	// Scan path
-	scanner := quicky.NewScanner()
-	addrCh := make(chan bluetooth.Address, 1)
-	nameCh := make(chan string, 1)
-	scanErrCh := make(chan error, 1)
-	go func() {
-		scanErrCh <- scanner.Scan(func(r quicky.ScanResult) {
-			select {
-			case addrCh <- r.Address:
-			default:
-			}
-			if r.Name != "" {
-				select {
-				case nameCh <- r.Name:
-				default:
-				}
-			}
-		})
-	}()
-
-	var addr bluetooth.Address
-	found := false
-	timer := time.NewTimer(time.Duration(d.scanSeconds) * time.Second)
-	defer timer.Stop()
-	select {
-	case addr = <-addrCh:
-		found = true
-	case err := <-scanErrCh:
-		return fmt.Errorf("scan: %w", err)
-	case <-timer.C:
-	}
-	if !found {
-		_ = scanner.StopScan()
-		return errors.New("no QCY device found during scan")
-	}
-
-	var dev bluetooth.Device
-	var err error
-	for attempt := 1; attempt <= 5; attempt++ {
-		dev, err = adapter.Connect(addr, bluetooth.ConnectionParams{})
-		if err == nil {
-			break
-		}
-		select {
-		case addr = <-addrCh:
-		default:
-		}
-		time.Sleep(700 * time.Millisecond)
-	}
-	_ = scanner.StopScan()
-	if err != nil {
-		return fmt.Errorf("connect LE %s: %w", addr, err)
-	}
-
-	d.deviceName = loadScanName(nameCh)
-	if err := d.setupDevice(dev); err != nil {
-		_ = dev.Disconnect()
-		return err
-	}
-	saveCachedAddr(addr, d.deviceName)
-	d.setConnected()
-	return nil
-}
-
-func (d *daemon) setConnected() {
-	d.mu.Lock()
-	d.connected = true
-	d.mu.Unlock()
-}
-
-// loadScanName picks up the advertised name observed during the scan, if any.
-func loadScanName(ch chan string) string {
-	select {
-	case n := <-ch:
-		return n
-	default:
-		return ""
-	}
-}
-
-func (d *daemon) dialLE(adapter *bluetooth.Adapter, addr bluetooth.Address, timeout time.Duration) (bluetooth.Device, error) {
-	type res struct {
-		dev bluetooth.Device
-		err error
-	}
-	ch := make(chan res, 1)
-	go func() {
-		dev, err := adapter.Connect(addr, bluetooth.ConnectionParams{})
-		ch <- res{dev, err}
-	}()
-	select {
-	case r := <-ch:
-		return r.dev, r.err
-	case <-time.After(timeout):
-		return bluetooth.Device{}, errors.New("connect timed out")
-	}
-}
-
-func (d *daemon) setupDevice(dev bluetooth.Device) error {
-	services, err := dev.DiscoverServices([]bluetooth.UUID{svcUUIDParsed})
-	if err != nil {
-		return fmt.Errorf("discover service a001: %w", err)
-	}
-	if len(services) == 0 {
-		return errors.New("QCY service a001 not found on LE device")
-	}
-	svc := services[0]
-
-	req, err := svc.DiscoverCharacteristics([]bluetooth.UUID{cmdUUIDParsed, notifyUUIDParsed})
-	if err != nil {
-		return fmt.Errorf("discover characteristics: %w", err)
-	}
-	if len(req) < 2 {
-		return errors.New("missing command/notify characteristics")
-	}
-	d.cmdChar = req[0]
-	d.notifyChar = req[1]
-
-	d.batteryChar = findChar(svc, battUUIDParsed)
-	d.versionChar = findChar(svc, verUUIDParsed)
-	d.keysChar = findChar(svc, keysUUIDParsed)
-	d.eqPresetChar = findChar(svc, eqPresetUUIDParsed)
-	probeCharacteristics(svc)
-
-	notifyCh := make(chan []byte, 16)
-	d.mu.Lock()
-	d.dev = dev
-	d.notifyCh = notifyCh
-	d.frames = make(chan frame, 64)
-	d.mu.Unlock()
-
-	if err := d.notifyChar.EnableNotifications(func(buf []byte) {
-		// A non-blocking send: the callback must never wedge the BLE stack,
-		// and it must not panic on a channel markDisconnected has closed.
-		defer func() { _ = recover() }()
-		select {
-		case notifyCh <- append([]byte(nil), buf...):
-		default:
-		}
-	}); err != nil {
-		return fmt.Errorf("enable notifications 1002: %w", err)
-	}
-
-	go d.readLoop(notifyCh)
-
-	// Detect model and attach handler
-	d.detectAndAttachModel()
-	return nil
-}
-
 func (d *daemon) detectAndAttachModel() {
 	// The advertised name is the authoritative signal; the 0007 firmware string
 	// is only a corroborating hint (it is a bare "1.2.3" on this hardware).
@@ -597,18 +428,30 @@ func (d *daemon) detectAndAttachModel() {
 	// unanswered on some models, so it must not sit in front of the first
 	// status read the panel is waiting on. Run it after the connection is
 	// reported and let the next status pick up the result.
-	go d.probeCapabilities()
+	//
+	// Once per daemon lifetime: the answers belong to the device, not to one
+	// connection, and re-asking on every on-demand reconnect would only keep
+	// the earbuds busy longer. The probe holds the connection (inflight) so the
+	// idle timer cannot cut it off half way.
+	if d.needsProbe() {
+		d.beginRequest()
+		go func() {
+			defer d.endRequest()
+			d.probeCapabilities()
+		}()
+	}
 }
 
 // readVersionRaw reads characteristic 0007 (firmware) as raw bytes. It is a
 // single GATT read — no command round-trip — so it is cheap enough to run on
 // every connect. Returns nil when the characteristic is absent or unreadable.
 func (d *daemon) readVersionRaw() []byte {
-	if d.versionChar == nil {
+	s := d.curSession()
+	if s == nil {
 		return nil
 	}
 	var buf [8]byte
-	n, err := d.versionChar.Read(buf[:])
+	n, err := s.Read(charVersion, buf[:])
 	if err != nil || n == 0 {
 		return nil
 	}
@@ -643,65 +486,6 @@ func detectModelFromName(name string) string {
 		return "melobuds-n70"
 	}
 	return "generic"
-}
-
-func findChar(s bluetooth.DeviceService, uuid bluetooth.UUID) *bluetooth.DeviceCharacteristic {
-	c, err := s.DiscoverCharacteristics([]bluetooth.UUID{uuid})
-	if err != nil || len(c) != 1 {
-		dbg("findChar %s: err=%v n=%d\n", uuid.String(), err, len(c))
-		return nil
-	}
-	return &c[0]
-}
-
-// probeCharacteristics is a QCYCTL_PROBE diagnostic: lists every characteristic
-// of the a001 service with its properties and whether it answers a read. It
-// exists because the touch-control characteristic 0x000D returns zero bytes on
-// this firmware, and the only way to tell "absent" from "silent" is to enumerate.
-func probeCharacteristics(svc bluetooth.DeviceService) {
-	if os.Getenv("QCYCTL_PROBE") == "" {
-		return
-	}
-	all, err := svc.DiscoverCharacteristics(nil)
-	if err != nil {
-		dbg("PROBE discover all: %v\n", err)
-		return
-	}
-	dbg("PROBE %d characteristics on a001\n", len(all))
-	for i := range all {
-		c := all[i]
-		var buf [64]byte
-		n, rerr := c.Read(buf[:])
-		dbg("PROBE  %s read=%d err=%v\n", c.UUID().String(), n, rerr)
-	}
-}
-
-func (d *daemon) markDisconnected() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.connected {
-		d.connected = false
-		dbg("DISCONNECTED: readLoop ended, notify channel closed\n")
-		if d.notifyCh != nil {
-			close(d.notifyCh)
-			d.notifyCh = nil
-		}
-	}
-}
-
-func (d *daemon) readLoop(notifyCh chan []byte) {
-	for buf := range notifyCh {
-		dbg("notify raw=%x\n", buf)
-		frames, err := parseFrames(buf)
-		if err != nil {
-			dbg("notify unparsed: %v\n", err)
-			continue
-		}
-		for _, f := range frames {
-			d.frames <- f
-		}
-	}
-	d.markDisconnected()
 }
 
 // dbg writes diagnostics to stderr when QCYCTL_DEBUG is set. Off by default:
@@ -770,15 +554,14 @@ func buildFrame(opcode byte, params []byte) []byte {
 func (d *daemon) send(opcode byte, params []byte) error {
 	pkt := buildFrame(opcode, params)
 	dbg("TX 0x%02x %x\n", opcode, pkt)
-	_, err := d.cmdChar.WriteWithoutResponse(pkt)
-	if err == nil {
-		return nil
+	sess := d.curSession()
+	if sess == nil {
+		return errors.New("not connected")
 	}
-	_, err2 := d.cmdChar.Write(pkt)
-	if err2 != nil {
-		dbg("SET-FAIL 0x%02x: without-response=%v with-response=%v\n", opcode, err, err2)
+	if err := sess.WriteCmd(pkt); err != nil {
+		dbg("SET-FAIL 0x%02x: %v\n", opcode, err)
 		d.markDisconnected()
-		return fmt.Errorf("write 0x%02x: %v", opcode, err2)
+		return fmt.Errorf("write 0x%02x: %v", opcode, err)
 	}
 	return nil
 }
@@ -867,12 +650,36 @@ func (d *daemon) drain() {
 }
 
 func (d *daemon) handleRequest(req request) (interface{}, error) {
-	if !d.isConnected() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := d.connect(ctx); err != nil {
-			return nil, err
+	// The request holds the connection for its whole duration; the idle window
+	// starts when the last one ends.
+	d.beginRequest()
+	defer d.endRequest()
+
+	if req.Cmd == "disconnect" {
+		d.closeSession()
+		return nil, nil
+	}
+	// The capability list is static per model: answer it from what is already
+	// known instead of grabbing the single BLE link for it.
+	if req.Cmd == "capabilities" {
+		if h := d.knownHandler(); h != nil {
+			return h.Capabilities(), nil
 		}
+	}
+	if err := d.ensureConnected(); err != nil {
+		if isBusy(err) {
+			if data, ok := d.staleFor(req.Cmd); ok {
+				return data, nil
+			}
+		}
+		return nil, err
+	}
+	// Any write may change what status/battery report: a cached reading from
+	// before it must never be served as stale afterwards, whatever the outcome
+	// (a failed write may still have reached the device).
+	switch req.Cmd {
+	case "set", "find", "eqApply", "eqMasterGain", "wear", "keysSet":
+		defer d.invalidateCache()
 	}
 	d.mu.Lock()
 	handler := d.handler
@@ -883,9 +690,21 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 
 	switch req.Cmd {
 	case "status":
-		return d.gatherStatus()
+		gen := d.cacheGen()
+		rep, err := d.gatherStatus()
+		if err != nil {
+			return nil, err
+		}
+		d.storeStatus(rep, gen)
+		return rep, nil
 	case "battery":
-		return d.readBattery()
+		gen := d.cacheGen()
+		b, err := d.readBattery()
+		if err != nil {
+			return nil, err
+		}
+		d.storeBattery(b, gen)
+		return b, nil
 	case "capabilities":
 		return handler.Capabilities(), nil
 	case "set":
@@ -909,14 +728,18 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 		if _, err := handler.HandleSet(d, "find", []byte{0x01}, nil); err != nil {
 			return nil, err
 		}
+		//
+		// The goroutine holds the connection for the blink: with the idle
+		// window the link would otherwise drop before the stop is sent.
+		d.beginRequest()
 		go func() {
+			defer d.endRequest()
 			time.Sleep(findBlinkDuration)
-			d.mu.Lock()
-			still := d.connected
-			d.mu.Unlock()
-			if !still {
+			if err := d.ensureConnected(); err != nil {
+				dbg("find auto-stop: %v\n", err)
 				return
 			}
+			defer d.invalidateCache()
 			if _, err := d.setAction("find", []byte{0x00}, nil); err != nil {
 				dbg("find auto-stop failed: %v\n", err)
 			}
@@ -975,17 +798,6 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 	case "keysSet":
 		raw := decodeParams(req.Args["raw"])
 		return nil, d.writeKeys(raw)
-	case "disconnect":
-		d.mu.Lock()
-		if d.connected {
-			handler.OnDisconnect(d)
-			_ = d.dev.Disconnect()
-			d.connected = false
-			d.modelID = ""
-			d.handler = GenericHandler{}
-		}
-		d.mu.Unlock()
-		return nil, nil
 	default:
 		return nil, fmt.Errorf("unknown command: %s", req.Cmd)
 	}
@@ -1051,12 +863,13 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 }
 
 func (d *daemon) readBatteryRaw() (left, right, box byte, lc, rc, cc bool, err error) {
-	if d.batteryChar == nil {
-		return 0, 0, 0, false, false, false, errors.New("battery characteristic not available")
+	sess := d.curSession()
+	if sess == nil {
+		return 0, 0, 0, false, false, false, errors.New("not connected")
 	}
 	// Battery notifies on 0008; we read the characteristic directly for a snapshot
 	var buf [64]byte
-	n, err := d.batteryChar.Read(buf[:])
+	n, err := sess.Read(charBattery, buf[:])
 	if err != nil {
 		return 0, 0, 0, false, false, false, err
 	}
@@ -1191,12 +1004,6 @@ func (d *daemon) awaitMatch(opcode byte, match func([]byte) bool, wantDesc strin
 			return nil, fmt.Errorf("readback mismatch for 0x%02x: want %s, device reported %x (the device may nevertheless have applied the value; re-read to check)", opcode, wantDesc, last)
 		}
 	}
-}
-
-func (d *daemon) isConnected() bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.connected
 }
 
 // eqOpFromArgs decodes the eqApply arguments. Values are validated again by
@@ -1422,7 +1229,7 @@ func (d *daemon) probeCapabilities() {
 	d.caps["autoOff"] = true
 	d.caps["eq"] = true
 	d.caps["wind"] = true
-	d.caps["keys"] = d.keysChar != nil
+	d.caps["keys"] = d.sess != nil && d.sess.Has(charKeys)
 
 	// Commands that exist but must not be driven. Set false up front so a
 	// failure to answer below cannot leave them looking available.
@@ -1449,6 +1256,11 @@ func (d *daemon) probeCapabilities() {
 		d.caps[c.action] = ok
 		d.mu.Unlock()
 	}
+	// Only a sweep that ran against a live link counts; one cut short by a
+	// drop is retried on the next connection.
+	d.mu.Lock()
+	d.probed = d.connected
+	d.mu.Unlock()
 }
 
 func (d *daemon) readKeys() ([]byte, error) {
@@ -1458,11 +1270,12 @@ func (d *daemon) readKeys() ([]byte, error) {
 }
 
 func (d *daemon) readKeysLocked() ([]byte, error) {
-	if d.keysChar == nil {
+	sess := d.curSession()
+	if sess == nil || !sess.Has(charKeys) {
 		return nil, errors.New("keys characteristic 000D not available on this device")
 	}
 	var buf [64]byte
-	n, err := d.keysChar.Read(buf[:])
+	n, err := sess.Read(charKeys, buf[:])
 	if err != nil {
 		return nil, fmt.Errorf("read keys 000D: %w", err)
 	}
@@ -1474,13 +1287,14 @@ func (d *daemon) readKeysLocked() ([]byte, error) {
 func (d *daemon) writeKeys(raw []byte) error {
 	d.txMu.Lock()
 	defer d.txMu.Unlock()
-	if d.keysChar == nil {
+	sess := d.curSession()
+	if sess == nil || !sess.Has(charKeys) {
 		return errors.New("keys characteristic 000D not available on this device")
 	}
 	if len(raw) == 0 || len(raw)%2 != 0 {
 		return fmt.Errorf("keys set: payload must be non-empty keyId:funId pairs, got %d bytes", len(raw))
 	}
-	if _, err := d.keysChar.WriteWithoutResponse(raw); err != nil {
+	if err := sess.WriteKeys(raw); err != nil {
 		return fmt.Errorf("keys set write 000D: %w", err)
 	}
 	time.Sleep(150 * time.Millisecond)
@@ -1546,7 +1360,7 @@ func handleConn(conn net.Conn, d *daemon) {
 		}
 		data, err := d.handleRequest(req)
 		if err != nil {
-			_ = enc.Encode(response{OK: false, Error: err.Error()})
+			_ = enc.Encode(response{OK: false, Error: err.Error(), Code: errorCode(err)})
 		} else {
 			_ = enc.Encode(response{OK: true, Data: data})
 		}
@@ -1554,11 +1368,19 @@ func handleConn(conn net.Conn, d *daemon) {
 }
 
 func main() {
+	idleFlag := flag.Float64("idle", -1, "seconds the BLE link is kept after the last request (0 = never drop it); default $QCYCTL_IDLE_SECONDS or 6")
+	flag.Parse()
+
 	scanSeconds := 15
-	if len(os.Args) > 1 {
-		if v, err := strconv.Atoi(os.Args[1]); err == nil {
+	if args := flag.Args(); len(args) > 0 {
+		if v, err := strconv.Atoi(args[0]); err == nil {
 			scanSeconds = v
 		}
+	}
+	idle, err := resolveIdle(*idleFlag, os.Getenv("QCYCTL_IDLE_SECONDS"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "idle: %v\n", err)
+		os.Exit(2)
 	}
 
 	l, sock, err := listenSocket()
@@ -1569,10 +1391,13 @@ func main() {
 	defer os.Remove(sock)
 	defer l.Close()
 
-	d := &daemon{scanSeconds: scanSeconds}
+	cfg := defaultLifecycle()
+	cfg.idle = idle
+	d := newDaemon(&bleDialer{scanSeconds: scanSeconds}, cfg)
 
-	// NO auto-connect on startup. Lazy connect on first request.
-	// NO periodic reconnect ticker — plugin drives via refresh() on connect.
+	// No connection at startup and no background reconnect or probe: the link
+	// is opened by the first request and dropped after the idle window, so the
+	// earbuds stay free for the phone app in between.
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -1584,6 +1409,7 @@ func main() {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
+			d.shutdown()
 			return
 		}
 		go handleConn(conn, d)
