@@ -64,8 +64,11 @@ Singleton {
   property string error: ""
   property double updatedAt: 0     // Date.now() of the last successful read
   property string busyAction: ""   // label of an in-flight setter, for UI feedback
-  property int _setSeq: 0
-  property int _lastSeenSetSeq: -1
+
+  // True from the moment a click is accepted until its setter has exited.
+  // Reads are dropped while this holds, and the UI uses it to ignore clicks
+  // that would arrive while a previous setter is still going out.
+  readonly property bool settling: setProc.running || _pendingSet !== null
 
   // Only one qcyctl may touch the LE adapter at a time (see note in connectQCY).
   // Reads are low priority and run in the background; a user action PREEMPTS a
@@ -89,8 +92,7 @@ Singleton {
   // overlap on the adapter.
   function set(action, args) {
     if (setProc.running) return
-    _setSeq++
-    _pendingSet = { action: action, args: args, seq: _setSeq }
+    _pendingSet = { action: action, args: args }
     if (statusProc.running || batteryProc.running) {
       _preempting = true
       if (statusProc.running) { statusProc.signal(9); statusProc.running = false }
@@ -99,11 +101,10 @@ Singleton {
       _drain()
     }
   }
-  function _startSet(action, args, seq) {
+  function _startSet(action, args) {
     _preempting = false
     error = ""
     busyAction = action
-    root._lastSeenSetSeq = seq || root._setSeq
     setProc.command = [root.binary].concat(args, [String(root.scanSeconds)])
     setProc.running = true
   }
@@ -127,7 +128,7 @@ Singleton {
     if (_pendingSet) {
       var s = _pendingSet
       _pendingSet = null
-      _startSet(s.action, s.args, s.seq)
+      _startSet(s.action, s.args)
       return
     }
     if (_wantBattery && connected) pollBattery()

@@ -92,44 +92,44 @@ func mustUUID(s string) bluetooth.UUID {
 type FeatureFlag string
 
 const (
-	FeatureANC           FeatureFlag = "anc"           // Adaptive ANC with scenes
-	FeatureGameMode      FeatureFlag = "gameMode"      // Low latency game mode
-	FeatureSleepMode     FeatureFlag = "sleepMode"     // Sleep timer
-	FeatureLDAC          FeatureFlag = "ldac"          // LDAC codec toggle
-	FeatureMultipoint    FeatureFlag = "multipoint"    // Multipoint toggle
-	FeatureWindNoise     FeatureFlag = "windNoise"     // Wind noise reduction
-	FeatureWearDetect    FeatureFlag = "wearDetect"    // In-ear detection
-	FeatureAutoOff       FeatureFlag = "autoOff"       // Auto power-off timer
-	FeatureBalance       FeatureFlag = "balance"       // L/R balance
-	FeaturePromptVolume  FeatureFlag = "promptVolume"  // Prompt volume
-	FeatureFind          FeatureFlag = "find"          // Find my earbuds
-	FeatureBatteryCase   FeatureFlag = "batteryCase"   // Case battery level
-	FeatureKeysRemap     FeatureFlag = "keysRemap"     // Touch key remapping
-	FeatureEQ            FeatureFlag = "eq"            // EQ presets (read-only)
+	FeatureANC          FeatureFlag = "anc"          // Adaptive ANC with scenes
+	FeatureGameMode     FeatureFlag = "gameMode"     // Low latency game mode
+	FeatureSleepMode    FeatureFlag = "sleepMode"    // Sleep timer
+	FeatureLDAC         FeatureFlag = "ldac"         // LDAC codec toggle
+	FeatureMultipoint   FeatureFlag = "multipoint"   // Multipoint toggle
+	FeatureWindNoise    FeatureFlag = "windNoise"    // Wind noise reduction
+	FeatureWearDetect   FeatureFlag = "wearDetect"   // In-ear detection
+	FeatureAutoOff      FeatureFlag = "autoOff"      // Auto power-off timer
+	FeatureBalance      FeatureFlag = "balance"      // L/R balance
+	FeaturePromptVolume FeatureFlag = "promptVolume" // Prompt volume
+	FeatureFind         FeatureFlag = "find"         // Find my earbuds
+	FeatureBatteryCase  FeatureFlag = "batteryCase"  // Case battery level
+	FeatureKeysRemap    FeatureFlag = "keysRemap"    // Touch key remapping
+	FeatureEQ           FeatureFlag = "eq"           // EQ presets (read-only)
 )
 
 // ActionSpec describes a settable action for the UI.
 type ActionSpec struct {
-	ID          string      `json:"id"`                    // unique action ID
-	Label       string      `json:"label"`                 // user-visible label
-	Type        string      `json:"type"`                  // "toggle" | "enum" | "trigger" | "slider"
-	Options     []string    `json:"options,omitempty"`     // for enum: ["off", "adaptive", ...]
-	Min         int         `json:"min,omitempty"`         // for slider
-	Max         int         `json:"max,omitempty"`
-	Step        int         `json:"step,omitempty"`
-	Opcode      byte        `json:"-"`                     // internal opcode
-	ParamMap    map[string]byte `json:"-"`                 // option -> param byte
-	ReadOpcode  byte        `json:"-"`                     // opcode to read current state
-	ReadParser  string      `json:"-"`                     // parser name for read response
+	ID         string          `json:"id"`                // unique action ID
+	Label      string          `json:"label"`             // user-visible label
+	Type       string          `json:"type"`              // "toggle" | "enum" | "trigger" | "slider"
+	Options    []string        `json:"options,omitempty"` // for enum: ["off", "adaptive", ...]
+	Min        int             `json:"min,omitempty"`     // for slider
+	Max        int             `json:"max,omitempty"`
+	Step       int             `json:"step,omitempty"`
+	Opcode     byte            `json:"-"` // internal opcode
+	ParamMap   map[string]byte `json:"-"` // option -> param byte
+	ReadOpcode byte            `json:"-"` // opcode to read current state
+	ReadParser string          `json:"-"` // parser name for read response
 }
 
 // Capabilities describes what a model supports and how to present it.
 type Capabilities struct {
-	ModelID      string         `json:"modelId"`      // e.g., "melobuds-n70"
-	DisplayName  string         `json:"displayName"`  // e.g., "QCY MeloBuds N70"
-	Features     []FeatureFlag  `json:"features"`     // supported features
-	Actions      []ActionSpec   `json:"actions"`      // settable actions
-	BatteryChars []string       `json:"batteryChars"` // "left", "right", "case"
+	ModelID      string        `json:"modelId"`      // e.g., "melobuds-n70"
+	DisplayName  string        `json:"displayName"`  // e.g., "QCY MeloBuds N70"
+	Features     []FeatureFlag `json:"features"`     // supported features
+	Actions      []ActionSpec  `json:"actions"`      // settable actions
+	BatteryChars []string      `json:"batteryChars"` // "left", "right", "case"
 }
 
 // ModelHandler defines the interface each model implements.
@@ -171,8 +171,8 @@ func (GenericHandler) HandleRead(d *daemon, actionID string) (interface{}, error
 	return nil, fmt.Errorf("generic handler: unknown read %s", actionID)
 }
 
-func (GenericHandler) OnConnect(d *daemon) error  { return nil }
-func (GenericHandler) OnDisconnect(d *daemon)     {}
+func (GenericHandler) OnConnect(d *daemon) error { return nil }
+func (GenericHandler) OnDisconnect(d *daemon)    {}
 
 // ============================================================
 // MeloBuds N70 handler
@@ -195,7 +195,7 @@ func (meloBudsN70Handler) Capabilities() Capabilities {
 			{
 				ID: "anc", Label: "ANC Mode", Type: "enum",
 				Options: []string{"off", "adaptive", "indoor", "commuting", "noisy", "antiwind", "transparency"},
-				Opcode: 0x17,
+				Opcode:  0x17,
 				ParamMap: map[string]byte{
 					"off": 0x00, "adaptive": 0x01, "indoor": 0x01, "commuting": 0x02,
 					"noisy": 0x03, "antiwind": 0x04, "transparency": 0x01,
@@ -220,17 +220,17 @@ func (meloBudsN70Handler) Capabilities() Capabilities {
 func (meloBudsN70Handler) HandleSet(d *daemon, actionID string, params []byte) error {
 	// Map handler action IDs to daemon action IDs
 	daemonAction := map[string]string{
-		"gameMode":      "game",
-		"sleepMode":     "sleep",
-		"windNoise":     "wind",
-		"wearDetect":    "wear",
-		"autoOff":       "autoOff",
-		"promptVolume":  "promptVol",
-		"balance":       "balance",
-		"anc":           "anc",
-		"ldac":          "ldac",
-		"multipoint":    "multipoint",
-		"find":          "find",
+		"gameMode":     "game",
+		"sleepMode":    "sleep",
+		"windNoise":    "wind",
+		"wearDetect":   "wear",
+		"autoOff":      "autoOff",
+		"promptVolume": "promptVol",
+		"balance":      "balance",
+		"anc":          "anc",
+		"ldac":         "ldac",
+		"multipoint":   "multipoint",
+		"find":         "find",
 	}[actionID]
 	if daemonAction == "" {
 		daemonAction = actionID
@@ -242,18 +242,8 @@ func (meloBudsN70Handler) HandleRead(d *daemon, actionID string) (interface{}, e
 	return nil, nil // handled by generic gatherStatus
 }
 
-func (meloBudsN70Handler) OnConnect(d *daemon) error {
-	// Subscribe to battery notifications (0008) for live updates
-	if d.batteryChar != nil {
-		return d.batteryChar.EnableNotifications(func(buf []byte) {
-			// Could push to clients via WebSocket/event stream in future
-			_ = buf
-		})
-	}
-	return nil
-}
-
-func (meloBudsN70Handler) OnDisconnect(d *daemon) {}
+func (meloBudsN70Handler) OnConnect(d *daemon) error { return nil }
+func (meloBudsN70Handler) OnDisconnect(d *daemon)    {}
 
 // Register at init
 func init() {
@@ -459,57 +449,36 @@ func (d *daemon) setupDevice(dev bluetooth.Device) error {
 }
 
 func (d *daemon) detectAndAttachModel() {
-	// Try firmware query (0x07) for model string
-	modelID := d.queryModelFromFirmware()
-	if modelID == "" {
-		// Fallback: try BlueZ device name (would need D-Bus; skip for now)
-		modelID = "generic"
-	}
+	modelID := detectModelFromVersion(d.readVersionString())
 	d.modelID = modelID
 	d.handler = GetHandler(modelID)
 	_ = d.handler.OnConnect(d)
 }
 
-func (d *daemon) queryModelFromFirmware() string {
+// readVersionString reads characteristic 0007 (firmware) as text. It is a
+// single GATT read — no command round-trip — so it is cheap enough to run on
+// every connect. Returns "" when the characteristic is absent or unreadable.
+func (d *daemon) readVersionString() string {
 	if d.versionChar == nil {
 		return ""
 	}
-	// Query firmware version (opcode 0x07)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	done := make(chan string, 1)
-	go func() {
-		p, err := d.query(0x07, 1500*time.Millisecond)
-		if err != nil || len(p) == 0 {
-			done <- ""
-			return
-		}
-		// Parse firmware string for model hints
-		fw := string(p)
-		model := detectModelFromFirmware(fw)
-		done <- model
-	}()
-	select {
-	case model := <-done:
-		return model
-	case <-ctx.Done():
+	var buf [8]byte
+	n, err := d.versionChar.Read(buf[:])
+	if err != nil || n == 0 {
 		return ""
 	}
+	return string(buf[:n])
 }
 
-func detectModelFromFirmware(fw string) string {
+// detectModelFromVersion maps the firmware string onto a registered model id.
+// Unknown strings fall back to the generic handler.
+func detectModelFromVersion(fw string) string {
 	fw = strings.ToLower(fw)
 	switch {
 	case strings.Contains(fw, "melobuds") || strings.Contains(fw, "n70"):
 		return "melobuds-n70"
-	case strings.Contains(fw, "t13") || strings.Contains(fw, "ht10"):
-		return "t13"
-	case strings.Contains(fw, "ht03") || strings.Contains(fw, "a10"):
-		return "ht03"
-	case strings.Contains(fw, "t20") || strings.Contains(fw, "melobuds pro"):
-		return "melobuds-pro"
 	}
-	return ""
+	return "generic"
 }
 
 func findChar(s bluetooth.DeviceService, uuid bluetooth.UUID) *bluetooth.DeviceCharacteristic {
@@ -772,9 +741,11 @@ func (d *daemon) setAction(action string, params []byte) error {
 		return err
 	}
 
-	// For setters that need confirmation (most do), wait for the opcode response
-	// Use a short timeout; if no confirmation, assume it went through (optimistic)
-	_, _ = d.wait(opcode, 3*time.Second)
+	// Best-effort confirmation. Setters apply-and-go: the earbuds rarely echo a
+	// reply for these opcodes, so we give the ack a short grace period and then
+	// return success regardless. A long wait here would keep the client blocked
+	// (and the UI locked) for seconds on every single click.
+	_, _ = d.wait(opcode, 250*time.Millisecond)
 	return nil
 }
 

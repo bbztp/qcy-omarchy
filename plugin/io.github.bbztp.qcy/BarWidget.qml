@@ -374,7 +374,7 @@ Panel {
                 label: modelData.label
                 active: root.currentAnc() === modelData.key
                 onClicked: {
-              if (Qcy.setProc && Qcy.setProc.running) return
+              if (Qcy.settling) return
               root.setAnc(modelData.key)
             }
               }
@@ -415,7 +415,7 @@ Panel {
                 foreground: root.foreground
                 accent: root.accent
                 onToggled: function() {
-                  if (Qcy.setProc && Qcy.setProc.running) return
+                  if (Qcy.settling) return
                   root.setToggle(modelData.key, modelData.label, !root.toggleState(modelData.key))
                 }
               }
@@ -513,7 +513,7 @@ Panel {
           Chip {
             label: "Find my earbuds"
             onClicked: {
-              if (Qcy.setProc && Qcy.setProc.running) return
+              if (Qcy.settling) return
               Qcy.set("Find my earbuds", ["find"])
             }
           }
