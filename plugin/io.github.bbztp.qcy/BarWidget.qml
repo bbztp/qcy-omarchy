@@ -143,6 +143,18 @@ Panel {
     return rows
   }
 
+  function eqLabel() {
+    if (!rep || !rep.eq || rep.eq.preset === null || rep.eq.preset === undefined) return "—"
+    var p = rep.eq.preset
+    // Slot 11 is the profile this user created with the app's hearing test.
+    // It has no manufacturer name, so call it what it is rather than showing a
+    // bare index. The stock slots below it are named in the app but we have not
+    // verified which index maps to which name, so those stay numeric instead of
+    // being guessed.
+    if (p === 11) return "Custom (hearing test)"
+    return "Preset #" + p
+  }
+
   function updatedLabel() {
     var tick = root.nowTick // binding dependency for the "ago" clock
     if (Qcy.error !== "") return Qcy.error
@@ -166,6 +178,36 @@ Panel {
     next["anc"] = key
     optimistic = next
     Qcy.set("ANC " + key, ["anc", key])
+  }
+
+  // ---- ANC intensity ------------------------------------------------------
+  // The earbuds accept 0-2 and clamp anything higher to 0. Adaptive and
+  // anti-wind ignore the value and always report 0, so the control is hidden
+  // for those rather than shown doing nothing.
+  readonly property int ancStrength: {
+    var v = optimistic["ancLevel"]
+    if (v !== undefined) return v
+    return noise && noise.value !== undefined && noise.value !== null ? noise.value : 0
+  }
+
+  readonly property bool ancStrengthApplies: {
+    var s = currentAnc()
+    return s === "indoor" || s === "commuting" || s === "noisy" || s === "transparency"
+  }
+
+  readonly property var ancStrengthChoices: [
+    { label: "Low", value: 0 },
+    { label: "Med", value: 1 },
+    { label: "High", value: 2 }
+  ]
+
+  function setAncStrength(value) {
+    var next = Object.assign({}, optimistic)
+    next["ancLevel"] = value
+    optimistic = next
+    // The scene has to be re-sent with the new strength; the earbuds treat the
+    // third ANC parameter as part of the same command.
+    Qcy.set("ANC strength", ["anc", currentAnc(), String(value)])
   }
 
   // ---- sliders -------------------------------------------------------------
@@ -577,6 +619,18 @@ Panel {
               }
             }
           }
+
+          // Strength dial, shown only for the scenes that honour it. Adaptive
+          // and anti-wind read back 0 whatever is written, so offering the
+          // control there would be a lie.
+          ChoiceRow {
+            width: parent.width
+            visible: root.ancStrengthApplies
+            label: "Intensity"
+            model: root.ancStrengthChoices
+            current: String(root.ancStrength)
+            onPicked: function (v) { root.setAncStrength(Number(v)) }
+          }
         }
 
         PanelSeparator { foreground: root.foreground }
@@ -699,7 +753,7 @@ Panel {
           StatRow {
             width: column.width
             label: "EQ preset"
-            value: root.rep && root.rep.eq ? ("#" + root.rep.eq.preset) : "—"
+            value: root.eqLabel()
           }
 
           // EQ curve as a small read-only bar chart (±8 dB around the midline).
@@ -849,7 +903,7 @@ Panel {
           StatRow {
             width: column.width
             label: "EQ preset"
-            value: root.rep && root.rep.eq ? ("#" + root.rep.eq.preset) : "—"
+            value: root.eqLabel()
           }
         }
 

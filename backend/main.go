@@ -1497,22 +1497,38 @@ func minutesName(v uint16) string {
 
 func cmdAnc(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: qcyctl anc <off|adaptive|indoor|commuting|noisy|antiwind|transparency> [seconds]")
+		return errors.New("usage: qcyctl anc <off|adaptive|indoor|commuting|noisy|antiwind|transparency> [intensity 0-2] [seconds]")
 	}
 	modeName := args[0]
 	params, ok := ancModes[modeName]
 	if !ok {
 		return fmt.Errorf("anc: unknown mode %q", modeName)
 	}
-	scanSeconds, err := parseSeconds(args[1:], 30)
+	// The third parameter is the effect strength the app exposes as a dial.
+	// Leaving it off keeps the per-mode default from the table above.
+	rest := args[1:]
+	intensity := int(params[2])
+	if len(rest) > 0 {
+		n, err := strconv.Atoi(rest[0])
+		// Measured on this firmware: 0-2 are accepted, anything higher is
+		// clamped to 0 by the earbuds. adaptive and antiwind ignore the
+		// value entirely and always report 0.
+		if err != nil || n < 0 || n > 2 {
+			return fmt.Errorf("anc: invalid intensity %q (0-2)", rest[0])
+		}
+		intensity = n
+		rest = rest[1:]
+	}
+	withIntensity := [3]byte{params[0], params[1], byte(intensity)}
+	scanSeconds, err := parseSeconds(rest, 30)
 	if err != nil {
 		return err
 	}
 	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
-		if err := dc.setAction("anc", params[:]); err != nil {
+		if err := dc.setAction("anc", withIntensity[:]); err != nil {
 			return err
 		}
-		fmt.Printf("anc=%s sent\n", modeName)
+		fmt.Printf("anc=%s intensity=%d sent\n", modeName, intensity)
 		return nil
 	})
 }
