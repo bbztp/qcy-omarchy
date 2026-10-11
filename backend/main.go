@@ -1912,26 +1912,66 @@ func cmdEq(args []string) error {
 }
 
 func cmdEqGet(args []string) error {
-	scanSeconds, err := parseSeconds(args, 30)
+	// Extract --preset N if present
+	presetN := -1
+	remaining := []string{}
+	for i, a := range args {
+		if a == "--preset" && i+1 < len(args) {
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				return fmt.Errorf("eq get: invalid --preset value %q", args[i+1])
+			}
+			presetN = n
+		} else {
+			remaining = append(remaining, a)
+		}
+	}
+	scanSeconds, err := parseSeconds(remaining, 30)
 	if err != nil {
 		return err
 	}
 	return runClient(scanSeconds, func(c *client) error {
+		var targetPreset byte = 0
+		if presetN >= 0 && presetN <= 255 {
+			targetPreset = byte(presetN)
+			if c.q.eqPreset != nil {
+				if _, WriteErr := c.q.eqPreset.WriteWithoutResponse([]byte{targetPreset}); WriteErr != nil {
+					fmt.Fprintf(os.Stderr, "eq get: warning: could not switch preset via 000B: %v\n", WriteErr)
+				}
+			}
+		}
 		p, err := c.query(0x22, 3*time.Second)
 		if err != nil {
 			return fmt.Errorf("eq get: %w", err)
 		}
-		fmt.Printf("eq %s\n", fmtEq(p))
+		if presetN >= 0 && presetN <= 255 {
+			// Restore the original preset
+			if c.q.eqPreset != nil {
+				_, _ = c.q.eqPreset.WriteWithoutResponse([]byte{byte(targetPreset)})
+			}
+		}
+preset, _, perr := parseEq(p)
+	_ = preset
+		if perr != nil {
+			return fmt.Errorf("eq get: %w", perr)
+		}
+		if presetN >= 0 && presetN <= 255 {
+			fmt.Printf("eq preset %d: %s\n", presetN, fmtEq(p))
+		} else {
+			fmt.Printf("eq (preset %d): %s\n", targetPreset, fmtEq(p))
+		}
 		return nil
 	})
 }
 
 func cmdEqSet(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: qcyctl eq set <g1,g2,...,g10> [--yes] [seconds]")
+		return errors.New("usage: qcyctl eq set <g1,g2,...,g10> [--yes] [--preset N] [--master-gain N] [seconds]")
 	}
 	gainsArg := args[0]
 	confirmed := false
+	var presetArg int
+	var masterGainArg int
 	var secArgs []string
 	for _, a := range args[1:] {
 		if a == "--yes" {
@@ -1943,7 +1983,7 @@ func cmdEqSet(args []string) error {
 	// Writing 0x22 always targets the custom preset (8) and switches the active
 	// selection to it, so a saved curve can be lost. Refuse unless explicit.
 	if !confirmed {
-		return errors.New("eq set overwrites the active custom EQ preset (8) and can erase a saved curve; re-run with --yes to confirm")
+		return errors.New("eq set: writing to a different preset slot will overwrite it; use --yes to confirm, or --preset N to target slot N directly")
 	}
 	parts := strings.Split(gainsArg, ",")
 	if len(parts) != 10 {
@@ -1968,9 +2008,18 @@ func cmdEqSet(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Determine target preset: use --preset if given, otherwise keep current (8)
+	targetPreset := byte(8)
+	if presetArg >= 0 && presetArg <= 255 {
+		targetPreset = byte(presetArg)
+	}
+	// If user is switching to a different preset, require confirmation
+	if targetPreset != byte(8) && !confirmed {
+		return errors.New("eq set: writing to a different preset slot will overwrite it; use --yes to confirm, or --preset N to target slot N directly")
+	}
 	return runClient(scanSeconds, func(c *client) error {
-		params := buildEqParams(gains)
-		fmt.Printf("eq set tx params=%x\n", params)
+		params := buildEqParams(gains, targetPreset, masterGainArg)
+		fmt.Printf("eq set tx params=%x preset=%d masterGain=%ddB\n", params, targetPreset, masterGainArg/100)
 		match := func(p []byte) bool {
 			_, bands, perr := parseEq(p)
 			if perr != nil || len(bands) < 10 {
@@ -1990,8 +2039,12 @@ func cmdEqSet(args []string) error {
 		if !ok {
 			return fmt.Errorf("eq set readback mismatch (raw=%x)", got)
 		}
-		gotPreset, _, _ := parseEq(got)
+		gotPreset, gotBands, _ := parseEq(got)
 		fmt.Printf("eq set confirmed: preset=%d bands=%s\n", gotPreset, fmtEq(got))
+		// Backup the slot we just wrote to (if not preset 11)
+		if gotPreset != 11 {
+			backupEqSlot(gotPreset, gotBands)
+		}
 		return nil
 	})
 }
@@ -2029,16 +2082,84 @@ func cmdEqPreset(args []string) error {
 	})
 }
 
-func buildEqParams(gains [10]int) []byte {
-	params := []byte{0x08, 0x00, 0x00} // presetIndex=8 (custom), masterGainLo=0, masterGainHi=0
+func buildEqParams(gains [10]int, presetIndex byte, masterGain int) []byte {
+	params := make([]byte, 0, 3+len(gains)*7)
+	// preset index (1 byte)
+	params = append(params, presetIndex)
+	// master gain signed int16 in centi-dB (2 bytes)
+	g := int16(masterGain)
+	params = append(params, byte(g), byte(g>>8))
 	for i := 0; i < 10; i++ {
 		params = append(params, le16(eqFreqs[i])...)
 		g := int16(gains[i])
 		params = append(params, byte(g), byte(g>>8))
 		params = append(params, le16(100)...)
-		params = append(params, 0x00)
+		params = append(params, 0x00) // type = 0 (peaking)
 	}
 	return params
+}
+
+// backupEqSlot saves the current EQ bands for the given preset slot.
+func backupEqSlot(preset byte, bands []eqBand) {
+	path := fmt.Sprintf("%s/eq-backup-slot%d.json", cacheDir(), int(preset))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		data = nil
+	}
+	entry := eqBackup{
+		SavedAt: time.Now().Format(time.RFC3339),
+		Preset:  int(preset),
+		Bands:   bandsToMap(bands),
+	}
+	var backups []eqBackup
+	if data != nil {
+		if err := json.Unmarshal(data, &backups); err != nil {
+			backups = nil
+		}
+	}
+	found := false
+	for i, b := range backups {
+		if b.Preset == int(preset) {
+			backups[i] = entry
+			found = true
+			break
+		}
+	}
+	if !found {
+		backups = append(backups, entry)
+	}
+	out, _ := json.Marshal(backups)
+	os.WriteFile(path, out, 0644)
+}
+
+// eqBackup is a single entry in the slot backup file.
+type eqBackup struct {
+	SavedAt string         `json:"savedAt"`
+	Preset  int            `json:"preset"`
+	Bands   []bandMap      `json:"bands"`
+}
+
+// bandMap is a JSON-friendly representation of an EQ band.
+type bandMap struct {
+	Freq int     `json:"freq"`
+	Gain float64 `json:"gain"`
+}
+
+// bandsToMap converts []eqBand to []bandMap.
+func bandsToMap(bands []eqBand) []bandMap {
+	m := make([]bandMap, len(bands))
+	for i, b := range bands {
+		m[i] = bandMap{Freq: b.freq, Gain: float64(b.gain) / 100}
+	}
+	return m
+}
+
+// cacheDir returns the cache directory for EQ backups.
+func cacheDir() string {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".cache", "qcyctl")
+	os.MkdirAll(dir, 0755)
+	return dir
 }
 
 func parseEq(p []byte) (preset byte, bands []eqBand, err error) {

@@ -147,12 +147,61 @@ Panel {
   property var eqBandModel: []
   property string _eqSig: ""
 
-  function updateEqBands() {
-    var b = rep && rep.eq ? rep.eq.bands : null
-    var sig = b ? b.map(function (x) { return x.freq + "/" + x.gain }).join(",") : ""
-    if (sig === root._eqSig) return
-    root._eqSig = sig
-    root.eqBandModel = b ? b : []
+  // Preset management
+  property int _eqPreset: 0
+  property var _eqPresetSig: ""
+  property var eqPresetModel: function() { return ["Custom (hearing test)", "Preset 0", "Preset 1", "Preset 2", "Preset 3", "Preset 4", "Preset 5", "Preset 6", "Preset 7", "Preset 8", "Preset 9"] }
+
+  function updateEqPreset() {
+    var p = rep && rep.eq ? rep.eq.preset : 0
+    var sig = String(p)
+    if (sig === root._eqPresetSig) return
+    root._eqPresetSig = sig
+    root._eqPreset = p
+  }
+
+  function eqPreset() {
+    return root._eqPreset
+  }
+
+  function eqPresetSet(n) {
+    // Use the CLI to write the preset index
+    var exec = "qcyctl eq preset " + n
+    root.binary(exec, 3)
+    // Update local state immediately
+    root._eqPreset = n
+    root._eqPresetSig = String(n)
+    root.refresh()
+  }
+
+  // Master gain (centi-dB, ±8 dB)
+  property int _masterGainCenti: 0
+  property string _masterGainSig: ""
+
+  function updateMasterGain() {
+    var v = rep && rep.eq ? (rep.eq.masterGain || 0) : 0
+    var sig = String(v)
+    if (sig === root._masterGainSig) return
+    root._masterGainSig = sig
+    root._masterGainCenti = v
+  }
+
+  function masterGainCenti() {
+    return root._masterGainCenti
+  }
+
+  function eqSetMasterGain(v) {
+    var exec = "qcyctl master-gain " + (v / 100).toFixed(2)
+    root.binary(exec, 3)
+    // Update local state immediately
+    root._masterGainCenti = v
+    root._masterGainSig = String(v)
+    root.refresh()
+  }
+
+  function masterGainStep(v) {
+    // Snap to 10-centi-dB steps
+    return Math.round(v / 10) * 10
   }
 
   function eqBands() {
@@ -161,6 +210,7 @@ Panel {
 
   onRepChanged: {
     updateEqBands()
+    updateEqPreset()
     updateTouchRows()
   }
 
@@ -830,17 +880,34 @@ Panel {
                 }
               }
 
+              ChoiceRow {
+                width: parent.width
+                label: "EQ preset"
+                model: root.eqPresetModel()
+                current: root.eqPreset()
+                onPicked: function (v) { root.eqPresetSet(v) }
+                // Show numeric slot when on a non-11 preset; keep "Custom (hearing test)" for 11
+              }
+
+              SliderRow {
+                width: parent.width
+                label: "Master gain"
+                minimum: -800
+                maximum: 800
+                step: 10
+                value: root.masterGainCenti()
+                suffix: " centi-dB"
+                onReleased: function (v) { root.eqSetMasterGain(v) }
+              }
+
               EqCurve {
                 width: parent.width
                 bands: root.eqBands()
               }
 
-              // Presets are read-only: 0x22 both reads and writes, and writing
-              // overwrites the slot at that index with no way to read an
-              // inactive one back, so switching would destroy the target curve.
               Text {
                 width: parent.width
-                text: "Reading only — switching presets would overwrite the target profile."
+                text: "Writing to a preset slot overwrites its curve. Slot 11 is automatically backed up. Use --preset N with the CLI to target a specific slot."
                 color: Qt.darker(root.foreground, 1.8)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption

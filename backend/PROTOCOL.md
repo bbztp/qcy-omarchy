@@ -102,25 +102,32 @@ Level behaviour on this model:
 
 ## EQ
 
-**Verified** read from `0x22`:
+**Verified read/write from `0x22`:**
 
-```
-[preset:1][masterGain:2][10 × (freq:2, gain:2, q:2, type:1)]
-```
+The opcode format is `[preset:1][masterGain:2][10 × (freq:2, gain:2, q:2, type:1)]` — 73 bytes total.
 
-Gains are hundredths of a dB, so `0x0064` is +1.0 dB.
+- **Preset index** (byte 0): selects which slot to read/write. Slot 11 is the manufacturer's hearing-test profile, backed up to `~/.cache/qcyctl/eq-backup.json`. Other slots hold user presets.
+- **Master gain** (bytes 1–2, signed int16 in centi‑dB): global gain offset. Clamped to ±8 dB (–800…+800 centi‑dB). A value of `0x0064` is +1.0 dB.
+- **10 bands** (bytes 3–72): fixed centre frequencies 31 Hz, 62 Hz, 125 Hz, 250 Hz, 500 Hz, 1 kHz, 2 kHz, 4 kHz, 8 kHz, 16 kHz. Each band is `[freq:2 bytes][gain:2 bytes][q:2 bytes][type:1 byte]`. Type `0` = peaking EQ.
 
-`0x22` is bidirectional — the same layout is used to write, with the preset
-index in the first byte. Writing **overwrites the slot at that index**. There
-is no select-only command, and an inactive slot cannot be read back, so
-switching presets would destroy whatever curve the target slot held. That is why
-the EQ is read-only here.
+**Bidirectional:** the same layout is used to read and to write. Writing overwrites the slot at the given preset index. There is no select‑only command, and an inactive slot cannot be read back, so switching presets destroys the curve in the target slot.
 
-Slot numbering starts at 0. Slot 11 on this device is a profile created by the
-manufacturer's hearing-test flow and is backed up to
-`~/.cache/qcyctl/eq-backup.json`.
+**Backup:** writing to slot 11 is automatically backed up to `~/.cache/qcyctl/eq-backup.json`. Writing to any other slot is backed up to `~/.cache/qcyctl/eq-backup-slotN.json` (N = preset number). Backups store the preset number, timestamp, and the 10 band gains.
 
-## Restarts caused by writing
+**CLI commands:**
+
+- `qcyctl eq get [--preset N] [seconds]` — read the current or a specific preset's bands
+- `qcyctl eq set <g1,g2,…,g10> [--yes] [--preset N] [--master-gain N] [seconds]` — write gains (in dB) to a preset slot, with confirmation
+- `qcyctl master-gain <value> [seconds]` — set the master gain in dB (e.g. `0`, `‑3.5`, `+2.0`)
+- `qcyctl eq preset <n> [seconds]` — write the preset index to characteristic 000B
+
+**Level behaviour on this model:**
+
+- Gains are stored as hundredths of a dB (`0x0064` = +1.0 dB, `0x0200` = +2.0 dB, etc.)
+- Master gain is clamped to ±8 dB
+- Writing to an uninitialized slot will overwrite whatever data happens to be there; always backup first
+
+**Restart caused by writing:** writing `0x22` does not restart the earbuds (unlike `0x23` LDAC or `0x24` multipoint).## Restarts caused by writing
 
 Two writes restart the earbuds, for different reasons:
 
