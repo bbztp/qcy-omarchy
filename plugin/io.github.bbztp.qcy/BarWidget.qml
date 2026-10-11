@@ -150,7 +150,7 @@ Panel {
   // Preset management
   property int _eqPreset: 0
   property var _eqPresetSig: ""
-  property var eqPresetModel: function() { return ["Custom (hearing test)", "Preset 0", "Preset 1", "Preset 2", "Preset 3", "Preset 4", "Preset 5", "Preset 6", "Preset 7", "Preset 8", "Preset 9"] }
+  property var eqPresetModel: function() { return ["Custom (hearing test)", "Pop", "Rock", "Classical", "Jazz", "Bass Booster"] }
 
   function updateEqPreset() {
     var p = rep && rep.eq ? rep.eq.preset : 0
@@ -165,12 +165,23 @@ Panel {
   }
 
   function eqPresetSet(n) {
+    // Map model index to hardware preset slot
+    // Model index 0 = "Custom (hearing test)" → slot 11
+    // Model indices 1-5 → hardware slots 0-4
+    var hwPreset;
+    if (n === 0) {
+        hwPreset = 11; // Custom (hearing test)
+    } else if (n >= 1 && n <= 5) {
+        hwPreset = n - 1; // Pop→0, Rock→1, Classical→2, Jazz→3, Bass Booster→4
+    } else {
+        hwPreset = 0; // fallback
+    }
     // Use the CLI to write the preset index
-    var exec = "qcyctl eq preset " + n
+    var exec = "qcyctl eq preset " + hwPreset
     root.binary(exec, 3)
     // Update local state immediately
-    root._eqPreset = n
-    root._eqPresetSig = String(n)
+    root._eqPreset = hwPreset
+    root._eqPresetSig = String(hwPreset)
     root.refresh()
   }
 
@@ -246,11 +257,10 @@ Panel {
     if (!rep || !rep.eq || rep.eq.preset === null || rep.eq.preset === undefined) return "—"
     var p = rep.eq.preset
     // Slot 11 is the profile this user created with the app's hearing test.
-    // It has no manufacturer name, so call it what it is rather than showing a
-    // bare index. The stock slots below it are named in the app but we have not
-    // verified which index maps to which name, so those stay numeric instead of
-    // being guessed.
     if (p === 11) return "Custom (hearing test)"
+    // Map hardware slots 0-4 to named presets
+    var names = ["Pop", "Rock", "Classical", "Jazz", "Bass Booster"]
+    if (p >= 0 && p <= 4) return names[p]
     return "Preset #" + p
   }
 
