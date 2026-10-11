@@ -60,7 +60,17 @@ func TestJoinPendingDialAdoptsDevice(t *testing.T) {
 			atomic.AddInt32(&adopted, 1)
 		}
 	}()
-	time.Sleep(30 * time.Millisecond) // let B register
+	// Wait until B has joined A's pending Connect (A gave up: waiters 0 -> 1).
+	waitFor(t, "B to join the pending dial", func() bool {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if g.cur == nil {
+			return false
+		}
+		g.cur.mu.Lock()
+		defer g.cur.mu.Unlock()
+		return g.cur.waiters == 1
+	})
 	close(f.release)
 	<-done
 	time.Sleep(30 * time.Millisecond)
@@ -88,8 +98,11 @@ func TestCompletionAtDeadlineAdoptedExactlyOnce(t *testing.T) {
 		time.Sleep(time.Duration(1500+i*5) * time.Microsecond) // sweep around the deadline
 		close(f.release)
 		wg.Wait()
-		// the stray timed-out case: wait for a possible orphan disconnect
-		time.Sleep(5 * time.Millisecond)
+		// Either the waiter adopted the device, or the orphan disconnect is
+		// on its way (its goroutine may be slow to run under load).
+		waitFor(t, "adoption or orphan disconnect", func() bool {
+			return atomic.LoadInt32(&adopted)+atomic.LoadInt32(&f.disconnects) >= 1
+		})
 		a, d := atomic.LoadInt32(&adopted), atomic.LoadInt32(&f.disconnects)
 		if a+d != 1 {
 			t.Fatalf("iter %d: adopted=%d disconnected=%d, want exactly one", i, a, d)
@@ -101,12 +114,21 @@ func TestCompletionAtDeadlineAdoptedExactlyOnce(t *testing.T) {
 // ignored without disconnecting.
 func TestExpiredPendingReplacedAndLateResultIgnored(t *testing.T) {
 	var g dialGate
+	var clkMu sync.Mutex
+	now := time.Unix(1_000_000, 0)
+	g.now = func() time.Time {
+		clkMu.Lock()
+		defer clkMu.Unlock()
+		return now
+	}
 	g.validity = 10 * time.Millisecond
 	old := newFakeConnect()
 	if _, err := g.get(old.connect, old.disconnect, 5*time.Millisecond); err == nil {
 		t.Fatal("want timeout")
 	}
-	time.Sleep(20 * time.Millisecond)
+	clkMu.Lock()
+	now = now.Add(20 * time.Millisecond) // the pending outlives its validity
+	clkMu.Unlock()
 	fresh := newFakeConnect()
 	close(fresh.release)
 	if _, err := g.get(fresh.connect, fresh.disconnect, time.Second); err != nil {
@@ -149,7 +171,7 @@ func TestHangingOrphanDisconnectDoesNotBlockGet(t *testing.T) {
 		if err != errConnectTimeout {
 			t.Fatalf("err=%v, want errConnectTimeout", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("get stuck behind the hanging disconnect")
 	}
 	if c := atomic.LoadInt32(&f2.connects); c != 1 {

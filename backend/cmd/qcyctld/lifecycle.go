@@ -86,6 +86,9 @@ type snapshot struct {
 	data map[string]interface{}
 }
 
+// idleStopper is the part of *time.Timer the idle window uses.
+type idleStopper interface{ Stop() bool }
+
 func newDaemon(dl dialer, cfg lifecycleConfig) *daemon {
 	if cfg.busyAttempt < 1 {
 		cfg.busyAttempt = 1
@@ -96,6 +99,9 @@ func newDaemon(dl dialer, cfg lifecycleConfig) *daemon {
 		cfg:    cfg,
 		now:    time.Now,
 		sleep:  time.Sleep,
+		afterFunc: func(dur time.Duration, f func()) idleStopper {
+			return time.AfterFunc(dur, f)
+		},
 	}
 }
 
@@ -277,7 +283,7 @@ func (d *daemon) endRequest() {
 	if d.inflight == 0 && d.cfg.idle > 0 && d.connected {
 		d.idleGen++
 		gen := d.idleGen
-		d.idleTimer = time.AfterFunc(d.cfg.idle, func() { d.idleExpire(gen) })
+		d.idleTimer = d.afterFunc(d.cfg.idle, func() { d.idleExpire(gen) })
 	}
 	d.mu.Unlock()
 }

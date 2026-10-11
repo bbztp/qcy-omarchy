@@ -76,9 +76,10 @@ type daemon struct {
 	cfg         lifecycleConfig
 	now         func() time.Time
 	sleep       func(time.Duration)
-	inflight    int // requests and background holds in progress
+	afterFunc   func(time.Duration, func()) idleStopper // time.AfterFunc unless a test injects one
+	inflight    int                                     // requests and background holds in progress
 	idleGen     uint64
-	idleTimer   *time.Timer
+	idleTimer   idleStopper
 	busyUntil   time.Time
 	closing     bool   // set at shutdown: no new link may be opened (guarded by mu)
 	roundSeq    uint64 // connect rounds finished; lets queued requests share a failed round

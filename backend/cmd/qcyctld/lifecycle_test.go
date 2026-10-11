@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,6 +21,7 @@ type fakeDialer struct {
 	hook     func(*fakeSession) // set on new sessions
 	delay    time.Duration      // each Dial takes this long
 	times    []time.Time        // start of every Dial
+	block    chan struct{}      // when non-nil, every Dial waits for it to be closed
 }
 
 func (f *fakeDialer) Dial(onNotify func([]byte)) (session, string, error) {
@@ -28,6 +31,9 @@ func (f *fakeDialer) Dial(onNotify func([]byte)) (session, string, error) {
 	f.mu.Unlock()
 	if delay > 0 {
 		time.Sleep(delay)
+	}
+	if f.block != nil {
+		<-f.block
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -137,14 +143,106 @@ func testDaemon(fd *fakeDialer, idle time.Duration) (*daemon, *clock, *[]time.Du
 	return d, clk, &sleeps
 }
 
+// fakeTimers replaces the idle timer: nothing fires until the test says so,
+// so the idle window never races the machine's load.
+type fakeTimers struct {
+	mu sync.Mutex
+	ts []*fakeTimer
+}
+
+type fakeTimer struct {
+	owner   *fakeTimers
+	d       time.Duration
+	f       func()
+	stopped bool
+}
+
+func (t *fakeTimer) Stop() bool {
+	t.owner.mu.Lock()
+	defer t.owner.mu.Unlock()
+	was := !t.stopped
+	t.stopped = true
+	return was
+}
+
+func useFakeTimers(d *daemon) *fakeTimers {
+	ft := &fakeTimers{}
+	d.afterFunc = func(dur time.Duration, f func()) idleStopper {
+		ft.mu.Lock()
+		defer ft.mu.Unlock()
+		t := &fakeTimer{owner: ft, d: dur, f: f}
+		ft.ts = append(ft.ts, t)
+		return t
+	}
+	return ft
+}
+
+func (ft *fakeTimers) count() int {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	return len(ft.ts)
+}
+
+func (ft *fakeTimers) at(i int) *fakeTimer {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	return ft.ts[i]
+}
+
+// live is the number of timers that were armed and not stopped.
+func (ft *fakeTimers) live() int {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	n := 0
+	for _, t := range ft.ts {
+		if !t.stopped {
+			n++
+		}
+	}
+	return n
+}
+
+// fire runs the timer's callback synchronously, as if its window had expired
+// (even when it was stopped: a real timer can fire just before Stop).
+func (t *fakeTimer) fire() { t.f() }
+
+// waitBlockedInConnect waits until n goroutines are parked on connMu inside
+// daemon.connect, so the test knows the requests really queued behind a round
+// without guessing with a sleep.
+func waitBlockedInConnect(t *testing.T, n int) {
+	t.Helper()
+	waitFor(t, "requests queued behind the connect round", func() bool {
+		buf := make([]byte, 1<<20)
+		buf = buf[:runtime.Stack(buf, true)]
+		c := 0
+		for _, g := range strings.Split(string(buf), "\n\n") {
+			if strings.Contains(g, "(*daemon).connect(") && strings.Contains(g, "sync.runtime_SemacquireMutex") {
+				c++
+			}
+		}
+		return c >= n
+	})
+}
+
+// settle waits until no request or background hold (the first-connect
+// capability probe) is in flight, i.e. the idle window has been armed.
+func settle(t *testing.T, d *daemon) {
+	t.Helper()
+	waitFor(t, "requests and probes to finish", func() bool {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return d.inflight == 0
+	})
+}
+
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
 }
@@ -193,8 +291,19 @@ func TestReusesLinkWithinWindow(t *testing.T) {
 func TestDisconnectsAfterIdleAndReconnects(t *testing.T) {
 	fd := &fakeDialer{}
 	d, _, _ := testDaemon(fd, 40*time.Millisecond)
+	ft := useFakeTimers(d)
 	mustStatus(t, d)
-	waitFor(t, "idle disconnect", func() bool { return !d.isConnected() })
+	settle(t, d)
+	if ft.count() != 1 || ft.at(0).d != 40*time.Millisecond {
+		t.Fatalf("idle timers armed=%d, want 1 of 40ms", ft.count())
+	}
+	if !d.isConnected() {
+		t.Fatal("link dropped before the idle window ran out")
+	}
+	ft.at(0).fire()
+	if d.isConnected() {
+		t.Fatal("link still up after the idle window")
+	}
 	if fd.closed() != 1 {
 		t.Fatalf("closed=%d, want 1 (adapter must be released)", fd.closed())
 	}
@@ -207,23 +316,38 @@ func TestDisconnectsAfterIdleAndReconnects(t *testing.T) {
 func TestEachRequestRestartsIdleTimer(t *testing.T) {
 	fd := &fakeDialer{}
 	d, _, _ := testDaemon(fd, 400*time.Millisecond)
-	for i := 0; i < 4; i++ { // 4 x 150ms = 600ms > idle, but never idle for 400ms
+	ft := useFakeTimers(d)
+	for i := 0; i < 4; i++ {
 		if _, err := d.handleRequest(request{Cmd: "noise"}); err != nil {
 			t.Fatal(err)
 		}
-		time.Sleep(150 * time.Millisecond)
+		settle(t, d)
+		if ft.count() != i+1 || ft.live() != 1 {
+			t.Fatalf("after request %d: armed=%d live=%d, want %d armed and 1 live", i, ft.count(), ft.live(), i+1)
+		}
 	}
-	if !d.isConnected() || fd.dialCount() != 1 {
-		t.Fatalf("link dropped while in use: connected=%v dials=%d", d.isConnected(), fd.dialCount())
+	// A superseded timer firing late (it raced its Stop) must not drop the link.
+	for i := 0; i < 3; i++ {
+		ft.at(i).fire()
+		if !d.isConnected() || fd.dialCount() != 1 {
+			t.Fatalf("stale timer %d dropped the link: connected=%v dials=%d", i, d.isConnected(), fd.dialCount())
+		}
 	}
-	waitFor(t, "idle disconnect", func() bool { return !d.isConnected() })
+	ft.at(3).fire()
+	if d.isConnected() || fd.closed() != 1 {
+		t.Fatalf("current timer did not release: connected=%v closed=%d", d.isConnected(), fd.closed())
+	}
 }
 
 func TestIdleZeroKeepsLinkForever(t *testing.T) {
 	fd := &fakeDialer{}
 	d, _, _ := testDaemon(fd, 0)
+	ft := useFakeTimers(d)
 	mustStatus(t, d)
-	time.Sleep(100 * time.Millisecond)
+	settle(t, d)
+	if ft.count() != 0 {
+		t.Fatalf("idle=0 armed %d timers", ft.count())
+	}
 	if !d.isConnected() || fd.closed() != 0 {
 		t.Fatal("idle=0 must keep the link")
 	}
@@ -234,13 +358,21 @@ func TestNeverDisconnectsMidTransaction(t *testing.T) {
 	gate := make(chan struct{})
 	fd.hook = func(s *fakeSession) { s.gate = gate }
 	d, _, _ := testDaemon(fd, 20*time.Millisecond)
+	ft := useFakeTimers(d)
 	done := make(chan error, 1)
 	go func() {
 		_, err := d.handleRequest(request{Cmd: "noise"})
 		done <- err
 	}()
-	// The transaction is parked inside the write for 6x the idle window.
-	time.Sleep(120 * time.Millisecond)
+	// The transaction is parked inside the write.
+	waitFor(t, "transaction parked in the write", func() bool {
+		fd.mu.Lock()
+		defer fd.mu.Unlock()
+		return len(fd.sessions) == 1 && atomic.LoadInt32(&fd.sessions[0].active) == 1
+	})
+	if ft.live() != 0 {
+		t.Fatalf("idle window armed during a transaction (%d live)", ft.live())
+	}
 	if fd.closed() != 0 || !d.isConnected() {
 		t.Fatal("link closed under a transaction")
 	}
@@ -248,7 +380,14 @@ func TestNeverDisconnectsMidTransaction(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "idle disconnect after the transaction", func() bool { return !d.isConnected() })
+	settle(t, d)
+	if ft.live() != 1 {
+		t.Fatalf("idle window not armed after the transaction (%d live)", ft.live())
+	}
+	ft.at(ft.count() - 1).fire()
+	if d.isConnected() || fd.closed() != 1 {
+		t.Fatalf("not released after the transaction: connected=%v closed=%d", d.isConnected(), fd.closed())
+	}
 }
 
 func TestBusyBacksOffBoundedWithoutLocks(t *testing.T) {
@@ -400,8 +539,13 @@ func TestConcurrentRequestsSerialised(t *testing.T) {
 func TestCapabilitiesAnsweredWithoutConnecting(t *testing.T) {
 	fd := &fakeDialer{}
 	d, _, _ := testDaemon(fd, 20*time.Millisecond)
+	ft := useFakeTimers(d)
 	mustStatus(t, d)
-	waitFor(t, "idle disconnect", func() bool { return !d.isConnected() })
+	settle(t, d)
+	ft.at(0).fire()
+	if d.isConnected() {
+		t.Fatal("link still up after the idle window")
+	}
 	n := fd.dialCount()
 	v, err := d.handleRequest(request{Cmd: "capabilities"})
 	if err != nil {
@@ -495,7 +639,8 @@ func TestConcurrentBusyRequestsShareOneWait(t *testing.T) {
 }
 
 func TestConcurrentNotFoundRequestsShareOneScan(t *testing.T) {
-	fd := &fakeDialer{alwaysEr: errNotFound, delay: 100 * time.Millisecond}
+	release := make(chan struct{})
+	fd := &fakeDialer{alwaysEr: errNotFound, block: release}
 	d, _, _ := testDaemon(fd, time.Hour)
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
@@ -507,6 +652,9 @@ func TestConcurrentNotFoundRequestsShareOneScan(t *testing.T) {
 			}
 		}()
 	}
+	// One request is inside the scan; the other seven are queued on connMu.
+	waitBlockedInConnect(t, 7)
+	close(release)
 	wg.Wait()
 	if got := fd.dialCount(); got != 1 {
 		t.Fatalf("scans=%d, want 1", got)
@@ -600,7 +748,7 @@ func TestDisconnectWaitsForTransaction(t *testing.T) {
 	}
 	select {
 	case <-disc:
-	case <-time.After(3 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("disconnect never completed")
 	}
 	if fd.closed() != 1 {
