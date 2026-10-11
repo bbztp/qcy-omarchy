@@ -1,9 +1,15 @@
-PLUGIN_ID := io.github.bbztp.qcy
+PLUGIN_ID  := io.github.bbztp.qcy
+BUILD_DIR  := build
+BIN_DIR    := $(HOME)/.local/bin
+PLUGIN_DIR := $(HOME)/.config/omarchy/plugins/$(PLUGIN_ID)
+UNIT_FILE  := $(HOME)/.config/systemd/user/qcyctld.service
 
 .PHONY: build vet install uninstall clean
 
 build:
-	cd backend && go build -o qcyctl .
+	mkdir -p $(BUILD_DIR)
+	cd backend && go build -o ../$(BUILD_DIR)/qcyctl .
+	cd backend && go build -o ../$(BUILD_DIR)/qcyctld ./cmd/qcyctld
 
 vet:
 	cd backend && go vet ./...
@@ -12,9 +18,13 @@ install: build
 	./scripts/install.sh --no-build
 
 uninstall:
-	rm -f "$(HOME)/.local/bin/qcyctl"
-	rm -rf "$(HOME)/.config/omarchy/plugins/$(PLUGIN_ID)"
+	-systemctl --user disable --now qcyctld.service
+	rm -f "$(UNIT_FILE)"
+	-systemctl --user daemon-reload
+	rm -f "$(BIN_DIR)/qcyctl" "$(BIN_DIR)/qcyctld"
+	rm -rf "$(PLUGIN_DIR)"
 	@command -v omarchy-shell >/dev/null 2>&1 && omarchy-shell -q shell rescanPlugins || true
 
 clean:
-	rm -f backend/qcyctl
+	rm -rf $(BUILD_DIR)
+	rm -f backend/qcyctl backend/cmd/qcyctld/qcyctld

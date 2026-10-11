@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"os/signal"
@@ -19,6 +21,7 @@ import (
 	"time"
 
 	quicky "github.com/hui1601/Quicky/lib"
+	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -47,6 +50,11 @@ var (
 )
 
 type daemon struct {
+	// connMu serialises connect attempts so that a slow scan does not have to
+	// hold mu: status reads, markDisconnected and the capability snapshot only
+	// need mu, and must not stall behind a 15-30 s scan.
+	connMu sync.Mutex
+	// mu guards connection state (connected, notifyCh, caps, handler, modelID).
 	mu           sync.Mutex
 	adapter      *bluetooth.Adapter
 	dev          bluetooth.Device
@@ -117,7 +125,7 @@ const (
 	FeatureFind         FeatureFlag = "find"         // Find my earbuds
 	FeatureBatteryCase  FeatureFlag = "batteryCase"  // Case battery level
 	FeatureKeysRemap    FeatureFlag = "keysRemap"    // Touch key remapping
-	FeatureEQ           FeatureFlag = "eq"           // EQ presets (read-only)
+	FeatureEQ           FeatureFlag = "eq"           // EQ curve + master gain (read/write via eqApply, backed up)
 )
 
 // ActionSpec describes a settable action for the UI.
@@ -392,10 +400,13 @@ func loadCachedName() string {
 }
 
 func (d *daemon) connect(ctx context.Context) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.connMu.Lock()
+	defer d.connMu.Unlock()
 
-	if d.connected {
+	d.mu.Lock()
+	already := d.connected
+	d.mu.Unlock()
+	if already {
 		return nil
 	}
 
@@ -411,7 +422,7 @@ func (d *daemon) connect(ctx context.Context) error {
 			d.deviceName = loadCachedName()
 			if err := d.setupDevice(dev); err == nil {
 				saveCachedAddr(addr, d.deviceName)
-				d.connected = true
+				d.setConnected()
 				return nil
 			}
 			_ = dev.Disconnect()
@@ -478,8 +489,14 @@ func (d *daemon) connect(ctx context.Context) error {
 		return err
 	}
 	saveCachedAddr(addr, d.deviceName)
-	d.connected = true
+	d.setConnected()
 	return nil
+}
+
+func (d *daemon) setConnected() {
+	d.mu.Lock()
+	d.connected = true
+	d.mu.Unlock()
 }
 
 // loadScanName picks up the advertised name observed during the scan, if any.
@@ -536,17 +553,26 @@ func (d *daemon) setupDevice(dev bluetooth.Device) error {
 	d.eqPresetChar = findChar(svc, eqPresetUUIDParsed)
 	probeCharacteristics(svc)
 
+	notifyCh := make(chan []byte, 16)
+	d.mu.Lock()
 	d.dev = dev
-	d.notifyCh = make(chan []byte, 16)
+	d.notifyCh = notifyCh
 	d.frames = make(chan frame, 64)
+	d.mu.Unlock()
 
 	if err := d.notifyChar.EnableNotifications(func(buf []byte) {
-		d.notifyCh <- append([]byte(nil), buf...)
+		// A non-blocking send: the callback must never wedge the BLE stack,
+		// and it must not panic on a channel markDisconnected has closed.
+		defer func() { _ = recover() }()
+		select {
+		case notifyCh <- append([]byte(nil), buf...):
+		default:
+		}
 	}); err != nil {
 		return fmt.Errorf("enable notifications 1002: %w", err)
 	}
 
-	go d.readLoop()
+	go d.readLoop(notifyCh)
 
 	// Detect model and attach handler
 	d.detectAndAttachModel()
@@ -560,9 +586,12 @@ func (d *daemon) detectAndAttachModel() {
 	if modelID == "generic" {
 		modelID = detectModelFromVersion(d.readVersionString())
 	}
+	h := GetHandler(modelID)
+	d.mu.Lock()
 	d.modelID = modelID
-	d.handler = GetHandler(modelID)
-	_ = d.handler.OnConnect(d)
+	d.handler = h
+	d.mu.Unlock()
+	_ = h.OnConnect(d)
 
 	// Probing costs a few round-trips and three of those commands go
 	// unanswered on some models, so it must not sit in front of the first
@@ -660,8 +689,8 @@ func (d *daemon) markDisconnected() {
 	}
 }
 
-func (d *daemon) readLoop() {
-	for buf := range d.notifyCh {
+func (d *daemon) readLoop(notifyCh chan []byte) {
+	for buf := range notifyCh {
 		dbg("notify raw=%x\n", buf)
 		frames, err := parseFrames(buf)
 		if err != nil {
@@ -776,6 +805,12 @@ func (d *daemon) wait(opcode byte, timeout time.Duration) ([]byte, error) {
 func (d *daemon) query(opcode byte, timeout time.Duration) ([]byte, error) {
 	d.txMu.Lock()
 	defer d.txMu.Unlock()
+	return d.queryLocked(opcode, timeout)
+}
+
+// queryLocked is query for callers that already hold txMu (read-modify-write
+// transactions). Go mutexes are not reentrant, so they must not call query.
+func (d *daemon) queryLocked(opcode byte, timeout time.Duration) ([]byte, error) {
 	d.drain()
 	if err := d.send(0xFE, []byte{opcode}); err != nil {
 		return nil, err
@@ -832,16 +867,18 @@ func (d *daemon) drain() {
 }
 
 func (d *daemon) handleRequest(req request) (interface{}, error) {
-	d.mu.Lock()
-	if !d.connected {
-		d.mu.Unlock()
+	if !d.isConnected() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := d.connect(ctx); err != nil {
 			return nil, err
 		}
-	} else {
-		d.mu.Unlock()
+	}
+	d.mu.Lock()
+	handler := d.handler
+	d.mu.Unlock()
+	if handler == nil {
+		handler = GenericHandler{}
 	}
 
 	switch req.Cmd {
@@ -850,14 +887,14 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 	case "battery":
 		return d.readBattery()
 	case "capabilities":
-		return d.handler.Capabilities(), nil
+		return handler.Capabilities(), nil
 	case "set":
 		action, _ := req.Args["action"].(string)
 		params := decodeParams(req.Args["params"])
 		expect := decodeParams(req.Args["expect"])
 		dbg("SET action=%q params=%x expect=%x\n", action, params, expect)
 		// Route through the model handler for validation/special handling
-		got, err := d.handler.HandleSet(d, action, params, expect)
+		got, err := handler.HandleSet(d, action, params, expect)
 		if err != nil {
 			return nil, err
 		}
@@ -869,7 +906,7 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 		// Start the indicator blink, then stop it by itself. Leaving the LED on
 		// forever would drain the case and be confusing, and there is no user
 		// watching the panel to press a second button.
-		if _, err := d.handler.HandleSet(d, "find", []byte{0x01}, nil); err != nil {
+		if _, err := handler.HandleSet(d, "find", []byte{0x01}, nil); err != nil {
 			return nil, err
 		}
 		go func() {
@@ -885,6 +922,49 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 			}
 		}()
 		return nil, nil
+	case "eq":
+		// Current 0x22 payload, decoded: {slot, masterGain (dB), bands, payload (hex)}.
+		return d.eqRead()
+	case "eqApply":
+		// Read-modify-write of 0x22 under one txMu, with a backup of the
+		// pre-write payload. Args, all optional (none = rewrite unchanged):
+		//   gains      [10]int  band gains, centi-dB
+		//   masterGain int      master gain, centi-dB
+		//   slot       int      target slot byte
+		op, err := eqOpFromArgs(req.Args)
+		if err != nil {
+			return nil, err
+		}
+		return d.eqApply(op)
+	case "eqMasterGain":
+		// Convenience over eqApply: {masterGain: centi-dB} is required.
+		if _, ok := req.Args["masterGain"]; !ok {
+			return nil, errors.New("eqMasterGain: masterGain is required")
+		}
+		op, err := eqOpFromArgs(map[string]interface{}{"masterGain": req.Args["masterGain"]})
+		if err != nil {
+			return nil, err
+		}
+		return d.eqApply(op)
+	case "wear":
+		// Read 0x2C, set byte 0 (state 1 = on, 2 = off), keep the remaining
+		// bytes, write, confirm. Returns the confirmed payload.
+		st, ok := req.Args["state"].(float64)
+		if !ok || (st != 1 && st != 2) {
+			return nil, errors.New("wear: state must be 1 (on) or 2 (off)")
+		}
+		got, err := d.wearSet(byte(st))
+		if err != nil {
+			return nil, err
+		}
+		return bytesJSON(got), nil
+	case "noise":
+		// Raw 0x17 payload [mode, scene, level].
+		p, err := d.query(0x17, 3*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		return bytesJSON(p), nil
 	case "keys":
 		k, err := d.readKeys()
 		if err != nil {
@@ -897,7 +977,7 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 	case "disconnect":
 		d.mu.Lock()
 		if d.connected {
-			d.handler.OnDisconnect(d)
+			handler.OnDisconnect(d)
 			_ = d.dev.Disconnect()
 			d.connected = false
 			d.modelID = ""
@@ -911,12 +991,9 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 }
 
 func (d *daemon) gatherStatus() (map[string]interface{}, error) {
-	d.mu.Lock()
-	if !d.connected {
-		d.mu.Unlock()
+	if !d.isConnected() {
 		return nil, errors.New("not connected")
 	}
-	d.mu.Unlock()
 
 	rep := map[string]interface{}{}
 	if left, right, box, lc, rc, cc, err := d.readBatteryRaw(); err == nil {
@@ -1007,7 +1084,6 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 	opcodeMap := map[string]byte{
 		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
 		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
-		"eq": 0x22,
 		// Wired so a model whose probe answers these can actually be driven by
 		// them; on units that stay silent the capability is false and the UI
 		// never offers the control.
@@ -1038,17 +1114,18 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 	if reason, readOnly := readOnlyCmds[action]; readOnly {
 		return nil, fmt.Errorf("%s is read-only on this device: %s", action, reason)
 	}
+	// 0x22 has exactly one write path, eqApply, which backs the slot up first.
+	if action == "eq" {
+		return nil, errors.New("eq cannot be written as a raw action: use eqApply, which reads, patches and backs the payload up first")
+	}
 	opcode, ok := opcodeMap[action]
 	if !ok {
 		return nil, fmt.Errorf("unknown action: %s", action)
 	}
 
-	d.mu.Lock()
-	if !d.connected {
-		d.mu.Unlock()
+	if !d.isConnected() {
 		return nil, errors.New("not connected")
 	}
-	d.mu.Unlock()
 
 	d.drain()
 	if err := d.send(opcode, params); err != nil {
@@ -1084,6 +1161,13 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 // followed by extra state (prompt volume returns value+max, auto-off returns
 // reserve+current), so demanding an exact length would never confirm.
 func (d *daemon) awaitValue(opcode byte, want []byte, timeout time.Duration) ([]byte, error) {
+	return d.awaitMatch(opcode, func(p []byte) bool { return bytes.HasPrefix(p, want) },
+		fmt.Sprintf("%x", want), timeout)
+}
+
+// awaitMatch is awaitValue with an arbitrary predicate; wantDesc is only used in
+// the mismatch error. Callers hold txMu.
+func (d *daemon) awaitMatch(opcode byte, match func([]byte) bool, wantDesc string, timeout time.Duration) ([]byte, error) {
 	deadline := time.After(timeout)
 	requery := time.After(400 * time.Millisecond)
 	queries := 0
@@ -1091,7 +1175,7 @@ func (d *daemon) awaitValue(opcode byte, want []byte, timeout time.Duration) ([]
 	for {
 		select {
 		case f := <-d.frames:
-			if f.cmd == opcode && bytes.HasPrefix(f.params, want) {
+			if f.cmd == opcode && match(f.params) {
 				return f.params, nil
 			} else if f.cmd == opcode {
 				last = f.params
@@ -1103,13 +1187,147 @@ func (d *daemon) awaitValue(opcode byte, want []byte, timeout time.Duration) ([]
 				requery = time.After(400 * time.Millisecond)
 			}
 		case <-deadline:
-			return nil, fmt.Errorf("readback mismatch for 0x%02x: want %x, device reported %x", opcode, want, last)
+			return nil, fmt.Errorf("readback mismatch for 0x%02x: want %s, device reported %x (the device may nevertheless have applied the value; re-read to check)", opcode, wantDesc, last)
 		}
 	}
 }
 
-// readKeys reads the touch-control remap table from characteristic 000D. This
-// is a characteristic, not an opcode, so it does not go through the FF framing.
+func (d *daemon) isConnected() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.connected
+}
+
+// eqOpFromArgs decodes the eqApply arguments. Values are validated again by
+// qcycore.ApplyEq; this only rejects shapes JSON cannot express safely.
+func eqOpFromArgs(args map[string]interface{}) (qcycore.EqOp, error) {
+	var op qcycore.EqOp
+	whole := func(v interface{}, what string) (int, error) {
+		f, ok := v.(float64)
+		if !ok || math.IsNaN(f) || math.IsInf(f, 0) || f != math.Trunc(f) || math.Abs(f) > 1e6 {
+			return 0, fmt.Errorf("eq: %s must be a whole number", what)
+		}
+		return int(f), nil
+	}
+	if v, ok := args["masterGain"]; ok {
+		c, err := whole(v, "masterGain")
+		if err != nil {
+			return op, err
+		}
+		op.MasterCenti = &c
+	}
+	if v, ok := args["slot"]; ok {
+		n, err := whole(v, "slot")
+		if err != nil {
+			return op, err
+		}
+		op.Slot = &n
+	}
+	if v, ok := args["gains"]; ok {
+		arr, ok := v.([]interface{})
+		if !ok || len(arr) != qcycore.EqBands {
+			return op, fmt.Errorf("eq: gains must be an array of %d numbers", qcycore.EqBands)
+		}
+		var g [qcycore.EqBands]int
+		for i, e := range arr {
+			c, err := whole(e, fmt.Sprintf("gains[%d]", i))
+			if err != nil {
+				return op, err
+			}
+			g[i] = c
+		}
+		op.Gains = &g
+	}
+	return op, nil
+}
+
+// eqRead returns the active slot's payload, decoded.
+func (d *daemon) eqRead() (*qcycore.EqSnapshot, error) {
+	if !d.isConnected() {
+		return nil, errors.New("not connected")
+	}
+	p, err := d.query(qcycore.EqOpcode, 3*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	snap, err := qcycore.DecodeEq(p)
+	if err != nil {
+		return nil, err
+	}
+	return &snap, nil
+}
+
+// eqApply is the only path that writes 0x22. Under ONE txMu it reads the live
+// payload, patches only what op names, saves the pre-write payload as a backup
+// (the write is aborted if that fails), writes, and confirms by readback.
+// Holding the lock across the whole sequence is what keeps a concurrent status
+// sweep or probe from draining the echo, or from interleaving its own write
+// between our read and our write.
+func (d *daemon) eqApply(op qcycore.EqOp) (*qcycore.EqResult, error) {
+	d.txMu.Lock()
+	defer d.txMu.Unlock()
+	if !d.isConnected() {
+		return nil, errors.New("not connected")
+	}
+	cur, err := d.queryLocked(qcycore.EqOpcode, 3*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("eq: read current payload: %w", err)
+	}
+	next, err := qcycore.ApplyEq(cur, op)
+	if err != nil {
+		return nil, err
+	}
+	bk, err := qcycore.SaveEqBackup(cur)
+	if err != nil {
+		return nil, fmt.Errorf("eq: backup failed, nothing was written: %w", err)
+	}
+	d.drain()
+	if err := d.send(qcycore.EqOpcode, next); err != nil {
+		return nil, err
+	}
+	got, err := d.awaitMatch(qcycore.EqOpcode, qcycore.EqMatch(next, op), fmt.Sprintf("%x", next), 4*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("%w (previous payload saved at %s)", err, bk.History)
+	}
+	snap, err := qcycore.DecodeEq(got)
+	if err != nil {
+		return nil, err
+	}
+	return &qcycore.EqResult{
+		EqSnapshot:    snap,
+		Previous:      hex.EncodeToString(cur),
+		BackupFirst:   bk.First,
+		BackupHistory: bk.History,
+	}, nil
+}
+
+// wearSet reads 0x2C, replaces byte 0 with state and writes the rest back
+// unchanged, under one txMu.
+func (d *daemon) wearSet(state byte) ([]byte, error) {
+	d.txMu.Lock()
+	defer d.txMu.Unlock()
+	if !d.isConnected() {
+		return nil, errors.New("not connected")
+	}
+	cur, err := d.queryLocked(0x2C, 2*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("wear: read current: %w", err)
+	}
+	if len(cur) < 3 {
+		return nil, fmt.Errorf("wear: short current response %x", cur)
+	}
+	if qcycore.IsAllFF(cur) {
+		return nil, fmt.Errorf("wear: device returned an all-0xFF payload; nothing was written")
+	}
+	set := append([]byte{state}, cur[1:]...)
+	d.drain()
+	if err := d.send(0x2C, set); err != nil {
+		return nil, err
+	}
+	return d.awaitMatch(0x2C, func(p []byte) bool {
+		return len(p) >= len(set) && p[0] == state && bytes.Equal(p[1:len(set)], set[1:])
+	}, fmt.Sprintf("%x", set), 3*time.Second)
+}
 
 // probeCapabilities asks the device about the optional commands once per
 // connection and records which ones it answers.
@@ -1170,9 +1388,6 @@ func sanePromptVolume(p []byte) bool {
 	return max > 0 && max <= 255 && int(p[0]) <= max
 }
 
-// Each probe query takes txMu itself, so it serialises against status reads
-// without holding the lock across the whole sweep — Go mutexes are not
-// reentrant, so holding it here and then calling query would deadlock.
 // capabilitiesSnapshot copies the probe results under the lock. Reading the map
 // directly raced the background probe, which writes it entry by entry while a
 // status request is walking it.
@@ -1189,6 +1404,9 @@ func (d *daemon) capabilitiesSnapshot() map[string]bool {
 	return out
 }
 
+// Each probe query takes txMu itself, so it serialises against status reads
+// without holding the lock across the whole sweep — Go mutexes are not
+// reentrant, so holding it here and then calling query would deadlock.
 func (d *daemon) probeCapabilities() {
 	d.mu.Lock()
 	if d.caps == nil {
@@ -1274,12 +1492,36 @@ func (d *daemon) writeKeys(raw []byte) error {
 	return nil
 }
 
-func socketPath() string {
-	dir := os.Getenv("XDG_RUNTIME_DIR")
-	if dir == "" {
-		dir = "/tmp"
+// listenSocket binds the daemon socket. A live daemon is never displaced: if
+// anything answers on the path, it returns an error. A leftover socket file
+// nobody answers on is removed first. The socket is chmod 0600.
+func listenSocket() (net.Listener, string, error) {
+	sock, err := qcycore.SocketPath(true)
+	if err != nil {
+		return nil, "", err
 	}
-	return filepath.Join(dir, "qcyctld.sock")
+	if c, err := net.DialTimeout("unix", sock, 500*time.Millisecond); err == nil {
+		_ = c.Close()
+		return nil, "", fmt.Errorf("qcyctld is already running (%s answers); not taking it over", sock)
+	}
+	if fi, err := os.Lstat(sock); err == nil {
+		if fi.Mode()&os.ModeSocket == 0 {
+			return nil, "", fmt.Errorf("%s exists and is not a socket; refusing to remove it", sock)
+		}
+		if err := os.Remove(sock); err != nil {
+			return nil, "", fmt.Errorf("remove stale socket: %w", err)
+		}
+	}
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := os.Chmod(sock, 0o600); err != nil {
+		_ = l.Close()
+		_ = os.Remove(sock)
+		return nil, "", fmt.Errorf("chmod socket: %w", err)
+	}
+	return l, sock, nil
 }
 
 func handleConn(conn net.Conn, d *daemon) {
@@ -1317,9 +1559,7 @@ func main() {
 		}
 	}
 
-	sock := socketPath()
-	_ = os.Remove(sock)
-	l, err := net.Listen("unix", sock)
+	l, sock, err := listenSocket()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "listen: %v\n", err)
 		os.Exit(1)

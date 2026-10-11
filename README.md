@@ -4,7 +4,7 @@ A bar widget for the [Omarchy](https://omarchy.org) shell that controls QCY
 earbuds (developed against the **MeloBuds N70 / HT18**, but written to the
 vendor's low-energy GATT protocol) and shows their state:
 
-- **Battery** in the bar (glyph; optional percentage), with per-ear and case
+- **Battery** in the bar (glyph), with per-ear and case
   levels plus charging flags in the panel.
 - **Active noise control** — Off, Adaptive, Indoor, Commuting, Noisy,
   Anti-wind, Transparency.
@@ -12,15 +12,16 @@ vendor's low-energy GATT protocol) and shows their state:
   Sleep mode, Wind noise reduction.
 - **Readout** — firmware, EQ preset + curve, balance, auto power-off, prompt
   volume.
-- **Find my earbuds.**
 
-It talks to the earbuds directly over Bluetooth Low Energy through a small Go
-CLI, `qcyctl` — no phone, no vendor app, no background daemon.
+It talks to the earbuds directly over Bluetooth Low Energy — no phone, no
+vendor app. A small user daemon, `qcyctld`, keeps the BLE connection open so
+the widget's calls are fast; `qcyctl` is the matching Go CLI.
 
 ## Requirements
 
 - Omarchy (Quickshell-based shell).
-- Go (to build `qcyctl`), or a prebuilt binary you drop somewhere on `PATH`.
+- Go (to build `qcyctl` and `qcyctld`).
+- systemd (user session) to run the `qcyctld` daemon.
 - The earbuds paired with the machine.
 
 ## Install
@@ -31,8 +32,12 @@ cd qcy-omarchy
 ./scripts/install.sh
 ```
 
-This builds `qcyctl` into `~/.local/bin`, copies the plugin to
-`~/.config/omarchy/plugins/io.github.bbztp.qcy`, and rescans plugins.
+This builds `qcyctl` and `qcyctld`, installs them to `~/.local/bin`, installs
+and starts the `qcyctld.service` systemd user unit
+(`~/.config/systemd/user/qcyctld.service`), copies the plugin to
+`~/.config/omarchy/plugins/io.github.bbztp.qcy`, and rescans plugins. Pass
+`--no-service` to skip the unit, `--no-build` to reuse `make build` output.
+`make install` does the same.
 
 Then add the widget to your bar — put this in `~/.config/omarchy/shell.json`
 under `bar.layout` (e.g. inside the `right` array), which hot-reloads on save:
@@ -46,13 +51,11 @@ or move it into place with `omarchy bar move io.github.bbztp.qcy --section right
 ## Usage
 
 - **Left click** the bar button — open the panel.
-- **Right click** — toggle the battery percentage in the bar.
-- **Middle click** — refresh.
-- In the panel — **Esc** closes, **r** refreshes, **f** flashes the earbuds.
+- **Right click** — refresh.
+- In the panel — **Esc** closes, **r** refreshes.
 
-The full state is read on connect and when the panel opens (each read connects
-to the earbuds' low-energy service, so it takes a short scan — the panel shows
-`Reading…` while it does).
+The full state is read on connect and when the panel opens; the panel shows
+`Reading…` while it does.
 
 ## Settings
 
@@ -60,20 +63,20 @@ Configurable per widget in `shell.json` (or via the shell's settings UI):
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `showPercentage` | `false` | Show the numeric battery percentage in the bar. |
-| `scanSeconds` | `20` | How long to scan for the earbuds' advertisement. |
+| `scanSeconds` | `10` | How long to listen for the earbuds' advertisement (5–60 in the settings UI; values below 5 are raised to 5). |
 | `deviceMatch` | `"qcy"` | Case-insensitive substring to recognise your earbuds. |
-| `refreshOnOpen` | `true` | Read the state when the panel opens. |
 
 Set `QCYCTL` in the environment to point the widget at a `qcyctl` binary that
 is not in `~/.local/bin`.
 
 ## A note on safety
 
-The EQ-write path (`qcyctl eq set`) overwrites the earbuds' single custom EQ
-preset. That is exactly how a hand-tuned curve gets lost, so the CLI refuses to
-write unless you pass `--yes`, and the widget itself only **reads** EQ. Nothing
-in this project writes EQ automatically.
+The widget writes the EQ **master gain**. Before any EQ write, the raw EQ
+payload of the currently **active** slot, as read from the earbuds, is saved to
+`~/.local/share/qcy-omarchy/backups/`. This is not a backup of whatever the
+slot you overwrite held before: a slot's contents cannot be read while it is
+inactive. `qcyctl eq set` overwrites the target EQ slot and refuses to run
+without `--yes`.
 
 ## `qcyctl`
 
@@ -88,15 +91,30 @@ qcyctl find                   # flash the earbuds
 ```
 
 Run `qcyctl` with no arguments for the full command list. Set `QCY_DEBUG=1` to
-trace the GATT traffic on stderr.
+trace the GATT traffic of the CLI on stderr; for the daemon set `QCYCTL_DEBUG=1`
+(e.g. `systemctl --user edit qcyctld.service`, then `journalctl --user -u qcyctld`).
 
 ## Layout
 
 ```
 backend/                    Go source for qcyctl
+backend/cmd/qcyctld/        Go source for the qcyctld daemon
+packaging/qcyctld.service   systemd user unit
 plugin/io.github.bbztp.qcy/ the Omarchy bar widget (QML)
 scripts/install.sh          build + install
 ```
+
+## Uninstall
+
+```sh
+make uninstall
+```
+
+This disables and removes the `qcyctld.service` user unit, removes
+`~/.local/bin/qcyctl` and `qcyctld`, removes the plugin directory, and rescans
+plugins. Remove the `{ "id": "io.github.bbztp.qcy" }` entry from
+`shell.json` yourself. Backups in `~/.local/share/qcy-omarchy/backups/` are
+left in place.
 
 ## Credits
 

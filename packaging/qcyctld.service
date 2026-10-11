@@ -1,0 +1,11 @@
+[Unit]
+Description=QCY earbuds BLE daemon (qcyctld)
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/qcyctld
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

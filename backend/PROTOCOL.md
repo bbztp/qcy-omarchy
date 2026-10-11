@@ -46,7 +46,7 @@ answer a game-mode query with `0x02` when it is off.
 | `0x1D` | prompt volume | `[1, value]` | verified read-only, writes ignored, max 15 |
 | `0x1E` | music control | `[1, action]` | unverified |
 | `0x20` | EQ v1 write | — | unverified |
-| `0x22` | EQ v2 read **and** write | see below | verified read-only |
+| `0x22` | EQ v2 read **and** write | see [EQ](#eq) | verified read and write; every write is read-modify-write with a backup |
 | `0x23` | LDAC | `[1, 1\|2]` | verified: reboots the earbuds |
 | `0x24` | multipoint | `[1, 1\|2]` | verified: reboots the earbuds, expected |
 | `0x2A` | wind noise reduction | `[1, 1\|2]` | verified (added — was missing from this table) |
@@ -81,7 +81,7 @@ Every wired setter was exercised through the daemon and read back with
 | prompt volume `0x1D` | **ignores the write**, always reports 6 of 15 |
 | ANC `0x17` | not exercised — rejected unless both earbuds are worn |
 | spatial `0x2D`, fit `0x11` | no query reply on this model |
-| eq `0x22` | read-only by design (see below) |
+| eq `0x22` | honours the write; only written through a read-patch-backup-write transaction (see [EQ](#eq)) |
 | ldac `0x23` | reboots the earbuds; refused |
 
 Game, sleep and wind read back `false` after a reconnect and wind persisted
@@ -102,32 +102,100 @@ Level behaviour on this model:
 
 ## EQ
 
-**Verified read/write from `0x22`:**
+**Verified read and write on `0x22`.** The payload is 73 bytes:
 
-The opcode format is `[preset:1][masterGain:2][10 × (freq:2, gain:2, q:2, type:1)]` — 73 bytes total.
+```
+[slot:1][masterGain:int16 LE][10 x (freq:u16 LE, gain:int16 LE, q:u16 LE, type:u8)]
+ byte 0   bytes 1-2            bytes 3-72, 7 bytes per band
+```
 
-- **Preset index** (byte 0): selects which slot to read/write. Slot 11 is the manufacturer's hearing-test profile, backed up to `~/.cache/qcyctl/eq-backup.json`. Other slots hold user presets.
-- **Master gain** (bytes 1–2, signed int16 in centi‑dB): global gain offset. Clamped to ±8 dB (–800…+800 centi‑dB). A value of `0x0064` is +1.0 dB.
-- **10 bands** (bytes 3–72): fixed centre frequencies 31 Hz, 62 Hz, 125 Hz, 250 Hz, 500 Hz, 1 kHz, 2 kHz, 4 kHz, 8 kHz, 16 kHz. Each band is `[freq:2 bytes][gain:2 bytes][q:2 bytes][type:1 byte]`. Type `0` = peaking EQ.
+- **Slot** (byte 0): the active preset slot. Slot 11 is the manufacturer's
+  hearing-test profile; the plugin maps slots 0-4 to Pop, Rock, Classical, Jazz
+  and Bass Booster (names not independently verified). The device only reports the *active* slot; an inactive
+  slot cannot be read back.
+- **Master gain** (bytes 1-2): signed int16 in centi-dB, so `0x0096` is
+  +1.50 dB. The client accepts -8..+8 dB (-800..+800) and rejects NaN, Inf and
+  anything outside that range before converting to an integer.
+- **Bands** (bytes 3-72): `[freq:2][gain:2][q:2][type:1]` each. Gain is signed
+  centi-dB. **Frequency, Q and type are not fixed**: the hearing-test slot (11)
+  carries per-user values, so a writer must preserve them. An earlier
+  implementation synthesised a fixed 31 Hz ... 16 kHz table with Q=1.00 and
+  type 0; that destroyed the hearing-test curve and is gone.
 
-**Bidirectional:** the same layout is used to read and to write. Writing overwrites the slot at the given preset index. There is no select‑only command, and an inactive slot cannot be read back, so switching presets destroys the curve in the target slot.
+### Units in `status --json`
 
-**Backup:** writing to slot 11 is automatically backed up to `~/.cache/qcyctl/eq-backup.json`. Writing to any other slot is backed up to `~/.cache/qcyctl/eq-backup-slotN.json` (N = preset number). Backups store the preset number, timestamp, and the 10 band gains.
+`eq.preset` is the active slot (byte 0), `eq.masterGain` is the master gain in
+**dB** (float, int16 / 100), and `eq.bands[].gain` is in dB too, `freq` in Hz as
+stored on the device. `qcyctl eq get --json` and the results of the write
+commands additionally carry each band's `q` and `type`, the raw `payload` (hex)
+and `slot`.
 
-**CLI commands:**
+### Writing: read, patch, back up, write, confirm
 
-- `qcyctl eq get [--preset N] [seconds]` — read the current or a specific preset's bands
-- `qcyctl eq set <g1,g2,…,g10> [--yes] [--preset N] [--master-gain N] [seconds]` — write gains (in dB) to a preset slot, with confirmation
-- `qcyctl master-gain <value> [seconds]` — set the master gain in dB (e.g. `0`, `‑3.5`, `+2.0`)
-- `qcyctl eq preset <n> [seconds]` — write the preset index to characteristic 000B
+There is no select-only command and no way to read an inactive slot, so a write
+always starts from the payload the device reports **now** and changes only the
+bytes that were asked for:
 
-**Level behaviour on this model:**
+| Command | Bytes changed |
+|---|---|
+| `qcyctl master-gain <dB>` | 1-2 only |
+| `qcyctl eq set <g1..g10> --yes` | the 10 band gains; master gain kept unless `--master-gain dB` |
+| `qcyctl eq set ... --preset N` | byte 0 as well: the current curve is written into slot N, which also makes N active |
 
-- Gains are stored as hundredths of a dB (`0x0064` = +1.0 dB, `0x0200` = +2.0 dB, etc.)
-- Master gain is clamped to ±8 dB
-- Writing to an uninitialized slot will overwrite whatever data happens to be there; always backup first
+Order of operations (done under one transaction lock in the daemon):
 
-**Restart caused by writing:** writing `0x22` does not restart the earbuds (unlike `0x23` LDAC or `0x24` multipoint).## Restarts caused by writing
+1. read `0x22` (must be exactly 73 bytes);
+2. patch a copy;
+3. **save the payload read in step 1** (see Backups); if this fails the write is
+   **aborted** and the error is returned;
+4. write the patched payload;
+5. confirm by readback: slot and master gain must echo (for `master-gain`, the
+   first three bytes), and for `eq set` every band gain must too.
+
+The earbuds first answer a query with the pre-change state, so confirmation
+keeps re-querying until the echo matches or the deadline passes.
+
+Writing `0x22` does not restart the earbuds (unlike `0x23` LDAC or `0x24`
+multipoint). Writing into a slot replaces whatever curve that slot held and
+that content cannot be read first when the slot is inactive, so the backup
+covers the payload that was *active*, not the target slot's previous content.
+
+### Backups
+
+Before every `0x22` write (direct or through the daemon, including slot 11) the
+payload read from the device is stored as one line of lowercase hex in
+`~/.local/share/qcy-omarchy/backups/` (`$XDG_DATA_HOME/qcy-omarchy/backups/`).
+The directory is mode 0700, files 0600, and nothing is ever written to
+`~/.cache`.
+
+| File | Meaning |
+|---|---|
+| `eq-slot<N>-first.hex` | the first payload ever seen for slot N; created with no-replace semantics, never overwritten |
+| `eq-slot<N>-<UTC timestamp>.hex` | one file per write, timestamp `YYYYMMDDTHHMMSS.ffffffZ`; append-only |
+| `legacy-eq-backup*.json` | copies of the old `~/.cache/qcyctl/eq-backup*.json`, made once; the originals are left in place |
+
+Each file is written to a temp file, fsynced, then hard-linked into place, so a
+crash never leaves a half-written backup and an existing file is never replaced.
+Restoring is a manual `eq set`-style write of the saved bytes; there is no
+restore command yet.
+
+### CLI
+
+- `qcyctl eq get [--json] [seconds]`: the active slot, master gain and bands.
+  `--preset N` is **not supported** and returns an error (it used to write to
+  characteristic `000B`, which this model does not have, and never restored it).
+- `qcyctl eq set <g1,...,g10> --yes [--preset N] [--master-gain dB] [--json] [seconds]`
+  gains in dB. Out-of-range values are rejected, not clamped. Without
+  `--preset` the target is the currently active slot; without `--master-gain`
+  the device's current master gain is kept.
+- `qcyctl master-gain <dB> [--json] [seconds]`: master gain in dB, -8..+8.
+- `qcyctl eq preset <n>`: writes characteristic `000B`; fails on this model
+  because the characteristic is absent.
+
+All of these go through the daemon when it is running, and fall back to a
+direct connection when it is not.
+
+## Restarts caused by writing
 
 Two writes restart the earbuds, for different reasons:
 
@@ -169,6 +237,33 @@ this unit have the command", never "will it obey it".
 
 The reported maximum is 15, not the 255 the single-byte payload would allow.
 
+## Daemon socket protocol
+
+`qcyctld` listens on `$XDG_RUNTIME_DIR/qcyctld.sock` (mode 0600); without
+`XDG_RUNTIME_DIR` it uses `/tmp/qcyctl-<uid>/qcyctld.sock` in a directory that
+must be owned by the user with mode 0700, otherwise the daemon refuses to start
+and clients ignore it. A second daemon never replaces a live one. Requests are
+one JSON object per line, `{"cmd": ..., "args": {...}}`; replies are
+`{"ok": true, "data": ...}` or `{"ok": false, "error": "..."}`. Clients set a
+90 s deadline per round trip.
+
+| `cmd` | `args` | `data` |
+|---|---|---|
+| `status` | none | raw per-opcode dump (`eq` is the raw 0x22 byte array) |
+| `battery` | none | battery object |
+| `capabilities` | none | model capabilities |
+| `set` | `action`, `params`, optional `expect` | confirmed payload bytes or null; `action: "eq"` is refused |
+| `eq` | none | `{slot, masterGain (dB), bands[{freq,gain,q,type}], payload (hex)}` |
+| `eqApply` | optional `gains` (10 ints, centi-dB), `masterGain` (int, centi-dB), `slot` (int) | the `eq` object plus `previous`, `backupFirst`, `backupHistory` |
+| `eqMasterGain` | `masterGain` (int, centi-dB), required | same as `eqApply` |
+| `wear` | `state`: 1 on / 2 off | confirmed `0x2C` payload (byte array) |
+| `noise` | none | raw `0x17` payload `[mode, scene, level]` |
+| `find`, `keys`, `keysSet`, `disconnect` | as before | |
+
+`eqApply`, `eqMasterGain` and `wear` read, patch and write under a single
+transaction lock, so a concurrent status sweep cannot interleave. `eqApply` is
+the only way to write `0x22`.
+
 ## Characteristic layout (service `a001`)
 
 Enumerated with `QCYCTL_PROBE=1`:
@@ -204,5 +299,6 @@ how many EQ slots it has, and the ANC level range differs by model.
 
 | Variable | Effect |
 |---|---|
-| `QCYCTL_DEBUG=1` | per-frame trace on stderr |
+| `QCYCTL_DEBUG=1` | per-frame trace on stderr (`qcyctld`) |
+| `QCY_DEBUG=1` | per-frame trace on stderr (`qcyctl`, direct mode) |
 | `QCYCTL_PROBE=1` | enumerate service `a001` with read results |

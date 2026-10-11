@@ -23,6 +23,10 @@ import Quickshell.Bluetooth
 Singleton {
   id: root
 
+  // Emitted when a setter exits non-zero, so views can drop optimistic values;
+  // the device may or may not have applied the change, only a read tells.
+  signal setFailed()
+
   // Pushed by each bar-widget instance from shell.json settings.
   property var settings: ({})
 
@@ -158,9 +162,35 @@ Singleton {
     }
   }
 
+  // Short retry after a failed full read, on top of the slow panel poll: the
+  // earbuds are often busy right after connect. Backoff 5s, 10s, 20s, 30s (cap),
+  // giving up after _retryMax attempts until the next connect/manual refresh.
+  property int _retryCount: 0
+  readonly property int _retryMax: 6
+
+  function _scheduleRetry() {
+    if (_retryCount >= _retryMax) return
+    _retryCount++
+    retryTimer.interval = Math.min(30000, 5000 * Math.pow(2, _retryCount - 1))
+    retryTimer.restart()
+  }
+
+  Timer {
+    id: retryTimer
+    repeat: false
+    onTriggered: {
+      if (!root.connected) return
+      // Adapter busy: look again later without spending an attempt.
+      if (statusProc.running || setProc.running || batteryProc.running) restart()
+      else root.refresh()
+    }
+  }
+
   // Detect state on connect/disconnect edges: clear stale reports on drop, read
   // on (re)connect.
   onConnectedChanged: {
+    retryTimer.stop()
+    _retryCount = 0
     if (connected) {
       refresh()
       pollBattery()
@@ -181,8 +211,11 @@ Singleton {
       // A read killed to make way for a click always exits non-zero, so the
       // failure is only worth reporting when no setter is taking over. This
       // used to be tracked with a flag that other callbacks had to clear.
-      if (!root.settling && exitCode !== 0 && root.report === null && root.connected)
+      var failed = exitCode !== 0 && !root.settling && root.connected
+      if (failed && root.report === null)
         root.error = "Could not read the earbuds (exit " + exitCode + "). They may be busy; retrying."
+      if (failed) root._scheduleRetry()
+      else if (exitCode === 0) root._retryCount = 0
       root._drain()
     }
     stdout: StdioCollector {
@@ -201,6 +234,7 @@ Singleton {
     onExited: function (exitCode) {
       if (exitCode !== 0) {
         root.error = "Command failed (exit " + exitCode + ")"
+        root.setFailed()
         root.refresh()
       }
       root._drain()

@@ -2,10 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net"
 	"os"
 	"os/signal"
@@ -17,6 +17,7 @@ import (
 	"time"
 
 	quicky "github.com/hui1601/Quicky/lib"
+	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -50,8 +51,6 @@ var (
 		"multipoint": 0x24,
 		"wind":       0x2A,
 	}
-
-	eqFreqs = [10]uint16{31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000}
 )
 
 // debugEnabled gates protocol tracing (GATT writes, notifications, retries).
@@ -81,8 +80,16 @@ type daemonClient struct {
 	dec  *json.Decoder
 }
 
+// daemonRequestTimeout bounds one request/response round trip. The daemon may
+// have to connect (up to 30 s) and run a full status sweep first, so this is
+// generous; its job is only to stop a wedged daemon hanging the CLI forever.
+const daemonRequestTimeout = 90 * time.Second
+
 func dialDaemon(timeout time.Duration) (*daemonClient, error) {
-	sock := daemonSocketPath()
+	sock, err := daemonSocketPath()
+	if err != nil {
+		return nil, err
+	}
 	conn, err := net.DialTimeout("unix", sock, timeout)
 	if err != nil {
 		return nil, err
@@ -94,12 +101,8 @@ func dialDaemon(timeout time.Duration) (*daemonClient, error) {
 	}, nil
 }
 
-func daemonSocketPath() string {
-	dir := os.Getenv("XDG_RUNTIME_DIR")
-	if dir == "" {
-		dir = "/tmp"
-	}
-	return filepath.Join(dir, "qcyctld.sock")
+func daemonSocketPath() (string, error) {
+	return qcycore.SocketPath(false)
 }
 
 func (dc *daemonClient) Close() error {
@@ -111,6 +114,8 @@ func (dc *daemonClient) request(cmd string, args map[string]interface{}) (interf
 		"cmd":  cmd,
 		"args": args,
 	}
+	// Re-armed per round trip because the connection is reused.
+	_ = dc.conn.SetDeadline(time.Now().Add(daemonRequestTimeout))
 	if err := dc.enc.Encode(req); err != nil {
 		return nil, err
 	}
@@ -119,7 +124,14 @@ func (dc *daemonClient) request(cmd string, args map[string]interface{}) (interf
 		return nil, err
 	}
 	if ok, _ := resp["ok"].(bool); !ok {
-		return nil, errors.New(resp["error"].(string))
+		msg, _ := resp["error"].(string)
+		switch {
+		case strings.HasPrefix(msg, "unknown command"):
+			msg += " (the running qcyctld is older than this qcyctl; restart it)"
+		case msg == "":
+			msg = "daemon reported failure without a message"
+		}
+		return nil, errors.New(msg)
 	}
 	return resp["data"], nil
 }
@@ -210,11 +222,7 @@ func statusFromDaemon(raw map[string]interface{}) *statusReport {
 		rep.Keys = k
 	}
 	if p := bytesOf(raw["eq"]); len(p) > 0 {
-		if preset, bands, err := parseEq(p); err == nil {
-			eq := &eqReport{Preset: int(preset)}
-			for _, b := range bands {
-				eq.Bands = append(eq.Bands, eqBandReport{Freq: b.freq, Gain: float64(b.gain) / 100})
-			}
+		if eq, err := eqReportFrom(p); err == nil {
 			rep.EQ = eq
 		}
 	}
@@ -253,7 +261,11 @@ func (dc *daemonClient) battery() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return data.(map[string]interface{}), nil
+	m, ok := data.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("daemon returned a non-object battery")
+	}
+	return m, nil
 }
 
 func (dc *daemonClient) setAction(action string, params []byte) error {
@@ -307,6 +319,70 @@ func (dc *daemonClient) keysSet(raw []byte) error {
 	return err
 }
 
+// remarshal converts a decoded JSON value into a typed struct.
+func remarshal(data interface{}, out interface{}) error {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, out)
+}
+
+// eqRead asks the daemon for the current 0x22 payload, decoded.
+func (dc *daemonClient) eqRead() (*qcycore.EqSnapshot, error) {
+	data, err := dc.request("eq", nil)
+	if err != nil {
+		return nil, err
+	}
+	var snap qcycore.EqSnapshot
+	if err := remarshal(data, &snap); err != nil {
+		return nil, fmt.Errorf("daemon returned a malformed eq snapshot: %w", err)
+	}
+	return &snap, nil
+}
+
+// eqApply has the daemon read the current payload, patch it, back it up and
+// write it, all under one transaction lock.
+func (dc *daemonClient) eqApply(op qcycore.EqOp) (*qcycore.EqResult, error) {
+	args := map[string]interface{}{}
+	if op.Gains != nil {
+		args["gains"] = op.Gains[:]
+	}
+	if op.MasterCenti != nil {
+		args["masterGain"] = *op.MasterCenti
+	}
+	if op.Slot != nil {
+		args["slot"] = *op.Slot
+	}
+	data, err := dc.request("eqApply", args)
+	if err != nil {
+		return nil, err
+	}
+	var res qcycore.EqResult
+	if err := remarshal(data, &res); err != nil {
+		return nil, fmt.Errorf("daemon returned a malformed eq result: %w", err)
+	}
+	return &res, nil
+}
+
+// wearSet has the daemon read the 0x2C payload, set byte 0 and write it back.
+func (dc *daemonClient) wearSet(state byte) ([]byte, error) {
+	data, err := dc.request("wear", map[string]interface{}{"state": int(state)})
+	if err != nil {
+		return nil, err
+	}
+	return bytesOf(data), nil
+}
+
+// noiseRead returns the raw 0x17 payload [mode, scene, level].
+func (dc *daemonClient) noiseRead() ([]byte, error) {
+	data, err := dc.request("noise", nil)
+	if err != nil {
+		return nil, err
+	}
+	return bytesOf(data), nil
+}
+
 // numList renders a byte slice as a JSON array of numbers. A []byte marshals to
 // a base64 string, which the daemon's array decoder rejects.
 func numList(b []byte) []int {
@@ -330,6 +406,16 @@ type daemonAPI interface {
 	findTone(tone byte) error
 	keys() ([]byte, error)
 	keysSet(raw []byte) error
+	// eqRead returns the current 0x22 payload, decoded (dB).
+	eqRead() (*qcycore.EqSnapshot, error)
+	// eqApply reads the raw 0x22 payload, patches only what op names, saves the
+	// pre-write payload as a backup (aborting the write if that fails), writes
+	// and confirms by readback.
+	eqApply(op qcycore.EqOp) (*qcycore.EqResult, error)
+	// wearSet reads 0x2C, sets byte 0 to state (1 on / 2 off), writes, confirms.
+	wearSet(state byte) ([]byte, error)
+	// noiseRead returns the raw 0x17 payload.
+	noiseRead() ([]byte, error)
 }
 
 // runViaDaemon tries the daemon first; on failure falls back to direct mode.
@@ -414,7 +500,7 @@ func (w *daemonClientWrapper) setActionExpect(action string, params, expect []by
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("readback mismatch for %s: want %x got %x", action, expect, got)
+		return nil, fmt.Errorf("readback mismatch for %s: want %x got %x (the device may nevertheless have applied the value; re-read to check)", action, expect, got)
 	}
 	return got, nil
 }
@@ -425,7 +511,6 @@ func opcodeFor(action string) (byte, error) {
 	opcodeMap := map[string]byte{
 		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
 		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
-		"eq": 0x22,
 		// 0x11 starts/stops the ear-tip fit check ([1,1] / [2,2]); 0x2D is
 		// spatial audio. Both names are provisional until exercised.
 		"fit":     0x11,
@@ -439,6 +524,11 @@ func opcodeFor(action string) (byte, error) {
 	if action == "ldac" {
 		return 0, errors.New("ldac is disabled: writing it reboots this N70 and, unlike multipoint, the restart is not documented behaviour")
 	}
+	// 0x22 is only ever written through eqApply, which reads, patches and backs
+	// the payload up first. A raw write here would bypass all of that.
+	if action == "eq" {
+		return 0, errors.New("eq cannot be written as a raw action: use `qcyctl eq set` or `qcyctl master-gain`, which back up the slot first")
+	}
 	// promptVol (0x1D) answers a query with a plausible maximum and then
 	// discards every value written to it, so a write here would report a change
 	// the earbuds never made. See PROTOCOL.md, "Prompt volume".
@@ -450,6 +540,80 @@ func opcodeFor(action string) (byte, error) {
 		return 0, fmt.Errorf("unknown action: %s", action)
 	}
 	return opcode, nil
+}
+
+func (w *daemonClientWrapper) eqRead() (*qcycore.EqSnapshot, error) {
+	p, err := w.query(qcycore.EqOpcode, 3*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	snap, err := qcycore.DecodeEq(p)
+	if err != nil {
+		return nil, err
+	}
+	return &snap, nil
+}
+
+func (w *daemonClientWrapper) eqApply(op qcycore.EqOp) (*qcycore.EqResult, error) {
+	cur, err := w.query(qcycore.EqOpcode, 3*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("eq: read current payload: %w", err)
+	}
+	next, err := qcycore.ApplyEq(cur, op)
+	if err != nil {
+		return nil, err
+	}
+	// Backup first, and refuse to write if it did not land: the payload read
+	// above is the only copy of whatever is on the device now.
+	bk, err := qcycore.SaveEqBackup(cur)
+	if err != nil {
+		return nil, fmt.Errorf("eq: backup failed, nothing was written: %w", err)
+	}
+	got, ok, err := w.setConfirm(qcycore.EqOpcode, next, 4*time.Second, qcycore.EqMatch(next, op))
+	if err != nil {
+		return nil, fmt.Errorf("eq: write: %w (previous payload saved at %s)", err, bk.History)
+	}
+	if !ok {
+		return nil, fmt.Errorf("eq: readback mismatch: want %x got %x; the device may nevertheless have applied the value (previous payload saved at %s)", next, got, bk.History)
+	}
+	snap, err := qcycore.DecodeEq(got)
+	if err != nil {
+		return nil, err
+	}
+	return &qcycore.EqResult{
+		EqSnapshot:    snap,
+		Previous:      hex.EncodeToString(cur),
+		BackupFirst:   bk.First,
+		BackupHistory: bk.History,
+	}, nil
+}
+
+func (w *daemonClientWrapper) wearSet(state byte) ([]byte, error) {
+	cur, err := w.query(0x2C, 2*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("wear: read current: %w", err)
+	}
+	if len(cur) < 3 {
+		return nil, fmt.Errorf("wear: short current response %x", cur)
+	}
+	if qcycore.IsAllFF(cur) {
+		return nil, fmt.Errorf("wear: device returned an all-0xFF payload; nothing was written")
+	}
+	set := append([]byte{state}, cur[1:]...)
+	got, ok, err := w.setConfirm(0x2C, set, 3*time.Second, func(p []byte) bool {
+		return len(p) >= len(set) && p[0] == state && bytes.Equal(p[1:len(set)], set[1:])
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !ok || len(got) < 1 || got[0] != state {
+		return nil, fmt.Errorf("wear readback mismatch: want 0x%02x got %x", state, got)
+	}
+	return got, nil
+}
+
+func (w *daemonClientWrapper) noiseRead() ([]byte, error) {
+	return w.query(0x17, 3*time.Second)
 }
 
 func (w *daemonClientWrapper) keys() ([]byte, error) {
@@ -532,6 +696,8 @@ func main() {
 		err = cmdBalance(args)
 	case "eq":
 		err = cmdEq(args)
+	case "master-gain":
+		err = cmdMasterGain(args)
 	case "keys":
 		err = cmdKeys(args)
 	default:
@@ -558,9 +724,11 @@ func usage() {
   qcyctl prompt-vol <0-255> [seconds]
   qcyctl auto-off <minutes|never> [seconds]
   qcyctl balance <left|center|right|0-100> [seconds]
-  qcyctl eq get [seconds]
-  qcyctl eq set <g1,g2,...,g10> [--yes] [seconds]  (dB, e.g. -3,0,2.5,...; --yes required: overwrites preset 8)
-  qcyctl eq preset <n> [seconds]
+  qcyctl eq get [--json] [seconds]
+  qcyctl eq set <g1,g2,...,g10> --yes [--preset N] [--master-gain dB] [--json] [seconds]
+        (dB, -8..+8; patches the live payload, keeps freq/Q/type; backs the slot up first)
+  qcyctl eq preset <n> [seconds]   (unsupported on models without characteristic 000B)
+  qcyctl master-gain <dB> [--json] [seconds]   (-8..+8; only the master gain changes)
   qcyctl keys get [seconds]
   qcyctl keys set <keyId:funId> [<keyId:funId> ...] [seconds]
 All setters read back by querying the opcode (FF 03 FE 01 <opcode>) and fail non-zero on mismatch.`)
@@ -1205,9 +1373,28 @@ type eqBandReport struct {
 	Gain float64 `json:"gain"`
 }
 
+// eqReport is the EQ section of `status --json`.
+//
+//	preset        active slot (byte 0 of the raw 0x22 payload)
+//	masterGain    master gain in dB (int16 centi-dB / 100), -8..+8
+//	bands[].gain  per-band gain in dB; bands[].freq in Hz as stored on the device
 type eqReport struct {
-	Preset int            `json:"preset"`
-	Bands  []eqBandReport `json:"bands"`
+	Preset     int            `json:"preset"`
+	MasterGain float64        `json:"masterGain"`
+	Bands      []eqBandReport `json:"bands"`
+}
+
+// eqReportFrom decodes a raw 0x22 payload into the status schema.
+func eqReportFrom(p []byte) (*eqReport, error) {
+	s, err := qcycore.DecodeEq(p)
+	if err != nil {
+		return nil, err
+	}
+	eq := &eqReport{Preset: s.Slot, MasterGain: s.MasterGain}
+	for _, b := range s.Bands {
+		eq.Bands = append(eq.Bands, eqBandReport{Freq: b.Freq, Gain: b.Gain})
+	}
+	return eq, nil
 }
 
 type keysReport struct {
@@ -1360,13 +1547,9 @@ func gatherStatus(c *client) *statusReport {
 
 	if p, err := q16(0x22); err != nil {
 		addErr(fmt.Errorf("eq: %w", err))
-	} else if preset, bands, perr := parseEq(p); perr != nil {
+	} else if eq, perr := eqReportFrom(p); perr != nil {
 		addErr(fmt.Errorf("eq: %w", perr))
 	} else {
-		eq := &eqReport{Preset: int(preset)}
-		for _, b := range bands {
-			eq.Bands = append(eq.Bands, eqBandReport{Freq: b.freq, Gain: float64(b.gain) / 100})
-		}
 		rep.EQ = eq
 	}
 
@@ -1434,7 +1617,7 @@ func printStatusHuman(rep *statusReport) {
 		for _, b := range eq.Bands {
 			parts = append(parts, fmt.Sprintf("%dHz:%.2fdB", b.Freq, b.Gain))
 		}
-		fmt.Printf("%-18s preset=%d bands=%s\n", "eq (0x22)", eq.Preset, strings.Join(parts, ","))
+		fmt.Printf("%-18s preset=%d masterGain=%+.2fdB bands=%s\n", "eq (0x22)", eq.Preset, eq.MasterGain, strings.Join(parts, ","))
 	}
 	if k := rep.Keys; k != nil {
 		fmt.Printf("%-18s raw=%s\n", "keys (0x0d)", k.Raw)
@@ -1451,47 +1634,18 @@ func boolName(v bool) string {
 	return "off"
 }
 
+// printStatusHumanFromMap renders the map produced by status() (the same schema
+// as statusReport) through the typed printer, so both paths print alike.
 func printStatusHumanFromMap(data map[string]interface{}) {
-	fmt.Println("=== status ===")
-	if v, ok := data["firmware"].(map[string]interface{}); ok {
-		fmt.Printf("%-18s left=%v right=%v\n", "version", v["left"], v["right"])
-	}
-	if b, ok := data["battery"].(map[string]interface{}); ok {
-		fmt.Printf("%-18s left=%v%% charging=%v right=%v%% charging=%v box=%v%% charging=%v\n",
-			"battery", b["left"], b["leftCharging"], b["right"], b["rightCharging"], b["case"], b["caseCharging"])
-	}
-	if n, ok := data["anc"].(map[string]interface{}); ok {
-		fmt.Printf("%-18s mode=0x%02x scene=0x%02x value=0x%02x\n",
-			"anc (0x17)", int(n["modeRaw"].(float64)), int(n["sceneRaw"].(float64)), int(n["value"].(float64)))
-	}
-	if t, ok := data["toggles"].(map[string]interface{}); ok {
-		for _, name := range []string{"game", "sleep", "ldac", "multipoint", "wind"} {
-			if v, ok := t[name].(bool); ok {
-				fmt.Printf("%-18s %s\n", fmt.Sprintf("%s (0x%02x)", name, toggles[name]), boolName(v))
-			} else {
-				fmt.Printf("%-18s <no response>\n", fmt.Sprintf("%s (0x%02x)", name, toggles[name]))
-			}
+	b, err := json.Marshal(data)
+	if err == nil {
+		var rep statusReport
+		if err = json.Unmarshal(b, &rep); err == nil {
+			printStatusHuman(&rep)
+			return
 		}
 	}
-	if p, ok := data["promptVol"].([]interface{}); ok && len(p) >= 1 {
-		fmt.Printf("%-18s value=%v max=%v\n", "prompt-vol (0x1d)", p[0], p[1])
-	}
-	if a, ok := data["autoOff"].([]interface{}); ok && len(a) >= 2 {
-		if v := a[0]; v != float64(0xFFFF) {
-			fmt.Printf("%-18s %vmin\n", "auto-off (0x14)", v)
-		} else {
-			fmt.Printf("%-18s never\n", "auto-off (0x14)")
-		}
-	}
-	if w, ok := data["wear"].([]interface{}); ok && len(w) >= 1 {
-		fmt.Printf("%-18s enabled=%v\n", "wear (0x2c)", int(w[0].(float64)) == 1)
-	}
-	if b, ok := data["balance"].([]interface{}); ok && len(b) >= 1 {
-		fmt.Printf("%-18s %v\n", "balance (0x16)", b[0])
-	}
-	if e, ok := data["eq"].([]interface{}); ok {
-		fmt.Printf("%-18s preset=%v bands=%v\n", "eq (0x22)", e[0], e[1])
-	}
+	fmt.Fprintf(os.Stderr, "status: cannot render: %v\n", err)
 }
 
 func printQuery(label string, q func(byte) ([]byte, error), opcode byte, fmtFn func([]byte) string) {
@@ -1596,8 +1750,8 @@ func cmdNoise(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runClient(scanSeconds, func(c *client) error {
-		p, err := c.query(0x17, 3*time.Second)
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		p, err := dc.noiseRead()
 		if err != nil {
 			return fmt.Errorf("noise: %w", err)
 		}
@@ -1686,25 +1840,10 @@ func cmdWear(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runClient(scanSeconds, func(c *client) error {
-		cur, err := c.query(0x2C, 2*time.Second)
-		if err != nil {
-			return fmt.Errorf("wear: read current: %w", err)
-		}
-		if len(cur) < 3 {
-			return fmt.Errorf("wear: short current response %x", cur)
-		}
-		fmt.Printf("wear current: enabled=0x%02x actions=%x\n", cur[0], cur[1:])
-		set := append([]byte{state}, cur[1:]...)
-		want := append([]byte(nil), set...)
-		got, ok, err := c.setConfirm(0x2C, set, 3*time.Second, func(p []byte) bool {
-			return len(p) >= len(want) && p[0] == state && bytes.Equal(p[1:len(want)], want[1:])
-		})
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		got, err := dc.wearSet(state)
 		if err != nil {
 			return err
-		}
-		if !ok || len(got) < 1 || got[0] != state {
-			return fmt.Errorf("wear readback mismatch: want 0x%02x got %x", state, got)
 		}
 		fmt.Printf("wear=%s confirmed (enabled=0x%02x actions=%x)\n", args[0], got[0], got[1:])
 		return nil
@@ -1895,6 +2034,13 @@ func cmdBalance(args []string) error {
 }
 
 // ---------- EQ ----------
+//
+// 0x22 is read-modify-write. Every write starts from the payload the device
+// reports right now, patches only the bytes the command names, saves the
+// pre-write payload as a backup (and aborts if that fails), then writes and
+// confirms by readback. Frequencies, Q and band types are never synthesised:
+// the hearing-test slot carries non-standard values that a fixed table would
+// destroy.
 
 func cmdEq(args []string) error {
 	if len(args) < 1 {
@@ -1911,144 +2057,185 @@ func cmdEq(args []string) error {
 	return fmt.Errorf("eq: unknown subcommand %q", args[0])
 }
 
+func printJSON(v interface{}) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
+}
+
 func cmdEqGet(args []string) error {
-	// Extract --preset N if present
-	presetN := -1
-	remaining := []string{}
-	for i, a := range args {
-		if a == "--preset" && i+1 < len(args) {
-			n, err := strconv.Atoi(args[i+1])
-			if err != nil {
-				return fmt.Errorf("eq get: invalid --preset value %q", args[i+1])
-			}
-			presetN = n
-		} else {
-			remaining = append(remaining, a)
+	jsonOut := false
+	var rest []string
+	for _, a := range args {
+		switch {
+		case a == "--json":
+			jsonOut = true
+		case a == "--preset" || strings.HasPrefix(a, "--preset="):
+			// The old implementation wrote the index to characteristic 000B,
+			// which this model does not have, and never restored it. There is no
+			// select-without-write command, so reading another slot is not
+			// possible; `eq get` always reports the active slot.
+			return errors.New("eq get: --preset is not supported (this model has no characteristic 000B and a slot can only be read while it is active)")
+		default:
+			rest = append(rest, a)
 		}
 	}
-	scanSeconds, err := parseSeconds(remaining, 30)
+	scanSeconds, err := parseSeconds(rest, 30)
 	if err != nil {
 		return err
 	}
-	return runClient(scanSeconds, func(c *client) error {
-		var targetPreset byte = 0
-		if presetN >= 0 && presetN <= 255 {
-			targetPreset = byte(presetN)
-			if c.q.eqPreset != nil {
-				if _, WriteErr := c.q.eqPreset.WriteWithoutResponse([]byte{targetPreset}); WriteErr != nil {
-					fmt.Fprintf(os.Stderr, "eq get: warning: could not switch preset via 000B: %v\n", WriteErr)
-				}
-			}
-		}
-		p, err := c.query(0x22, 3*time.Second)
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		snap, err := dc.eqRead()
 		if err != nil {
 			return fmt.Errorf("eq get: %w", err)
 		}
-		if presetN >= 0 && presetN <= 255 {
-			// Restore the original preset
-			if c.q.eqPreset != nil {
-				_, _ = c.q.eqPreset.WriteWithoutResponse([]byte{byte(targetPreset)})
-			}
+		if jsonOut {
+			return printJSON(snap)
 		}
-preset, _, perr := parseEq(p)
-	_ = preset
-		if perr != nil {
-			return fmt.Errorf("eq get: %w", perr)
-		}
-		if presetN >= 0 && presetN <= 255 {
-			fmt.Printf("eq preset %d: %s\n", presetN, fmtEq(p))
-		} else {
-			fmt.Printf("eq (preset %d): %s\n", targetPreset, fmtEq(p))
-		}
+		fmt.Printf("eq (preset %d): %s\n", snap.Slot, fmtEq(snap))
 		return nil
 	})
 }
 
+// parseDBArg parses a dB value for the master gain, rejecting NaN/Inf and
+// anything outside +/-8 dB before it is ever converted to an integer.
+func parseDBArg(what, s string) (int, error) {
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid value %q", what, s)
+	}
+	c, err := qcycore.CentiFromDB(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", what, err)
+	}
+	return c, nil
+}
+
 func cmdEqSet(args []string) error {
+	const usage = "usage: qcyctl eq set <g1,g2,...,g10> --yes [--preset N] [--master-gain dB] [--json] [seconds]"
 	if len(args) < 1 {
-		return errors.New("usage: qcyctl eq set <g1,g2,...,g10> [--yes] [--preset N] [--master-gain N] [seconds]")
+		return errors.New(usage)
 	}
 	gainsArg := args[0]
-	confirmed := false
-	var presetArg int
-	var masterGainArg int
+	confirmed, jsonOut := false, false
+	var slot *int
+	var master *int
 	var secArgs []string
-	for _, a := range args[1:] {
-		if a == "--yes" {
+	// value returns the value of a "--flag v" / "--flag=v" option.
+	value := func(i *int, name string) (string, bool, error) {
+		a := args[*i]
+		if a == name {
+			if *i+1 >= len(args) {
+				return "", false, fmt.Errorf("eq set: %s needs a value", name)
+			}
+			*i++
+			return args[*i], true, nil
+		}
+		if strings.HasPrefix(a, name+"=") {
+			return strings.TrimPrefix(a, name+"="), true, nil
+		}
+		return "", false, nil
+	}
+	for i := 1; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "--yes":
 			confirmed = true
-			continue
+		case a == "--json":
+			jsonOut = true
+		case a == "--preset" || strings.HasPrefix(a, "--preset="):
+			v, _, err := value(&i, "--preset")
+			if err != nil {
+				return err
+			}
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n < 0 || n > 255 {
+				return fmt.Errorf("eq set: invalid --preset value %q (0-255)", v)
+			}
+			slot = &n
+		case a == "--master-gain" || strings.HasPrefix(a, "--master-gain="):
+			v, _, err := value(&i, "--master-gain")
+			if err != nil {
+				return err
+			}
+			c, err := parseDBArg("eq set: --master-gain", v)
+			if err != nil {
+				return err
+			}
+			master = &c
+		default:
+			secArgs = append(secArgs, a)
 		}
-		secArgs = append(secArgs, a)
 	}
-	// Writing 0x22 always targets the custom preset (8) and switches the active
-	// selection to it, so a saved curve can be lost. Refuse unless explicit.
+	// Writing 0x22 replaces the curve of the target slot and makes it active.
+	// The active slot's payload is backed up, not the target slot's old content (unreadable while inactive); the write is still a deliberate act.
 	if !confirmed {
-		return errors.New("eq set: writing to a different preset slot will overwrite it; use --yes to confirm, or --preset N to target slot N directly")
+		return errors.New("eq set: this overwrites the EQ curve of the target slot; pass --yes to confirm (the payload of the currently ACTIVE slot is backed up first; the previous contents of the target slot cannot be read while it is inactive, so they are not covered)")
 	}
-	parts := strings.Split(gainsArg, ",")
-	if len(parts) != 10 {
-		return fmt.Errorf("eq set: need 10 gains, got %d", len(parts))
-	}
-	var gains [10]int
-	for i, s := range parts {
-		db, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-		if err != nil {
-			return fmt.Errorf("eq set: invalid gain %q", s)
-		}
-		centi := int(math.Round(db * 100))
-		if centi > 800 {
-			centi = 800
-		}
-		if centi < -800 {
-			centi = -800
-		}
-		gains[i] = centi
+	gains, err := qcycore.ParseGains(gainsArg)
+	if err != nil {
+		return fmt.Errorf("eq set: %w", err)
 	}
 	scanSeconds, err := parseSeconds(secArgs, 30)
 	if err != nil {
 		return err
 	}
-	// Determine target preset: use --preset if given, otherwise keep current (8)
-	targetPreset := byte(8)
-	if presetArg >= 0 && presetArg <= 255 {
-		targetPreset = byte(presetArg)
-	}
-	// If user is switching to a different preset, require confirmation
-	if targetPreset != byte(8) && !confirmed {
-		return errors.New("eq set: writing to a different preset slot will overwrite it; use --yes to confirm, or --preset N to target slot N directly")
-	}
-	return runClient(scanSeconds, func(c *client) error {
-		params := buildEqParams(gains, targetPreset, masterGainArg)
-		fmt.Printf("eq set tx params=%x preset=%d masterGain=%ddB\n", params, targetPreset, masterGainArg/100)
-		match := func(p []byte) bool {
-			_, bands, perr := parseEq(p)
-			if perr != nil || len(bands) < 10 {
-				return false
-			}
-			for i := range gains {
-				if bands[i].gain != gains[i] {
-					return false
-				}
-			}
-			return true
-		}
-		got, ok, err := c.setConfirm(0x22, params, 4*time.Second, match)
+	op := qcycore.EqOp{Gains: &gains, MasterCenti: master, Slot: slot}
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		res, err := dc.eqApply(op)
 		if err != nil {
 			return err
 		}
-		if !ok {
-			return fmt.Errorf("eq set readback mismatch (raw=%x)", got)
+		if jsonOut {
+			return printJSON(res)
 		}
-		gotPreset, gotBands, _ := parseEq(got)
-		fmt.Printf("eq set confirmed: preset=%d bands=%s\n", gotPreset, fmtEq(got))
-		// Backup the slot we just wrote to (if not preset 11)
-		if gotPreset != 11 {
-			backupEqSlot(gotPreset, gotBands)
-		}
+		fmt.Printf("eq set confirmed: preset=%d masterGain=%+.2fdB %s\n", res.Slot, res.MasterGain, fmtEq(&res.EqSnapshot))
+		fmt.Printf("backup: %s\n", res.BackupHistory)
 		return nil
 	})
 }
 
+// cmdMasterGain changes ONLY the master gain (bytes 1-2 of 0x22). The slot,
+// every band's freq/gain/Q/type and the rest of the payload are carried over
+// from what the device reports.
+func cmdMasterGain(args []string) error {
+	const usage = "usage: qcyctl master-gain <dB> [--json] [seconds]   (dB in -8..+8)"
+	jsonOut := false
+	var pos []string
+	for _, a := range args {
+		if a == "--json" {
+			jsonOut = true
+			continue
+		}
+		pos = append(pos, a)
+	}
+	if len(pos) < 1 || len(pos) > 2 {
+		return errors.New(usage)
+	}
+	centi, err := parseDBArg("master-gain", pos[0])
+	if err != nil {
+		return err
+	}
+	scanSeconds, err := parseSeconds(pos[1:], 30)
+	if err != nil {
+		return err
+	}
+	op := qcycore.EqOp{MasterCenti: &centi}
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		res, err := dc.eqApply(op)
+		if err != nil {
+			return err
+		}
+		if jsonOut {
+			return printJSON(res)
+		}
+		fmt.Printf("master-gain=%+.2fdB slot=%d confirmed\n", res.MasterGain, res.Slot)
+		fmt.Printf("backup: %s\n", res.BackupHistory)
+		return nil
+	})
+}
+
+// cmdEqPreset writes the preset index to characteristic 000B. This model does
+// not have it, so the command fails instead of pretending to have switched.
 func cmdEqPreset(args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: qcyctl eq preset <n> [seconds]")
@@ -2063,8 +2250,7 @@ func cmdEqPreset(args []string) error {
 	}
 	return runClient(scanSeconds, func(c *client) error {
 		if c.q.eqPreset == nil {
-			fmt.Println("eq preset: not supported on this model (characteristic 000B absent)")
-			return nil
+			return errors.New("eq preset: not supported on this model (characteristic 000B absent); use `qcyctl eq set ... --preset N`")
 		}
 		if _, err := c.q.eqPreset.WriteWithoutResponse([]byte{byte(n)}); err != nil {
 			return fmt.Errorf("eq preset write 000B: %w", err)
@@ -2082,121 +2268,14 @@ func cmdEqPreset(args []string) error {
 	})
 }
 
-func buildEqParams(gains [10]int, presetIndex byte, masterGain int) []byte {
-	params := make([]byte, 0, 3+len(gains)*7)
-	// preset index (1 byte)
-	params = append(params, presetIndex)
-	// master gain signed int16 in centi-dB (2 bytes)
-	g := int16(masterGain)
-	params = append(params, byte(g), byte(g>>8))
-	for i := 0; i < 10; i++ {
-		params = append(params, le16(eqFreqs[i])...)
-		g := int16(gains[i])
-		params = append(params, byte(g), byte(g>>8))
-		params = append(params, le16(100)...)
-		params = append(params, 0x00) // type = 0 (peaking)
-	}
-	return params
-}
-
-// backupEqSlot saves the current EQ bands for the given preset slot.
-func backupEqSlot(preset byte, bands []eqBand) {
-	path := fmt.Sprintf("%s/eq-backup-slot%d.json", cacheDir(), int(preset))
-	data, err := os.ReadFile(path)
-	if err != nil {
-		data = nil
-	}
-	entry := eqBackup{
-		SavedAt: time.Now().Format(time.RFC3339),
-		Preset:  int(preset),
-		Bands:   bandsToMap(bands),
-	}
-	var backups []eqBackup
-	if data != nil {
-		if err := json.Unmarshal(data, &backups); err != nil {
-			backups = nil
-		}
-	}
-	found := false
-	for i, b := range backups {
-		if b.Preset == int(preset) {
-			backups[i] = entry
-			found = true
-			break
-		}
-	}
-	if !found {
-		backups = append(backups, entry)
-	}
-	out, _ := json.Marshal(backups)
-	os.WriteFile(path, out, 0644)
-}
-
-// eqBackup is a single entry in the slot backup file.
-type eqBackup struct {
-	SavedAt string         `json:"savedAt"`
-	Preset  int            `json:"preset"`
-	Bands   []bandMap      `json:"bands"`
-}
-
-// bandMap is a JSON-friendly representation of an EQ band.
-type bandMap struct {
-	Freq int     `json:"freq"`
-	Gain float64 `json:"gain"`
-}
-
-// bandsToMap converts []eqBand to []bandMap.
-func bandsToMap(bands []eqBand) []bandMap {
-	m := make([]bandMap, len(bands))
-	for i, b := range bands {
-		m[i] = bandMap{Freq: b.freq, Gain: float64(b.gain) / 100}
-	}
-	return m
-}
-
-// cacheDir returns the cache directory for EQ backups.
-func cacheDir() string {
-	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".cache", "qcyctl")
-	os.MkdirAll(dir, 0755)
-	return dir
-}
-
-func parseEq(p []byte) (preset byte, bands []eqBand, err error) {
-	if len(p) < 3 {
-		return 0, nil, fmt.Errorf("eq: too short (%d bytes)", len(p))
-	}
-	preset = p[0]
-	n := (len(p) - 3) / 7
-	if n > 10 {
-		n = 10
-	}
-	for i := 0; i < n; i++ {
-		base := 3 + i*7
-		freq := int(u16le(p, base))
-		gain := int(int16(u16le(p, base+2)))
-		bands = append(bands, eqBand{freq: freq, gain: gain})
-	}
-	return preset, bands, nil
-}
-
-type eqBand struct {
-	freq int
-	gain int
-}
-
-func fmtEq(p []byte) string {
-	preset, bands, err := parseEq(p)
-	if err != nil {
-		return fmt.Sprintf("raw=%x (%v)", p, err)
-	}
+func fmtEq(s *qcycore.EqSnapshot) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "preset=%d raw=%x bands=", preset, p)
-	for i, band := range bands {
+	fmt.Fprintf(&b, "preset=%d masterGain=%+.2fdB raw=%s bands=", s.Slot, s.MasterGain, s.Payload)
+	for i, band := range s.Bands {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		fmt.Fprintf(&b, "%dHz:%.2fdB", band.freq, float64(band.gain)/100)
+		fmt.Fprintf(&b, "%dHz:%.2fdB", band.Freq, band.Gain)
 	}
 	return b.String()
 }

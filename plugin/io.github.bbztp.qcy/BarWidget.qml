@@ -114,6 +114,7 @@ Panel {
 
   function toggleState(key) {
     if (optimistic[key] !== undefined) return optimistic[key]
+    if (key === "spatial") return !!(rep && rep.spatial && rep.spatial.enabled === true)
     return togglesReport[key] === true
   }
 
@@ -155,13 +156,23 @@ Panel {
     root.eqBandModel = b ? b : []
   }
 
-  // Preset management
+  // Preset (read-only in this release: the panel shows the active slot, it
+  // never writes one). {label, value} objects, because ChoiceRow renders
+  // modelData.label and matches on modelData.value. value is the HARDWARE preset
+  // slot, so it lines up with rep.eq.preset directly.
+  readonly property var eqPresetModel: [
+    { label: "Custom (hearing test)", value: 11 },
+    { label: "Pop", value: 0 },
+    { label: "Rock", value: 1 },
+    { label: "Classical", value: 2 },
+    { label: "Jazz", value: 3 },
+    { label: "Bass Booster", value: 4 }
+  ]
   property int _eqPreset: 0
-  property var _eqPresetSig: ""
-  property var eqPresetModel: function() { return ["Custom (hearing test)", "Pop", "Rock", "Classical", "Jazz", "Bass Booster"] }
+  property string _eqPresetSig: ""
 
   function updateEqPreset() {
-    var p = rep && rep.eq ? rep.eq.preset : 0
+    var p = rep && rep.eq && rep.eq.preset !== null && rep.eq.preset !== undefined ? rep.eq.preset : 0
     var sig = String(p)
     if (sig === root._eqPresetSig) return
     root._eqPresetSig = sig
@@ -172,66 +183,55 @@ Panel {
     return root._eqPreset
   }
 
-  function eqPresetSet(n) {
-    // Map model index to hardware preset slot
-    // Model index 0 = "Custom (hearing test)" → slot 11
-    // Model indices 1-5 → hardware slots 0-4
-    var hwPreset;
-    if (n === 0) {
-        hwPreset = 11; // Custom (hearing test)
-    } else if (n >= 1 && n <= 5) {
-        hwPreset = n - 1; // Pop→0, Rock→1, Classical→2, Jazz→3, Bass Booster→4
-    } else {
-        hwPreset = 0; // fallback
-    }
-    // Use the CLI to write the preset index
-    var exec = "qcyctl eq preset " + hwPreset
-    root.binary(exec, 3)
-    // Update local state immediately
-    root._eqPreset = hwPreset
-    root._eqPresetSig = String(hwPreset)
-    root.refresh()
-  }
-
-  // Master gain (centi-dB, ±8 dB)
-  property int _masterGainCenti: 0
+  // Master gain, in dB (float, as the daemon reports it), +-8 dB.
+  readonly property real masterGainMin: -8
+  readonly property real masterGainMax: 8
+  property real _masterGainDb: 0
   property string _masterGainSig: ""
 
   function updateMasterGain() {
-    var v = rep && rep.eq ? (rep.eq.masterGain || 0) : 0
+    var v = rep && rep.eq ? Number(rep.eq.masterGain || 0) : 0
+    if (isNaN(v)) v = 0
     var sig = String(v)
     if (sig === root._masterGainSig) return
     root._masterGainSig = sig
-    root._masterGainCenti = v
+    root._masterGainDb = v
   }
 
-  function masterGainCenti() {
-    return root._masterGainCenti
+  function masterGainDb() {
+    return root._masterGainDb
+  }
+
+  // EQ writes are only safe against a full 10-band report: the opcode carries
+  // every band, so a partial read would write garbage over the others.
+  function eqWritable() {
+    var b = rep && rep.eq ? rep.eq.bands : null
+    return !!b && b.length === 10
   }
 
   function eqSetMasterGain(v) {
-    var exec = "qcyctl master-gain " + (v / 100).toFixed(2)
-    root.binary(exec, 3)
-    // Update local state immediately
-    root._masterGainCenti = v
-    root._masterGainSig = String(v)
-    root.refresh()
-  }
-
-  function masterGainStep(v) {
-    // Snap to 10-centi-dB steps
-    return Math.round(v / 10) * 10
+    if (!root.eqWritable()) return
+    var db = Math.max(root.masterGainMin, Math.min(root.masterGainMax, Number(v)))
+    if (isNaN(db)) return
+    db = Math.round(db * 10) / 10
+    Qcy.set("Master gain", ["master-gain", db.toFixed(1)])
+    // Optimistic: the next full read reconciles.
+    root._masterGainDb = db
+    root._masterGainSig = String(db)
   }
 
   function eqBands() {
     return root.eqBandModel
   }
 
-  onRepChanged: {
-    updateEqBands()
-    updateEqPreset()
-    updateTouchRows()
+  // Each updater runs on its own: a throw in one must not skip the rest.
+  function updateAll() {
+    var steps = [updateEqBands, updateEqPreset, updateMasterGain, updateTouchRows]
+    for (var i = 0; i < steps.length; i++) {
+      try { steps[i]() } catch (e) { console.warn("qcy: update step failed:", e) }
+    }
   }
+  onRepChanged: updateAll()
 
   // What this unit actually answered, from the daemon's one-off probe. Falls
   // back to the shape of the report when no probe has run, so the panel is
@@ -426,8 +426,7 @@ Panel {
 
   Component.onCompleted: {
     Qcy.settings = settings
-    updateEqBands()
-    updateTouchRows()
+    root.updateAll()
   }
   onSettingsChanged: Qcy.settings = settings
 
@@ -466,6 +465,12 @@ Panel {
     target: Qcy
     function onUpdatedAtChanged() {
       if (Qcy.busyAction === "") root.optimistic = ({})
+    }
+    function onSetFailed() {
+      // Drop the optimistic master gain; the refresh Qcy starts re-reads the
+      // real value, which the cleared signature lets through.
+      root._masterGainSig = ""
+      Qcy.refresh()
     }
     function onConnectedChanged() {
       root.optimistic = ({})
@@ -901,20 +906,20 @@ Panel {
               ChoiceRow {
                 width: parent.width
                 label: "EQ preset"
-                model: root.eqPresetModel()
-                current: root.eqPreset()
-                onPicked: function (v) { root.eqPresetSet(v) }
-                // Show numeric slot when on a non-11 preset; keep "Custom (hearing test)" for 11
+                model: root.eqPresetModel
+                current: String(root.eqPreset())
+                readOnly: true
               }
 
               SliderRow {
                 width: parent.width
                 label: "Master gain"
-                minimum: -800
-                maximum: 800
-                step: 10
-                value: root.masterGainCenti()
-                suffix: " centi-dB"
+                minimum: root.masterGainMin
+                maximum: root.masterGainMax
+                step: 0.5
+                integer: false
+                value: root.masterGainDb()
+                suffix: " dB"
                 onReleased: function (v) { root.eqSetMasterGain(v) }
               }
 
@@ -925,7 +930,7 @@ Panel {
 
               Text {
                 width: parent.width
-                text: "Writing to a preset slot overwrites its curve. Slot 11 is automatically backed up. Use --preset N with the CLI to target a specific slot."
+                text: "The preset is shown for reference and is not changed from here. Before any write, the earbuds' EQ state is saved to ~/.local/share/qcy-omarchy/backups/."
                 color: Qt.darker(root.foreground, 1.8)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
@@ -1353,10 +1358,6 @@ Panel {
     }
 
     Repeater {
-      // A Repeater is an Item, not a positioner: it parents the delegates but
-      // never lays them out, so every one of them lands at (0, 0) unless the
-      // delegate positions ITSELF. Without the `x` below all ten bands drew in
-      // a single stack at the left edge — which is why the curve read as blank.
       model: curve.bands
       Item {
         id: band
@@ -1365,20 +1366,23 @@ Panel {
 
         readonly property real slotWidth: curve.bands.length > 0
           ? curve.width / curve.bands.length : curve.width
-        readonly property real g: Math.max(-1, Math.min(1, (modelData.gain || 0) / curve.maxGain))
 
         x: band.index * band.slotWidth
         width: band.slotWidth
         height: curve.plotHeight
 
+        // Bar grows from the 0 dB line (vertical centre of the plot): up for
+        // a boost, down for a cut, clamped to +-maxGain.
         Rectangle {
-          id: dot
-          width: Style.space(5)
-          height: width
-          radius: width / 2
-          color: root.accent
-          x: (parent.width - width) / 2
-          y: parent.height / 2 - parent.g * (parent.height / 2 - width) - width / 2
+          id: bar
+          readonly property real gainDb: Math.max(-curve.maxGain, Math.min(curve.maxGain, Number(modelData.gain) || 0))
+          readonly property real barHeight: Math.abs(gainDb) / curve.maxGain * (parent.height / 2)
+          anchors.horizontalCenter: parent.horizontalCenter
+          width: Math.max(2, parent.width - Style.space(6))
+          height: Math.max(1, barHeight)
+          y: gainDb >= 0 ? parent.height / 2 - height : parent.height / 2
+          radius: 2
+          color: gainDb >= 0 ? root.accent : Qt.darker(root.foreground, 1.5)
         }
 
         Text {
@@ -1560,6 +1564,8 @@ Panel {
     required property string label
     property var model: []
     required property string current
+    // Read-only rows show the selection but ignore clicks.
+    property bool readOnly: false
     signal picked(string value)
 
     implicitHeight: crowLabel.implicitHeight + Style.space(8) + chipFlow.implicitHeight
@@ -1591,7 +1597,7 @@ Panel {
           // model values may be numbers, and "0" === 0 is false in JS, which
           // left the intensity pills never appearing selected.
           active: String(crow.current) === String(modelData.value)
-          onClicked: crow.picked(modelData.value)
+          onClicked: if (!crow.readOnly) crow.picked(String(modelData.value))
         }
       }
     }
