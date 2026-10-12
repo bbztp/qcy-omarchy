@@ -343,12 +343,21 @@ func (dc *daemonClient) eqRead() (*qcycore.EqSnapshot, error) {
 	return &snap, nil
 }
 
-// eqApply has the daemon read the current payload, patch it, back it up and
-// write it, all under one transaction lock.
+// eqApply has the daemon read the current payload, build the one to write,
+// back it up and write it, all under one transaction lock.
 func (dc *daemonClient) eqApply(op qcycore.EqOp) (*qcycore.EqResult, error) {
 	args := map[string]interface{}{}
 	if op.Gains != nil {
 		args["gains"] = op.Gains[:]
+	}
+	if op.Bands != nil {
+		args["bands"] = op.Bands
+	}
+	if op.AllowProtected {
+		args["allowProtected"] = true
+	}
+	if op.AllowFullLength {
+		args["allowFull"] = true
 	}
 	if op.MasterCenti != nil {
 		args["masterGain"] = *op.MasterCenti
@@ -557,7 +566,19 @@ func (w *daemonClientWrapper) eqRead() (*qcycore.EqSnapshot, error) {
 }
 
 func (w *daemonClientWrapper) eqApply(op qcycore.EqOp) (*qcycore.EqResult, error) {
-	cur, err := w.query(qcycore.EqOpcode, 3*time.Second)
+	return eqApplyVia(w.client, op)
+}
+
+// eqLink is the part of *client eqApplyVia needs; a test substitutes a fake.
+type eqLink interface {
+	query(opcode byte, timeout time.Duration) ([]byte, error)
+	setConfirm(opcode byte, params []byte, timeout time.Duration, match func([]byte) bool) ([]byte, bool, error)
+}
+
+// eqApplyVia is the direct-mode 0x22 write: read, ApplyEq (which enforces the
+// protected-slot and write-length rules), backup, write, confirm.
+func eqApplyVia(l eqLink, op qcycore.EqOp) (*qcycore.EqResult, error) {
+	cur, err := l.query(qcycore.EqOpcode, 3*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("eq: read current payload: %w", err)
 	}
@@ -571,12 +592,12 @@ func (w *daemonClientWrapper) eqApply(op qcycore.EqOp) (*qcycore.EqResult, error
 	if err != nil {
 		return nil, fmt.Errorf("eq: backup failed, nothing was written: %w", err)
 	}
-	got, ok, err := w.setConfirm(qcycore.EqOpcode, next, 4*time.Second, qcycore.EqMatch(next, op))
+	got, ok, err := l.setConfirm(qcycore.EqOpcode, next, 4*time.Second, qcycore.EqMatch(next, op))
 	if err != nil {
 		return nil, fmt.Errorf("eq: write: %w (previous payload saved at %s)", err, bk.History)
 	}
 	if !ok {
-		return nil, fmt.Errorf("eq: readback mismatch: want %x got %x; the device may nevertheless have applied the value (previous payload saved at %s)", next, got, bk.History)
+		return nil, qcycore.EqWriteFailure(next, got, bk.History)
 	}
 	snap, err := qcycore.DecodeEq(got)
 	if err != nil {
@@ -728,10 +749,13 @@ func usage() {
   qcyctl auto-off <minutes|never> [seconds]
   qcyctl balance <left|center|right|0-100> [seconds]
   qcyctl eq get [--json] [seconds]
-  qcyctl eq set <g1,g2,...,g10> --yes [--preset N] [--master-gain dB] [--json] [seconds]
-        (dB, -12..+12; patches the live payload, keeps freq/Q/type; backs the slot up first)
+  qcyctl eq set <g1,g2,...,g10> --yes [--preset N] [--master-gain dB] [--allow-protected] [--full-length] [--json] [seconds]
+        (gains -8..+8 dB, master -12..+12; patches the live payload, keeps freq/Q/type; backs the slot up first;
+         slots 6 and 11 are protected: --preset 6|11, or any --preset while one of them is active, needs --allow-protected;
+         a payload with bands at positions 10-19 needs a 143-byte write, which needs --full-length)
   qcyctl eq preset <n> [seconds]   (unsupported on models without characteristic 000B)
-  qcyctl master-gain <dB> [--json] [seconds]   (-12..+12; only the master gain changes)
+  qcyctl master-gain <dB> [--full-length] [--json] [seconds]
+        (-12..+12; only the master gain changes; --full-length is needed when the active slot has bands 10-19, e.g. slot 11)
   qcyctl keys get [seconds]
   qcyctl keys set <keyId:funId> [<keyId:funId> ...] [seconds]
 All setters read back by querying the opcode (FF 03 FE 01 <opcode>) and fail non-zero on mismatch.`)
@@ -2122,75 +2146,94 @@ func parseDBArg(what, s string) (int, error) {
 	return c, nil
 }
 
-func cmdEqSet(args []string) error {
-	const usage = "usage: qcyctl eq set <g1,g2,...,g10> --yes [--preset N] [--master-gain dB] [--json] [seconds]"
+// eqSetArgs is the parsed command line of `eq set`.
+type eqSetArgs struct {
+	op        qcycore.EqOp
+	jsonOut   bool
+	confirmed bool
+	secArgs   []string
+}
+
+const eqSetUsage = "usage: qcyctl eq set <g1,g2,...,g10> --yes [--preset N] [--master-gain dB] [--allow-protected] [--full-length] [--json] [seconds]"
+
+// parseEqSetArgs parses and validates everything `eq set` needs before any
+// Bluetooth is touched. The write-safety rules themselves (protected slots,
+// 143-byte format) live in qcycore.ApplyEq; the flags only set the op fields.
+func parseEqSetArgs(args []string) (eqSetArgs, error) {
+	var a eqSetArgs
 	if len(args) < 1 {
-		return errors.New(usage)
+		return a, errors.New(eqSetUsage)
 	}
 	gainsArg := args[0]
-	confirmed, jsonOut := false, false
-	var slot *int
-	var master *int
-	var secArgs []string
 	// value returns the value of a "--flag v" / "--flag=v" option.
-	value := func(i *int, name string) (string, bool, error) {
-		a := args[*i]
-		if a == name {
+	value := func(i *int, name string) (string, error) {
+		arg := args[*i]
+		if arg == name {
 			if *i+1 >= len(args) {
-				return "", false, fmt.Errorf("eq set: %s needs a value", name)
+				return "", fmt.Errorf("eq set: %s needs a value", name)
 			}
 			*i++
-			return args[*i], true, nil
+			return args[*i], nil
 		}
-		if strings.HasPrefix(a, name+"=") {
-			return strings.TrimPrefix(a, name+"="), true, nil
-		}
-		return "", false, nil
+		return strings.TrimPrefix(arg, name+"="), nil
 	}
 	for i := 1; i < len(args); i++ {
-		switch a := args[i]; {
-		case a == "--yes":
-			confirmed = true
-		case a == "--json":
-			jsonOut = true
-		case a == "--preset" || strings.HasPrefix(a, "--preset="):
-			v, _, err := value(&i, "--preset")
+		switch arg := args[i]; {
+		case arg == "--yes":
+			a.confirmed = true
+		case arg == "--json":
+			a.jsonOut = true
+		case arg == "--allow-protected":
+			a.op.AllowProtected = true
+		case arg == "--full-length":
+			a.op.AllowFullLength = true
+		case arg == "--preset" || strings.HasPrefix(arg, "--preset="):
+			v, err := value(&i, "--preset")
 			if err != nil {
-				return err
+				return a, err
 			}
 			n, err := strconv.Atoi(strings.TrimSpace(v))
 			if err != nil || n < 0 || n > 255 {
-				return fmt.Errorf("eq set: invalid --preset value %q (0-255)", v)
+				return a, fmt.Errorf("eq set: invalid --preset value %q (0-255)", v)
 			}
-			slot = &n
-		case a == "--master-gain" || strings.HasPrefix(a, "--master-gain="):
-			v, _, err := value(&i, "--master-gain")
+			a.op.Slot = &n
+		case arg == "--master-gain" || strings.HasPrefix(arg, "--master-gain="):
+			v, err := value(&i, "--master-gain")
 			if err != nil {
-				return err
+				return a, err
 			}
 			c, err := parseDBArg("eq set: --master-gain", v)
 			if err != nil {
-				return err
+				return a, err
 			}
-			master = &c
+			a.op.MasterCenti = &c
 		default:
-			secArgs = append(secArgs, a)
+			a.secArgs = append(a.secArgs, arg)
 		}
-	}
-	// Writing 0x22 replaces the curve of the target slot and makes it active.
-	// The active slot's payload is backed up, not the target slot's old content (unreadable while inactive); the write is still a deliberate act.
-	if !confirmed {
-		return errors.New("eq set: this overwrites the EQ curve of the target slot; pass --yes to confirm (the payload of the currently ACTIVE slot is backed up first; the previous contents of the target slot cannot be read while it is inactive, so they are not covered)")
 	}
 	gains, err := qcycore.ParseGains(gainsArg)
 	if err != nil {
-		return fmt.Errorf("eq set: %w", err)
+		return a, fmt.Errorf("eq set: %w", err)
 	}
-	scanSeconds, err := parseSeconds(secArgs, 30)
+	a.op.Gains = &gains
+	return a, nil
+}
+
+func cmdEqSet(args []string) error {
+	a, err := parseEqSetArgs(args)
 	if err != nil {
 		return err
 	}
-	op := qcycore.EqOp{Gains: &gains, MasterCenti: master, Slot: slot}
+	// Writing 0x22 replaces the curve of the target slot and makes it active.
+	// The active slot's payload is backed up, not the target slot's old content (unreadable while inactive); the write is still a deliberate act.
+	if !a.confirmed {
+		return errors.New("eq set: this overwrites the EQ curve of the target slot; pass --yes to confirm (the payload of the currently ACTIVE slot is backed up first; the previous contents of the target slot cannot be read while it is inactive, so they are not covered)")
+	}
+	scanSeconds, err := parseSeconds(a.secArgs, 30)
+	if err != nil {
+		return err
+	}
+	op, jsonOut := a.op, a.jsonOut
 	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
 		res, err := dc.eqApply(op)
 		if err != nil {
@@ -2210,15 +2253,19 @@ func cmdEqSet(args []string) error {
 // every band's freq/gain/Q/type and the rest of the payload are carried over
 // from what the device reports.
 func cmdMasterGain(args []string) error {
-	const usage = "usage: qcyctl master-gain <dB> [--json] [seconds]   (dB in -12..+12)"
+	const usage = "usage: qcyctl master-gain <dB> [--full-length] [--json] [seconds]   (dB in -12..+12)"
 	jsonOut := false
+	var allowFull bool
 	var pos []string
 	for _, a := range args {
-		if a == "--json" {
+		switch a {
+		case "--json":
 			jsonOut = true
-			continue
+		case "--full-length":
+			allowFull = true
+		default:
+			pos = append(pos, a)
 		}
-		pos = append(pos, a)
 	}
 	if len(pos) < 1 || len(pos) > 2 {
 		return errors.New(usage)
@@ -2231,7 +2278,7 @@ func cmdMasterGain(args []string) error {
 	if err != nil {
 		return err
 	}
-	op := qcycore.EqOp{MasterCenti: &centi}
+	op := qcycore.EqOp{MasterCenti: &centi, AllowFullLength: allowFull}
 	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
 		res, err := dc.eqApply(op)
 		if err != nil {
@@ -2285,7 +2332,7 @@ func cmdEqPreset(args []string) error {
 // which (unlike the 73-byte one) has not been proven on the device.
 func warnFullLength(res *qcycore.EqResult) {
 	if res.FullLength {
-		fmt.Fprintf(os.Stderr, "warning: fullLength=true: wrote the full %d-byte payload because bytes 73.. are non-zero; this format is NOT proven on the device (readback was confirmed byte for byte)\n", len(res.Payload)/2)
+		fmt.Fprintf(os.Stderr, "warning: fullLength=true: wrote the full 143-byte payload (--full-length); this format is NOT proven on the device (readback was confirmed byte for byte)\n")
 	}
 }
 

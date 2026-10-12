@@ -117,10 +117,42 @@ positions 10-19 are the "tail", bytes 73-142).
 **Write format.** The 73-byte write (positions 0-9, tail omitted) is the
 **proven** format and is used whenever the tail holds no band (all zero, or
 only the `0xFF` type marker of an empty position). If any position 10-19 is
-populated, the write sends the full length read (143 bytes). That format is
-**not proven on the device**; the result then carries `fullLength: true` and
-the CLI prints a warning. In both cases everything not named in the command is
-carried over byte for byte from the payload just read.
+populated, the payload to write is the full length read (143 bytes). That
+format is **not proven on the device**, so it is **refused** unless the caller
+passes `--full-length` (CLI) / `allowFull: true` (socket); the result then
+carries `fullLength: true` and the CLI prints a warning. A patch carries
+everything not named in the command over byte for byte from the payload just
+read.
+
+**Build mode (`bands`).** A caller may instead give the whole curve as
+structured bands (`{index, freq, gain (dB), q, type}`; library presets use
+this). The payload is then **constructed** from those bands, never copied from
+the payload read: byte 0 is the target slot, bytes 1-2 the master gain,
+positions not named are all zero (freq 0, type 0, no `0xFF` marker). The
+payload read is used only as proof of life and for the backup. Positions 0-9
+give the proven 73-byte payload with a zero tail; any position 10-19 gives 143
+bytes and needs `allowFull`. Per band: `index` 0-19 and unique, `freq`
+20-20000 Hz, `gain` -8..+8 dB, `q` 1-65535 (raw), `type` 0 or 2 only (the
+values seen on the device). `masterGain` may be omitted only when the target
+is the active slot (its own master gain is kept); for another slot it is
+required, because the reported master gain belongs to the active slot. `bands`
+and `gains` are mutually exclusive.
+
+**Protected slots.** Slots 6 (factory "Classico") and 11 (hearing test) are in
+`qcycore.ProtectedSlots`. Enforced inside `ApplyEq`, so the CLI (direct and via
+the daemon), the socket and the library apply all inherit it. Without
+`--allow-protected` / `allowProtected: true` the write is refused, before the
+backup and before anything is sent, when
+
+- an explicit target slot is 6 or 11 (omit the slot to adjust the active one);
+- the active slot is 6 or 11 and the target is another slot (a cross-slot write
+  also switches the device away from it);
+- `bands` would replace the whole curve of a protected active slot.
+
+A master-gain or band-gain patch of the active protected slot (no slot given)
+stays allowed when it is the 73-byte write (Classico), and otherwise needs
+`--full-length` (custom slot 11 carries bands in positions 10-12, so its
+master-gain slider now needs `allowFull`).
 
 - **Slot** (byte 0): the active preset slot. Slot 11 is the manufacturer's
   hearing-test profile; the plugin maps slots 0-4 to Pop, Rock, Classical, Jazz
@@ -161,17 +193,30 @@ bytes that were asked for:
 Order of operations (done under one transaction lock in the daemon):
 
 1. read `0x22` (143 bytes expected; at least 73 accepted; refused if all 0xFF);
-2. patch a copy of the payload: the first 73 bytes when the tail holds no band,
-   otherwise the full length read (`fullLength: true`, unproven);
+2. build the payload (`ApplyEq`): patch a copy of what was read, the first 73
+   bytes when the tail holds no band, otherwise the full length read
+   (`fullLength: true`, unproven, needs `--full-length`); or construct it from
+   `bands`. Protected-slot and 143-byte refusals happen here, before step 3;
 3. **save the full payload read in step 1** (all 143 bytes; see Backups); if this fails the write is
    **aborted** and the error is returned;
 4. write the patched payload;
 5. confirm by readback with zero tolerance: the echo (which may be longer than
    what was sent) must equal every byte sent: slot, master gain and every
-   band written.
+   band written. When 73 bytes were sent and the echo is longer, the echo's
+   bytes 73.. must also hold no band (zero, or `0xFF` empty-type markers).
 
 The earbuds first answer a query with the pre-change state, so confirmation
-keeps re-querying until the echo matches or the deadline passes.
+keeps re-querying until the echo matches or the deadline passes. At the
+deadline the last echo decides the failure:
+
+- it reports **another slot** than the one written (`echo[0]` != `sent[0]`):
+  state **written, unconfirmed**. The write was sent but the device does not
+  report that slot as active, so what it stored cannot be told from here. The
+  daemon answers with `code: "unconfirmed"`; the message carries the payload
+  that was sent, the one reported and the backup path. `qcyctl` prints that and
+  exits non-zero;
+- anything else (same slot, different bytes or a populated tail, or silence): a
+  plain `readback mismatch`, no `code`; the message names the backup too.
 
 Writing `0x22` does not restart the earbuds (unlike `0x23` LDAC or `0x24`
 multipoint). Writing into a slot replaces whatever curve that slot held and
@@ -202,11 +247,15 @@ restore command yet.
 - `qcyctl eq get [--json] [seconds]`: the active slot, master gain and bands.
   `--preset N` is **not supported** and returns an error (it used to write to
   characteristic `000B`, which this model does not have, and never restored it).
-- `qcyctl eq set <g1,...,g10> --yes [--preset N] [--master-gain dB] [--json] [seconds]`
+- `qcyctl eq set <g1,...,g10> --yes [--preset N] [--master-gain dB] [--allow-protected] [--full-length] [--json] [seconds]`
   gains in dB. Out-of-range values are rejected, not clamped. Without
   `--preset` the target is the currently active slot; without `--master-gain`
-  the device's current master gain is kept.
-- `qcyctl master-gain <dB> [--json] [seconds]`: master gain in dB, -12..+12.
+  the device's current master gain is kept. `--preset 6|11`, or any `--preset`
+  while slot 6 or 11 is active, needs `--allow-protected`; a payload that needs
+  the 143-byte format needs `--full-length` (see Write format).
+- `qcyctl master-gain <dB> [--full-length] [--json] [seconds]`: master gain in
+  dB, -12..+12. On a slot whose positions 10-19 hold bands (the custom slot 11)
+  it needs `--full-length`.
 - `qcyctl eq preset <n>`: writes characteristic `000B`; fails on this model
   because the characteristic is absent.
 
@@ -298,15 +347,26 @@ If the scan finds nothing and no cached address answers, the daemon replies `{"o
 | `capabilities` | none | model capabilities |
 | `set` | `action`, `params`, optional `expect` | confirmed payload bytes or null; `action: "eq"` is refused |
 | `eq` | none | `{slot, masterGain (dB), bands[{freq,gain,q,type}], payload (hex)}` |
-| `eqApply` | optional `gains` (10 ints, centi-dB), `masterGain` (int, centi-dB), `slot` (int) | the `eq` object plus `previous`, `backupFirst`, `backupHistory` |
-| `eqMasterGain` | `masterGain` (int, centi-dB), required | same as `eqApply` |
+| `eqApply` | optional `gains` (10 ints, centi-dB), `masterGain` (int, centi-dB), `slot` (int), `bands` (array of `{index, freq, gain (dB, number), q, type}`, exclusive with `gains`), `allowProtected` (bool), `allowFull` (bool). Nothing else: unknown keys and raw payloads (`payload`, `raw`, `hex`, ...) are rejected | the `eq` object plus `previous`, `fullLength`, `backupFirst`, `backupHistory` |
+| `eqMasterGain` | `masterGain` (int, centi-dB), required; optional `allowProtected`, `allowFull` | same as `eqApply` |
 | `wear` | `state`: 1 on / 2 off | confirmed `0x2C` payload (byte array) |
 | `noise` | none | raw `0x17` payload `[mode, scene, level]` |
 | `find`, `keys`, `keysSet`, `disconnect` | as before | |
 
 `eqApply`, `eqMasterGain` and `wear` read, patch and write under a single
 transaction lock, so a concurrent status sweep cannot interleave. `eqApply` is
-the only way to write `0x22`.
+the only way to write `0x22`, and it never takes raw payload bytes: the
+payload is always built from structured values validated in `qcycore`.
+
+`eqApply` / `eqMasterGain` failure codes (`code` in the response, in addition
+to `busy` and `not_found`):
+
+| `code` | Meaning | Written? |
+|---|---|---|
+| `protected_slot` | the target or the active slot is 6 or 11; pass `allowProtected` | no |
+| `full_length_required` | the payload needs 143 bytes (unproven); pass `allowFull` | no |
+| `unconfirmed` | the write was sent, the device keeps reporting another slot | sent, unknown |
+| none | validation error, backup failure or readback mismatch | see message |
 
 ## Characteristic layout (service `a001`)
 

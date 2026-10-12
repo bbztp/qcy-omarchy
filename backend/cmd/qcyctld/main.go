@@ -756,6 +756,12 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 		//                       10+ keep what the device reported)
 		//   masterGain int      master gain, centi-dB (-1200..+1200)
 		//   slot       int      target slot byte
+		//   bands      [{index,freq,gain(dB),q,type}] build the payload from
+		//                       these bands alone (exclusive with gains)
+		//   allowProtected bool lift the protected-slot refusal (slots 6, 11)
+		//   allowFull  bool     allow the unproven 143-byte write
+		// Raw payload bytes are never accepted. Failures carry a code:
+		// protected_slot, full_length_required, unconfirmed.
 		op, err := eqOpFromArgs(req.Args)
 		if err != nil {
 			return nil, err
@@ -766,7 +772,13 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 		if _, ok := req.Args["masterGain"]; !ok {
 			return nil, errors.New("eqMasterGain: masterGain is required")
 		}
-		op, err := eqOpFromArgs(map[string]interface{}{"masterGain": req.Args["masterGain"]})
+		fwd := map[string]interface{}{"masterGain": req.Args["masterGain"]}
+		for _, k := range []string{"allowProtected", "allowFull"} {
+			if v, ok := req.Args[k]; ok {
+				fwd[k] = v
+			}
+		}
+		op, err := eqOpFromArgs(fwd)
 		if err != nil {
 			return nil, err
 		}
@@ -983,15 +995,25 @@ func (d *daemon) awaitValue(opcode byte, want []byte, timeout time.Duration) ([]
 // awaitMatch is awaitValue with an arbitrary predicate; wantDesc is only used in
 // the mismatch error. Callers hold txMu.
 func (d *daemon) awaitMatch(opcode byte, match func([]byte) bool, wantDesc string, timeout time.Duration) ([]byte, error) {
+	got, last, ok := d.awaitMatchLast(opcode, match, timeout)
+	if !ok {
+		return nil, fmt.Errorf("readback mismatch for 0x%02x: want %s, device reported %x (the device may nevertheless have applied the value; re-read to check)", opcode, wantDesc, last)
+	}
+	return got, nil
+}
+
+// awaitMatchLast waits for a frame of opcode that match accepts. On timeout it
+// returns ok=false and the last frame of that opcode seen (nil if none), which
+// callers classify (see qcycore.EqWriteFailure).
+func (d *daemon) awaitMatchLast(opcode byte, match func([]byte) bool, timeout time.Duration) (got, last []byte, ok bool) {
 	deadline := time.After(timeout)
 	requery := time.After(400 * time.Millisecond)
 	queries := 0
-	var last []byte
 	for {
 		select {
 		case f := <-d.frames:
 			if f.cmd == opcode && match(f.params) {
-				return f.params, nil
+				return f.params, f.params, true
 			} else if f.cmd == opcode {
 				last = f.params
 			}
@@ -1002,21 +1024,58 @@ func (d *daemon) awaitMatch(opcode byte, match func([]byte) bool, wantDesc strin
 				requery = time.After(400 * time.Millisecond)
 			}
 		case <-deadline:
-			return nil, fmt.Errorf("readback mismatch for 0x%02x: want %s, device reported %x (the device may nevertheless have applied the value; re-read to check)", opcode, wantDesc, last)
+			return nil, last, false
 		}
 	}
 }
+
+// eqArgKeys are the only arguments eqApply accepts. A raw payload (hex or
+// bytes) has no key here on purpose: 0x22 is only ever written from structured
+// values that qcycore validates, never from bytes a client built.
+var eqArgKeys = map[string]bool{
+	"gains": true, "masterGain": true, "slot": true, "bands": true,
+	"allowProtected": true, "allowFull": true,
+}
+
+var eqBandKeys = map[string]bool{"index": true, "freq": true, "gain": true, "q": true, "type": true}
 
 // eqOpFromArgs decodes the eqApply arguments. Values are validated again by
 // qcycore.ApplyEq; this only rejects shapes JSON cannot express safely.
 func eqOpFromArgs(args map[string]interface{}) (qcycore.EqOp, error) {
 	var op qcycore.EqOp
+	for k := range args {
+		if !eqArgKeys[k] {
+			switch k {
+			case "payload", "raw", "hex", "params", "expect", "action":
+				return op, fmt.Errorf("eq: %q is not accepted: raw 0x22 payloads cannot be written over the socket; send structured gains/bands", k)
+			}
+			return op, fmt.Errorf("eq: unknown argument %q", k)
+		}
+	}
 	whole := func(v interface{}, what string) (int, error) {
 		f, ok := v.(float64)
 		if !ok || math.IsNaN(f) || math.IsInf(f, 0) || f != math.Trunc(f) || math.Abs(f) > 1e6 {
 			return 0, fmt.Errorf("eq: %s must be a whole number", what)
 		}
 		return int(f), nil
+	}
+	flag := func(key string) (bool, error) {
+		v, ok := args[key]
+		if !ok {
+			return false, nil
+		}
+		b, isBool := v.(bool)
+		if !isBool {
+			return false, fmt.Errorf("eq: %s must be true or false", key)
+		}
+		return b, nil
+	}
+	var err error
+	if op.AllowProtected, err = flag("allowProtected"); err != nil {
+		return op, err
+	}
+	if op.AllowFullLength, err = flag("allowFull"); err != nil {
+		return op, err
 	}
 	if v, ok := args["masterGain"]; ok {
 		c, err := whole(v, "masterGain")
@@ -1047,7 +1106,62 @@ func eqOpFromArgs(args map[string]interface{}) (qcycore.EqOp, error) {
 		}
 		op.Gains = &g
 	}
+	if v, ok := args["bands"]; ok {
+		arr, ok := v.([]interface{})
+		if !ok || len(arr) == 0 || len(arr) > qcycore.EqMaxBands {
+			return op, fmt.Errorf("eq: bands must be an array of 1-%d objects", qcycore.EqMaxBands)
+		}
+		bands := make([]qcycore.BandSpec, 0, len(arr))
+		for i, e := range arr {
+			m, ok := e.(map[string]interface{})
+			if !ok {
+				return op, fmt.Errorf("eq: bands[%d] must be an object", i)
+			}
+			for k := range m {
+				if !eqBandKeys[k] {
+					return op, fmt.Errorf("eq: bands[%d]: unknown field %q", i, k)
+				}
+			}
+			var b qcycore.BandSpec
+			fields := []struct {
+				key string
+				dst *int
+			}{{"index", &b.Index}, {"freq", &b.Freq}, {"q", &b.Q}, {"type", &b.Type}}
+			for _, f := range fields {
+				v, present := m[f.key]
+				if !present {
+					return op, fmt.Errorf("eq: bands[%d]: %s is required", i, f.key)
+				}
+				n, err := whole(v, fmt.Sprintf("bands[%d].%s", i, f.key))
+				if err != nil {
+					return op, err
+				}
+				*f.dst = n
+			}
+			g, ok := m["gain"].(float64)
+			if !ok || math.IsNaN(g) || math.IsInf(g, 0) {
+				return op, fmt.Errorf("eq: bands[%d].gain must be a finite number (dB)", i)
+			}
+			b.Gain = g
+			bands = append(bands, b)
+		}
+		op.Bands = bands
+	}
 	return op, nil
+}
+
+// responseCode maps an error to the machine-readable code of the response:
+// the lifecycle classes (busy, not_found) and the EQ write classes
+// (protected_slot, full_length_required, unconfirmed).
+func responseCode(err error) string {
+	if c := errorCode(err); c != "" {
+		return c
+	}
+	var ee *qcycore.EqError
+	if errors.As(err, &ee) {
+		return ee.Code
+	}
+	return ""
 }
 
 // eqRead returns the active slot's payload, decoded.
@@ -1066,9 +1180,17 @@ func (d *daemon) eqRead() (*qcycore.EqSnapshot, error) {
 	return &snap, nil
 }
 
+// eqConfirmTimeout is how long eqApply waits for the device to report the
+// payload it was sent. A variable only so tests need not wait it out.
+var eqConfirmTimeout = 4 * time.Second
+
 // eqApply is the only path that writes 0x22. Under ONE txMu it reads the live
-// payload, patches only what op names, saves the pre-write payload as a backup
-// (the write is aborted if that fails), writes, and confirms by readback.
+// payload, builds the payload from op (qcycore.ApplyEq: patched over what the
+// device reported, or constructed from op.Bands; it also refuses protected
+// slots and the unproven 143-byte format unless op allows them), saves the
+// pre-write payload as a backup (the write is aborted if that fails), writes,
+// and confirms by readback. A device that keeps reporting another slot after
+// the write yields a qcycore.EqError with CodeUnconfirmed.
 // Holding the lock across the whole sequence is what keeps a concurrent status
 // sweep or probe from draining the echo, or from interleaving its own write
 // between our read and our write.
@@ -1094,9 +1216,9 @@ func (d *daemon) eqApply(op qcycore.EqOp) (*qcycore.EqResult, error) {
 	if err := d.send(qcycore.EqOpcode, next); err != nil {
 		return nil, err
 	}
-	got, err := d.awaitMatch(qcycore.EqOpcode, qcycore.EqMatch(next, op), fmt.Sprintf("%x", next), 4*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("%w (previous payload saved at %s)", err, bk.History)
+	got, last, ok := d.awaitMatchLast(qcycore.EqOpcode, qcycore.EqMatch(next, op), eqConfirmTimeout)
+	if !ok {
+		return nil, qcycore.EqWriteFailure(next, last, bk.History)
 	}
 	snap, err := qcycore.DecodeEq(got)
 	if err != nil {
@@ -1361,7 +1483,7 @@ func handleConn(conn net.Conn, d *daemon) {
 		}
 		data, err := d.handleRequest(req)
 		if err != nil {
-			_ = enc.Encode(response{OK: false, Error: err.Error(), Code: errorCode(err)})
+			_ = enc.Encode(response{OK: false, Error: err.Error(), Code: responseCode(err)})
 		} else {
 			_ = enc.Encode(response{OK: true, Data: data})
 		}

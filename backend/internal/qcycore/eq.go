@@ -6,6 +6,7 @@ package qcycore
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -25,8 +26,9 @@ import (
 // Write format: 73 bytes (EqLen, positions 0-9 only) is PROVEN on the device
 // and is used whenever bytes 73.. carry no band (all zero, or only the 0xFF
 // "empty" type marker; see TailBlank). When the tail holds a band
-// (any other non-zero byte) the full read length is sent instead (format NOT proven on the device);
-// results then carry fullLength=true.
+// (any other non-zero byte) the full read length would have to be sent (format
+// NOT proven on the device): ApplyEq refuses that unless EqOp.AllowFullLength is
+// set, and results then carry fullLength=true.
 const (
 	EqOpcode = 0x22
 	// EqLen is the proven write length; EqReadLen the length the device reports.
@@ -43,6 +45,62 @@ const (
 	// MasterMaxCenti / MasterMaxDB: the master gain range (+/-12 dB).
 	MasterMaxCenti = 1200
 	MasterMaxDB    = 12.0
+
+	// Limits for a caller-supplied BandSpec (see EqOp.Bands): the audible range
+	// and the u16 the payload stores for Q.
+	MinBandFreq = 20
+	MaxBandFreq = 20000
+	MinBandQ    = 1
+	MaxBandQ    = 65535
+)
+
+// ProtectedSlots are the slots ApplyEq refuses to write into, or to switch away
+// from, unless EqOp.AllowProtected is set: 6 is the factory "Classico" curve
+// and 11 the manufacturer's hearing-test (custom) profile. An inactive slot
+// cannot be read back, so whatever a write replaces there is gone.
+var ProtectedSlots = []int{6, 11}
+
+// IsProtectedSlot reports whether slot is in ProtectedSlots.
+func IsProtectedSlot(slot int) bool {
+	for _, p := range ProtectedSlots {
+		if p == slot {
+			return true
+		}
+	}
+	return false
+}
+
+// Machine-readable classes of EqError, also the daemon's response codes.
+const (
+	CodeProtectedSlot      = "protected_slot"
+	CodeFullLengthRequired = "full_length_required"
+	CodeUnconfirmed        = "unconfirmed"
+)
+
+// EqError is a refusal or a failed confirmation with a stable Code. Match a
+// class with errors.Is(err, ErrProtectedSlot) (and the other Err* sentinels) or
+// read the fields through errors.As.
+type EqError struct {
+	Code   string
+	Msg    string
+	Sent   []byte // unconfirmed: the payload that was written
+	Got    []byte // unconfirmed: the last payload the device reported
+	Backup string // unconfirmed: where the pre-write payload was saved
+}
+
+func (e *EqError) Error() string { return e.Msg }
+
+// Is makes the Err* sentinels match every EqError of the same Code.
+func (e *EqError) Is(target error) bool {
+	t, ok := target.(*EqError)
+	return ok && t.Msg == "" && t.Code == e.Code
+}
+
+// Sentinels for errors.Is.
+var (
+	ErrProtectedSlot      = &EqError{Code: CodeProtectedSlot}
+	ErrFullLengthRequired = &EqError{Code: CodeFullLengthRequired}
+	ErrUnconfirmed        = &EqError{Code: CodeUnconfirmed}
 )
 
 // EqBand is one parametric band as stored in the payload.
@@ -72,11 +130,40 @@ type EqResult struct {
 	BackupHistory string `json:"backupHistory"`        // append-only history entry for this write
 }
 
-// EqOp describes a patch. Nil fields mean "keep what the device has".
+// BandSpec is one caller-supplied band for EqOp.Bands. Gain is in dB (+/-8).
+// A position left out of EqOp.Bands is written empty (freq 0).
+type BandSpec struct {
+	Index int     `json:"index"` // position in the payload (0-19)
+	Freq  int     `json:"freq"`  // Hz, MinBandFreq..MaxBandFreq
+	Gain  float64 `json:"gain"`  // dB
+	Q     int     `json:"q"`     // raw payload units, MinBandQ..MaxBandQ
+	Type  int     `json:"type"`  // 0 or 2 (the only values seen on the device)
+}
+
+// EqOp describes a write.
+//
+// Patch mode (Bands nil): nil fields mean "keep what the device has"; Gains and
+// MasterCenti are patched onto the payload the device reported.
+//
+// Build mode (Bands set): the payload is CONSTRUCTED from Bands and never
+// copied from what the device reported, so nothing of the active slot's curve
+// can reach another slot; the device's payload is only the proof of life and
+// the backup. MasterCenti nil keeps the device's master gain when the target is
+// the active slot, and is an error for another slot (the reported master gain
+// belongs to the active slot). Gains must be nil.
 type EqOp struct {
-	Gains       *[EqBands]int // centi-dB per band
+	Gains       *[EqBands]int // centi-dB per band (patch mode)
 	MasterCenti *int          // centi-dB
-	Slot        *int          // target slot byte (0-255)
+	Slot        *int          // target slot byte (0-255); nil = the active slot
+	Bands       []BandSpec    // build mode; see above
+
+	// AllowProtected lets the write touch a slot in ProtectedSlots (see
+	// ApplyEq for exactly what is refused without it).
+	AllowProtected bool
+	// AllowFullLength lets the write use the 143-byte format, which is NOT
+	// proven on the device. Without it ApplyEq refuses any payload longer than
+	// EqLen.
+	AllowFullLength bool
 }
 
 // ValidateEq checks a payload read from the device is usable for a
@@ -188,24 +275,93 @@ func centiInRange(db, max float64) (int, error) {
 	return int(math.Round(db * 100)), nil
 }
 
-// ApplyEq returns the payload to write: a copy of cur with op applied. Only the
-// fields named in op change; everything else (every band's freq/Q/type, bands
-// 10-19, unknown bytes) is carried over byte for byte. The length is EqLen (the
-// proven format) when bytes EqLen.. of cur are blank (TailBlank), otherwise the full
-// length read (unproven; see FullLength).
+// ApplyEq returns the payload to write and enforces the write-safety rules, so
+// every caller (CLI direct, daemon socket, preset library) gets them. cur, the
+// payload the device reports for the ACTIVE slot, is the proof of life and the
+// base of a patch; with op.Bands it is not copied at all (see EqOp).
+//
+// Refusals, each lifted by its own flag:
+//
+//   - without AllowProtected: an explicit op.Slot in ProtectedSlots (even the
+//     active one: omit Slot to adjust the active slot); a Slot other than the
+//     active one while the active slot is protected (a cross-slot write, which
+//     also switches the device away from it); op.Bands on a protected active
+//     slot (it replaces the whole curve). A master or band-gain patch of the
+//     active protected slot (Slot nil) stays allowed.
+//   - without AllowFullLength: any payload longer than EqLen. A patch gets that
+//     length only when bytes EqLen.. of cur hold a band (not TailBlank); Bands
+//     get it only when a position is >= EqBands.
+//
+// Patch mode otherwise carries everything the op does not name over byte for
+// byte. Its length is EqLen (the proven format) when bytes EqLen.. of cur are
+// blank (TailBlank), otherwise the full length read.
 func ApplyEq(cur []byte, op EqOp) ([]byte, error) {
 	if err := ValidateEq(cur); err != nil {
 		return nil, err
 	}
+	active := int(cur[0])
+	target := active
+	if op.Slot != nil {
+		if *op.Slot < 0 || *op.Slot > 255 {
+			return nil, fmt.Errorf("eq: slot must be 0-255, got %d", *op.Slot)
+		}
+		target = *op.Slot
+	}
+	if op.Bands != nil && op.Gains != nil {
+		return nil, errors.New("eq: gains and bands are mutually exclusive")
+	}
+	if err := checkProtected(active, target, op); err != nil {
+		return nil, err
+	}
+	var out []byte
+	var err error
+	if op.Bands != nil {
+		out, err = buildEq(cur, target, op)
+	} else {
+		out, err = patchEq(cur, op)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(out) > EqLen && !op.AllowFullLength {
+		why := "bands at positions 10-19"
+		if op.Bands == nil {
+			why = "the payload holds a band beyond position 9, bytes 73.. are not blank"
+		}
+		return nil, &EqError{Code: CodeFullLengthRequired, Msg: fmt.Sprintf(
+			"eq: writing slot %d needs the %d-byte format (%s); writing %d bytes has not been proven on the hardware; use --full-length (AllowFullLength) to allow it",
+			target, len(out), why, len(out))}
+	}
+	return out, nil
+}
+
+func checkProtected(active, target int, op EqOp) error {
+	if op.AllowProtected {
+		return nil
+	}
+	refuse := func(slot int, why string) error {
+		return &EqError{Code: CodeProtectedSlot, Msg: fmt.Sprintf(
+			"eq: slot %d is protected (%s); refusing the write; use --allow-protected (AllowProtected) to override", slot, why)}
+	}
+	switch {
+	case op.Slot != nil && IsProtectedSlot(*op.Slot):
+		return refuse(*op.Slot, "factory or hearing-test curve whose current content cannot be read back once replaced; omit the slot to adjust the active one")
+	case IsProtectedSlot(active) && target != active:
+		return refuse(active, fmt.Sprintf("it is the active slot and writing slot %d would switch the device away from it", target))
+	case IsProtectedSlot(active) && op.Bands != nil:
+		return refuse(active, "a full band list would replace its whole curve")
+	}
+	return nil
+}
+
+// patchEq patches op.Gains / op.MasterCenti / op.Slot onto a copy of cur.
+func patchEq(cur []byte, op EqOp) ([]byte, error) {
 	n := len(cur)
 	if TailBlank(cur) {
 		n = EqLen
 	}
 	out := append([]byte(nil), cur[:n]...)
 	if op.Slot != nil {
-		if *op.Slot < 0 || *op.Slot > 255 {
-			return nil, fmt.Errorf("eq: slot must be 0-255, got %d", *op.Slot)
-		}
 		out[0] = byte(*op.Slot)
 	}
 	if op.MasterCenti != nil {
@@ -227,18 +383,106 @@ func ApplyEq(cur []byte, op EqOp) ([]byte, error) {
 	return out, nil
 }
 
+// buildEq constructs the payload for op.Bands from nothing: zeroed, then the
+// target slot, the master gain and each band at its position. Positions 0-9
+// only give EqLen bytes with a zero tail; any position >= EqBands gives
+// EqReadLen. cur is read for the active slot's master gain only.
+func buildEq(cur []byte, target int, op EqOp) ([]byte, error) {
+	if len(op.Bands) == 0 {
+		return nil, errors.New("eq: bands is empty; a write must name at least one band")
+	}
+	if len(op.Bands) > EqMaxBands {
+		return nil, fmt.Errorf("eq: %d bands given, at most %d positions exist", len(op.Bands), EqMaxBands)
+	}
+	n := EqLen
+	var seen [EqMaxBands]bool
+	for _, b := range op.Bands {
+		switch {
+		case b.Index < 0 || b.Index >= EqMaxBands:
+			return nil, fmt.Errorf("eq: band index %d outside 0-%d", b.Index, EqMaxBands-1)
+		case seen[b.Index]:
+			return nil, fmt.Errorf("eq: band index %d given twice", b.Index)
+		case b.Freq < MinBandFreq || b.Freq > MaxBandFreq:
+			return nil, fmt.Errorf("eq: band %d: freq %d Hz outside %d-%d", b.Index, b.Freq, MinBandFreq, MaxBandFreq)
+		case b.Q < MinBandQ || b.Q > MaxBandQ:
+			return nil, fmt.Errorf("eq: band %d: q %d outside %d-%d", b.Index, b.Q, MinBandQ, MaxBandQ)
+		case b.Type != 0 && b.Type != 2:
+			return nil, fmt.Errorf("eq: band %d: type %d not allowed (only 0 and 2 have been observed on the device)", b.Index, b.Type)
+		}
+		seen[b.Index] = true
+		if b.Index >= EqBands {
+			n = EqReadLen
+		}
+	}
+	var master int
+	switch {
+	case op.MasterCenti != nil:
+		master = *op.MasterCenti
+	case target == int(cur[0]):
+		master = masterCenti(cur)
+	default:
+		return nil, fmt.Errorf("eq: master gain must be given explicitly when writing bands to slot %d: the reported master gain belongs to the active slot %d", target, cur[0])
+	}
+	if master < -MasterMaxCenti || master > MasterMaxCenti {
+		return nil, fmt.Errorf("eq: master gain %d centi-dB outside +/-%d", master, MasterMaxCenti)
+	}
+	out := make([]byte, n)
+	out[0] = byte(target)
+	out[1], out[2] = byte(int16(master)), byte(int16(master)>>8)
+	for _, b := range op.Bands {
+		c, err := CentiFromDB(b.Gain)
+		if err != nil {
+			return nil, fmt.Errorf("eq: band %d: %w", b.Index, err)
+		}
+		o := eqHeader + b.Index*eqBandSize
+		out[o], out[o+1] = byte(b.Freq), byte(b.Freq>>8)
+		out[o+2], out[o+3] = byte(int16(c)), byte(int16(c)>>8)
+		out[o+4], out[o+5] = byte(b.Q), byte(b.Q>>8)
+		out[o+6] = byte(b.Type)
+	}
+	return out, nil
+}
+
 // EqMatch returns the predicate that decides whether a device echo confirms a
 // write of sent. Zero tolerance: the echo must be at least as long as sent and
 // its first len(sent) bytes (slot, master gain, every band written) must equal
-// sent exactly. The echo may be longer (73 sent, 143 echoed). op is kept for
-// call-site compatibility.
+// sent exactly. The echo may be longer (73 sent, 143 echoed), but then the part
+// beyond what was sent must hold no band (TailBlank): a 73-byte write that the
+// device answers with a populated tail did not produce the curve that was
+// meant. op is kept for call-site compatibility.
 func EqMatch(sent []byte, op EqOp) func([]byte) bool {
 	return func(got []byte) bool {
 		if len(sent) < EqLen || len(got) < len(sent) {
 			return false
 		}
-		return bytes.Equal(got[:len(sent)], sent)
+		if !bytes.Equal(got[:len(sent)], sent) {
+			return false
+		}
+		// TailBlank takes the whole payload (it inspects bytes EqLen.. in place).
+		if len(sent) == EqLen && len(got) > EqLen && !TailBlank(got) {
+			return false
+		}
+		return true
 	}
+}
+
+// EqWriteFailure is the error for a write whose echo never matched. got is the
+// last 0x22 payload the device reported (nil when it said nothing), backup the
+// path the pre-write payload was saved at. When the device keeps reporting a
+// different slot than the one written the result is a *EqError with
+// CodeUnconfirmed: the write was sent but the device does not report that slot
+// as active, so what it stored cannot be told from here. Anything else is a
+// plain readback mismatch.
+func EqWriteFailure(sent, got []byte, backup string) error {
+	if len(sent) > 0 && len(got) > 0 && got[0] != sent[0] {
+		return &EqError{
+			Code: CodeUnconfirmed,
+			Msg: fmt.Sprintf("eq: written but unconfirmed: slot %d was sent but the device does not report it as active (it reports slot %d); the earbuds may or may not have stored it. sent %x, device reported %x; previous payload saved at %s",
+				sent[0], got[0], sent, got, backup),
+			Sent: append([]byte(nil), sent...), Got: append([]byte(nil), got...), Backup: backup,
+		}
+	}
+	return fmt.Errorf("eq: readback mismatch: want %x, device reported %x; the device may nevertheless have applied the value (previous payload saved at %s)", sent, got, backup)
 }
 
 // ParseGains parses "g1,...,g10" (dB) into centi-dB, rejecting NaN/Inf and

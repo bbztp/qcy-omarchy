@@ -105,3 +105,54 @@ func TestListenSocketReplacesStaleSocketOnly(t *testing.T) {
 		t.Fatal("regular file damaged")
 	}
 }
+
+func TestEqOpFromArgsBandsAndFlags(t *testing.T) {
+	op, err := eqOpFromArgs(map[string]interface{}{
+		"bands": []interface{}{
+			map[string]interface{}{"index": 0.0, "freq": 100.0, "gain": -1.25, "q": 100.0, "type": 2.0},
+			map[string]interface{}{"index": 11.0, "freq": 9000.0, "gain": 2.0, "q": 70.0, "type": 0.0},
+		},
+		"allowProtected": true,
+		"allowFull":      true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(op.Bands) != 2 || op.Bands[0].Gain != -1.25 || op.Bands[1].Index != 11 || !op.AllowProtected || !op.AllowFullLength {
+		t.Fatalf("%+v", op)
+	}
+	op, err = eqOpFromArgs(map[string]interface{}{"masterGain": 10.0})
+	if err != nil || op.AllowProtected || op.AllowFullLength || op.Bands != nil {
+		t.Fatalf("defaults: %+v %v", op, err)
+	}
+	good := map[string]interface{}{"index": 0.0, "freq": 100.0, "gain": 0.0, "q": 100.0, "type": 2.0}
+	with := func(k string, v interface{}) map[string]interface{} {
+		m := map[string]interface{}{}
+		for kk, vv := range good {
+			m[kk] = vv
+		}
+		if v == nil {
+			delete(m, k)
+		} else {
+			m[k] = v
+		}
+		return m
+	}
+	for name, args := range map[string]map[string]interface{}{
+		"bands not array":   {"bands": "x"},
+		"bands empty":       {"bands": []interface{}{}},
+		"band not object":   {"bands": []interface{}{1.0}},
+		"band no freq":      {"bands": []interface{}{with("freq", nil)}},
+		"band fractional q": {"bands": []interface{}{with("q", 1.5)}},
+		"band NaN-ish gain": {"bands": []interface{}{with("gain", "1")}},
+		"band extra field":  {"bands": []interface{}{with("hex", "00")}},
+		"flag not bool":     {"allowProtected": "yes"},
+		"full not bool":     {"allowFull": 1.0},
+		"raw payload":       {"payload": "0b50"},
+		"unknown":           {"extra": true},
+	} {
+		if _, err := eqOpFromArgs(args); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

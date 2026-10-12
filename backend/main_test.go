@@ -1,8 +1,15 @@
 package main
 
 import (
+	"encoding/hex"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore"
 )
 
 // payload11 is a 73-byte 0x22 payload (the written form): slot 11, master +1.50 dB, band 1 at
@@ -111,5 +118,141 @@ func TestEqGetPresetUnsupported(t *testing.T) {
 func TestRawEqWriteRefused(t *testing.T) {
 	if _, err := opcodeFor("eq"); err == nil {
 		t.Fatal("raw eq action allowed; it would bypass the backup")
+	}
+}
+
+// Real 0x22 payloads read from the device (same bytes as qcycore's fixtures).
+const (
+	realCustom11  = "0b50fb320064003c0002c80076fd3c000284039cff460002f00ac800780002401f44fd5e01023f002c014600027d000000460002fa000000460002f4010000460002e8036400460002d0076400460002a00f6400460002401f900146000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+	realClassico6 = "0650fb3c002c01320002c8000cfe46000284039cff460002f00ac800780002401f44fd5e0102000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff"
+)
+
+func mustPayload(t *testing.T, s string) []byte {
+	t.Helper()
+	p, err := hex.DecodeString(s)
+	if err != nil || len(p) != qcycore.EqReadLen {
+		t.Fatalf("fixture: %v len %d", err, len(p))
+	}
+	return p
+}
+
+func TestParseEqSetArgsFlags(t *testing.T) {
+	ten := "0,0,0,0,0,0,0,0,0,0"
+	a, err := parseEqSetArgs([]string{ten, "--yes", "--preset", "6"})
+	if err != nil || a.op.Slot == nil || *a.op.Slot != 6 || a.op.AllowProtected || a.op.AllowFullLength {
+		t.Fatalf("%+v %v", a, err)
+	}
+	// without --allow-protected the op this produces is refused by ApplyEq, for
+	// a protected target and for leaving a protected active slot
+	if _, err := qcycore.ApplyEq(mustPayload(t, realClassico6), a.op); !errors.Is(err, qcycore.ErrProtectedSlot) {
+		t.Fatalf("--preset 6 on slot 6: %v", err)
+	}
+	b, err := parseEqSetArgs([]string{ten, "--yes", "--preset=0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := qcycore.ApplyEq(mustPayload(t, realClassico6), b.op); !errors.Is(err, qcycore.ErrProtectedSlot) {
+		t.Fatalf("--preset 0 away from slot 6: %v", err)
+	}
+	c, err := parseEqSetArgs([]string{ten, "--yes", "--preset", "0", "--allow-protected", "--full-length", "--json", "5"})
+	if err != nil || !c.op.AllowProtected || !c.op.AllowFullLength || !c.jsonOut || !c.confirmed || len(c.secArgs) != 1 {
+		t.Fatalf("%+v %v", c, err)
+	}
+	if _, err := qcycore.ApplyEq(mustPayload(t, realCustom11), c.op); err != nil {
+		t.Fatalf("both flags: %v", err)
+	}
+}
+
+// fakeEqLink stands in for the BLE client: it answers the 0x22 query with
+// state, records writes, and answers a write with echo.
+type fakeEqLink struct {
+	state  []byte
+	echo   []byte // returned by setConfirm; nil = the written payload
+	ok     bool
+	writes [][]byte
+}
+
+func (f *fakeEqLink) query(byte, time.Duration) ([]byte, error) { return f.state, nil }
+func (f *fakeEqLink) setConfirm(_ byte, params []byte, _ time.Duration, match func([]byte) bool) ([]byte, bool, error) {
+	f.writes = append(f.writes, append([]byte(nil), params...))
+	got := f.echo
+	if got == nil {
+		got = params
+	}
+	return got, match(got), nil
+}
+
+func backupFiles(t *testing.T, data string) int {
+	t.Helper()
+	ents, err := os.ReadDir(filepath.Join(data, "qcy-omarchy", "backups"))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(ents)
+}
+
+func TestDirectEqApplyRefusalsHappenBeforeAnyWrite(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	zero := 0
+	m := -100
+	custom := mustPayload(t, realCustom11)
+	classico := mustPayload(t, realClassico6)
+
+	for name, tc := range map[string]struct {
+		state []byte
+		op    qcycore.EqOp
+		want  *qcycore.EqError
+	}{
+		"protected target":       {classico, qcycore.EqOp{Slot: &zero}, qcycore.ErrProtectedSlot},
+		"143 bytes without flag": {custom, qcycore.EqOp{MasterCenti: &m}, qcycore.ErrFullLengthRequired},
+	} {
+		l := &fakeEqLink{state: tc.state}
+		_, err := eqApplyVia(l, tc.op)
+		if !errors.Is(err, tc.want) {
+			t.Errorf("%s: %v", name, err)
+		}
+		if len(l.writes) != 0 || backupFiles(t, data) != 0 {
+			t.Errorf("%s: wrote %d frames, %d backups", name, len(l.writes), backupFiles(t, data))
+		}
+	}
+
+	// the proven 73-byte master write of the protected active slot still works
+	l := &fakeEqLink{state: classico}
+	res, err := eqApplyVia(l, qcycore.EqOp{MasterCenti: &m})
+	if err != nil || len(l.writes) != 1 || len(l.writes[0]) != qcycore.EqLen || res.FullLength {
+		t.Fatalf("%v %d", err, len(l.writes))
+	}
+	// and the explicit 143-byte write goes out whole
+	l = &fakeEqLink{state: custom}
+	res, err = eqApplyVia(l, qcycore.EqOp{MasterCenti: &m, AllowFullLength: true})
+	if err != nil || len(l.writes) != 1 || len(l.writes[0]) != qcycore.EqReadLen || !res.FullLength {
+		t.Fatalf("%v", err)
+	}
+}
+
+// The device answers a cross-slot write with the old active slot: the CLI says
+// the write was sent and unconfirmed, with what was written and the backup.
+func TestDirectEqApplyUnconfirmedReportsWrittenAndBackup(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	zero := 0
+	custom := mustPayload(t, realCustom11)
+	l := &fakeEqLink{state: custom, echo: custom}
+	_, err := eqApplyVia(l, qcycore.EqOp{
+		Slot: &zero, MasterCenti: &zero, AllowProtected: true,
+		Bands: []qcycore.BandSpec{{Index: 0, Freq: 100, Gain: 1, Q: 100, Type: 2}},
+	})
+	var ee *qcycore.EqError
+	if !errors.Is(err, qcycore.ErrUnconfirmed) || !errors.As(err, &ee) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(l.writes) != 1 || !strings.Contains(err.Error(), hex.EncodeToString(l.writes[0])) {
+		t.Fatalf("message lacks the written payload: %v", err)
+	}
+	if _, serr := os.Stat(ee.Backup); serr != nil || !strings.Contains(err.Error(), ee.Backup) {
+		t.Fatalf("backup %q: %v / %v", ee.Backup, serr, err)
 	}
 }

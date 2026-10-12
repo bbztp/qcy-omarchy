@@ -3,8 +3,10 @@ package qcycore
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"math"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,7 +104,7 @@ func TestApplyGainsPreservesFreqQType(t *testing.T) {
 }
 
 func TestApplySlot(t *testing.T) {
-	cur := fixture(11, 0)
+	cur := fixture(8, 0)
 	n := 3
 	next, err := ApplyEq(cur, EqOp{Slot: &n})
 	if err != nil || next[0] != 3 || !bytes.Equal(next[1:], cur[1:]) {
@@ -328,7 +330,16 @@ func TestRealCustomMasterPatchSendsFull143(t *testing.T) {
 		t.Fatal("custom tail considered blank")
 	}
 	m := -600
+	// The 143-byte write is not proven on the device: without the explicit
+	// flag the master-gain patch of slot 11 is refused, and nothing is built.
 	next, err := ApplyEq(cur, EqOp{MasterCenti: &m})
+	if err == nil || next != nil {
+		t.Fatalf("143-byte write allowed without AllowFullLength: %x", next)
+	}
+	if !errors.Is(err, ErrFullLengthRequired) || !strings.Contains(err.Error(), "--full-length") || !strings.Contains(err.Error(), "slot 11") {
+		t.Fatalf("refusal = %v", err)
+	}
+	next, err = ApplyEq(cur, EqOp{MasterCenti: &m, AllowFullLength: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +374,10 @@ func TestRealCustomMasterPatchSendsFull143(t *testing.T) {
 	}
 	// positions 10+ stay as read when `eq set` patches positions 0-9
 	g := [EqBands]int{100, 100, 100, 100, 100, 100, 100, 100, 100, 100}
-	n2, err := ApplyEq(cur, EqOp{Gains: &g})
+	if _, err := ApplyEq(cur, EqOp{Gains: &g}); !errors.Is(err, ErrFullLengthRequired) {
+		t.Fatalf("eq set on a populated tail without AllowFullLength: %v", err)
+	}
+	n2, err := ApplyEq(cur, EqOp{Gains: &g, AllowFullLength: true})
 	if err != nil || len(n2) != EqReadLen || !bytes.Equal(n2[73:], cur[73:]) {
 		t.Fatalf("eq set altered the tail or length: %v", err)
 	}
@@ -418,5 +432,269 @@ func TestMasterRange12(t *testing.T) {
 		if _, err := MasterCentiFromDB(db); err == nil {
 			t.Errorf("MasterCentiFromDB(%v) accepted", db)
 		}
+	}
+}
+
+// bands3 is a small user curve: three bands at positions 0, 4 and 9.
+func bands3() []BandSpec {
+	return []BandSpec{
+		{Index: 0, Freq: 100, Gain: 1.5, Q: 100, Type: 2},
+		{Index: 4, Freq: 1000, Gain: -2, Q: 70, Type: 0},
+		{Index: 9, Freq: 8000, Gain: 3.25, Q: 120, Type: 2},
+	}
+}
+
+func intp(n int) *int { return &n }
+
+// Active slot 11 holds a 13-band custom curve; writing three bands to slot 0
+// must build the payload from the bands alone: nothing of slot 11's bands,
+// master gain or tail may travel with it.
+func TestBandsDoNotLeakActiveSlot(t *testing.T) {
+	cur := mustHex(t, realCustom11)
+	op := EqOp{Slot: intp(0), Bands: bands3(), MasterCenti: intp(-300), AllowProtected: true}
+	next, err := ApplyEq(cur, op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next) != EqLen {
+		t.Fatalf("len %d, want %d", len(next), EqLen)
+	}
+	s, err := DecodeEq(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Slot != 0 || s.MasterGain != -3 || len(s.Bands) != 3 {
+		t.Fatalf("slot=%d master=%v bands=%+v", s.Slot, s.MasterGain, s.Bands)
+	}
+	want := bands3()
+	for i, b := range s.Bands {
+		w := want[i]
+		if b.Index != w.Index || b.Freq != w.Freq || b.Gain != w.Gain || b.Q != w.Q || b.Type != w.Type {
+			t.Fatalf("band %d = %+v, want %+v", i, b, w)
+		}
+	}
+	// every unnamed position is zero, byte for byte (no 0xFF markers either)
+	for pos := 0; pos < EqBands; pos++ {
+		named := pos == 0 || pos == 4 || pos == 9
+		o := 3 + pos*7
+		if !named && !bytes.Equal(next[o:o+7], make([]byte, 7)) {
+			t.Fatalf("position %d not empty: %x", pos, next[o:o+7])
+		}
+	}
+	// none of slot 11's frequencies (31 Hz.. 16 kHz table) survived
+	for _, b := range mustDecode(t, cur).Bands {
+		for _, nb := range s.Bands {
+			if nb.Freq == b.Freq && nb.Index != 0 && nb.Index != 4 && nb.Index != 9 {
+				t.Fatalf("band of the active slot leaked: %+v", b)
+			}
+		}
+	}
+	// the master gain of slot 11 (-12 dB) is not inherited by another slot
+	if _, err := ApplyEq(cur, EqOp{Slot: intp(0), Bands: bands3(), AllowProtected: true}); err == nil {
+		t.Fatal("bands for another slot accepted without an explicit master gain")
+	}
+	// and without the override the cross-slot write is refused outright
+	if _, err := ApplyEq(cur, EqOp{Slot: intp(0), Bands: bands3(), MasterCenti: intp(0)}); !errors.Is(err, ErrProtectedSlot) {
+		t.Fatalf("cross-slot write from protected slot 11: %v", err)
+	}
+}
+
+func mustDecode(t *testing.T, p []byte) EqSnapshot {
+	t.Helper()
+	s, err := DecodeEq(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestBandsSizeAndValidation(t *testing.T) {
+	cur := fixture(8, 100) // unprotected active slot, master +1 dB
+	m := 0
+
+	// positions 0-9: 73 bytes, zero tail, active slot's master kept when unnamed
+	next, err := ApplyEq(cur, EqOp{Bands: bands3()})
+	if err != nil || len(next) != EqLen || next[0] != 8 || masterCenti(next) != 100 {
+		t.Fatalf("same-slot build: %x %v", next, err)
+	}
+	// all ten positions
+	var ten []BandSpec
+	for i := 0; i < 10; i++ {
+		ten = append(ten, BandSpec{Index: i, Freq: 100 * (i + 1), Gain: 0, Q: 100, Type: 2})
+	}
+	next, err = ApplyEq(cur, EqOp{Bands: ten, MasterCenti: &m})
+	if err != nil || len(next) != EqLen {
+		t.Fatalf("ten bands: len %d %v", len(next), err)
+	}
+
+	// a position >= 10 needs the 143-byte format and the explicit flag
+	wide := append(bands3(), BandSpec{Index: 12, Freq: 12000, Gain: 1, Q: 100, Type: 2})
+	if _, err := ApplyEq(cur, EqOp{Bands: wide, MasterCenti: &m}); !errors.Is(err, ErrFullLengthRequired) {
+		t.Fatalf("143-byte build without flag: %v", err)
+	}
+	next, err = ApplyEq(cur, EqOp{Bands: wide, MasterCenti: &m, AllowFullLength: true})
+	if err != nil || len(next) != EqReadLen {
+		t.Fatalf("143-byte build: len %d %v", len(next), err)
+	}
+	if s := mustDecode(t, next); len(s.Bands) != 4 || s.Bands[3].Index != 12 || s.Bands[3].Freq != 12000 {
+		t.Fatalf("decoded %+v", s.Bands)
+	}
+	if !bytes.Equal(next[3+10*7:3+12*7], make([]byte, 14)) || !bytes.Equal(next[3+13*7:], make([]byte, EqReadLen-3-13*7)) {
+		t.Fatalf("unnamed tail positions not zero: %x", next[73:])
+	}
+
+	nan := math.NaN()
+	bad := map[string][]BandSpec{
+		"empty":        {},
+		"type 1":       {{Index: 0, Freq: 100, Gain: 0, Q: 100, Type: 1}},
+		"type 0xff":    {{Index: 0, Freq: 100, Gain: 0, Q: 100, Type: 0xff}},
+		"freq 0":       {{Index: 0, Freq: 0, Gain: 0, Q: 100, Type: 2}},
+		"freq high":    {{Index: 0, Freq: 20001, Gain: 0, Q: 100, Type: 2}},
+		"q 0":          {{Index: 0, Freq: 100, Gain: 0, Q: 0, Type: 2}},
+		"q u16":        {{Index: 0, Freq: 100, Gain: 0, Q: 70000, Type: 2}},
+		"gain 8.01":    {{Index: 0, Freq: 100, Gain: 8.01, Q: 100, Type: 2}},
+		"gain NaN":     {{Index: 0, Freq: 100, Gain: nan, Q: 100, Type: 2}},
+		"index -1":     {{Index: -1, Freq: 100, Gain: 0, Q: 100, Type: 2}},
+		"index 20":     {{Index: 20, Freq: 100, Gain: 0, Q: 100, Type: 2}},
+		"duplicate":    {{Index: 1, Freq: 100, Gain: 0, Q: 100, Type: 2}, {Index: 1, Freq: 200, Gain: 0, Q: 100, Type: 2}},
+		"more than 20": make([]BandSpec, 21),
+	}
+	for name, b := range bad {
+		if _, err := ApplyEq(cur, EqOp{Bands: b, MasterCenti: &m, AllowFullLength: true, AllowProtected: true}); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	g := [EqBands]int{}
+	if _, err := ApplyEq(cur, EqOp{Bands: bands3(), Gains: &g}); err == nil {
+		t.Error("bands together with gains accepted")
+	}
+	big := 1201
+	if _, err := ApplyEq(cur, EqOp{Bands: bands3(), MasterCenti: &big}); err == nil {
+		t.Error("master 1201 accepted with bands")
+	}
+	// a payload that cannot be a live reading is still refused before building
+	if _, err := ApplyEq(bytes.Repeat([]byte{0xff}, EqReadLen), EqOp{Bands: bands3(), MasterCenti: &m}); err == nil {
+		t.Error("bands built over an all-0xFF read")
+	}
+}
+
+func TestProtectedSlots(t *testing.T) {
+	if len(ProtectedSlots) != 2 || !IsProtectedSlot(6) || !IsProtectedSlot(11) || IsProtectedSlot(0) {
+		t.Fatalf("ProtectedSlots = %v", ProtectedSlots)
+	}
+	classico := mustHex(t, realClassico6) // active 6, blank tail: 73-byte writes
+	custom := mustHex(t, realCustom11)    // active 11, populated tail
+	plain := fixture(8, 0)                // active 8, unprotected
+	m := 0
+	cases := []struct {
+		name    string
+		cur     []byte
+		op      EqOp
+		refused bool
+	}{
+		{"unprotected -> unprotected", plain, EqOp{Slot: intp(3)}, false},
+		{"unprotected -> 6", plain, EqOp{Slot: intp(6)}, true},
+		{"unprotected -> 11", plain, EqOp{Slot: intp(11)}, true},
+		{"unprotected -> 11 allowed", plain, EqOp{Slot: intp(11), AllowProtected: true}, false},
+		{"6 master, slot nil", classico, EqOp{MasterCenti: &m}, false},
+		{"6 -> 0 cross-slot", classico, EqOp{Slot: intp(0)}, true},
+		{"6 -> 0 cross-slot allowed", classico, EqOp{Slot: intp(0), AllowProtected: true}, false},
+		{"6 explicit own slot", classico, EqOp{Slot: intp(6)}, true},
+		{"6 bands in place", classico, EqOp{Bands: bands3()}, true},
+		{"6 bands in place allowed", classico, EqOp{Bands: bands3(), AllowProtected: true}, false},
+		{"11 -> 0 cross-slot", custom, EqOp{Slot: intp(0), AllowFullLength: true}, true},
+		{"11 -> 0 cross-slot bands", custom, EqOp{Slot: intp(0), Bands: bands3(), MasterCenti: &m}, true},
+	}
+	for _, c := range cases {
+		next, err := ApplyEq(c.cur, c.op)
+		switch {
+		case c.refused && (!errors.Is(err, ErrProtectedSlot) || next != nil):
+			t.Errorf("%s: want a protected-slot refusal, got %x / %v", c.name, next, err)
+		case c.refused && !strings.Contains(err.Error(), "--allow-protected"):
+			t.Errorf("%s: refusal does not name the override: %v", c.name, err)
+		case !c.refused && err != nil:
+			t.Errorf("%s: refused: %v", c.name, err)
+		}
+	}
+	// the refusal names the slot
+	_, err := ApplyEq(plain, EqOp{Slot: intp(11)})
+	if err == nil || !strings.Contains(err.Error(), "slot 11") {
+		t.Fatalf("message = %v", err)
+	}
+	_, err = ApplyEq(classico, EqOp{Slot: intp(0)})
+	if err == nil || !strings.Contains(err.Error(), "slot 6") || !strings.Contains(err.Error(), "slot 0") {
+		t.Fatalf("message = %v", err)
+	}
+}
+
+// A 73-byte write is confirmed only if what the device reports beyond it is
+// blank: a populated tail means the curve on the device is not the one sent.
+func TestEqMatchRejectsDirtyTail(t *testing.T) {
+	cur := mustHex(t, realClassico6)
+	m := -300
+	sent, err := ApplyEq(cur, EqOp{MasterCenti: &m})
+	if err != nil || len(sent) != EqLen {
+		t.Fatalf("%v len %d", err, len(sent))
+	}
+	match := EqMatch(sent, EqOp{MasterCenti: &m})
+
+	echo := append([]byte(nil), cur...) // 143 bytes, 0xFF empty markers in the tail
+	echo[1], echo[2] = byte(int16(m)), byte(int16(m)>>8)
+	if !match(echo) {
+		t.Fatal("echo with the 0xFF empty-type markers refused")
+	}
+	if !match(sent) {
+		t.Fatal("exact 73-byte echo refused")
+	}
+	zero := append(append([]byte(nil), sent...), make([]byte, EqReadLen-EqLen)...)
+	if !match(zero) {
+		t.Fatal("echo with a zero tail refused")
+	}
+	// a band at position 10 (freq 1000 Hz) in the echoed tail
+	dirty := append([]byte(nil), zero...)
+	o := 3 + 10*7
+	dirty[o], dirty[o+1] = 0xe8, 0x03
+	if match(dirty) {
+		t.Fatal("echo whose tail holds a band confirmed a 73-byte write")
+	}
+	// a stray non-zero byte that is not an empty-type marker
+	dirty2 := append([]byte(nil), zero...)
+	dirty2[EqReadLen-1] = 0x02
+	if match(dirty2) {
+		t.Fatal("echo with a stray tail byte confirmed")
+	}
+	// the head of the echo still has to match
+	head := append([]byte(nil), zero...)
+	head[10] ^= 1
+	if match(head) {
+		t.Fatal("echo with a changed band confirmed")
+	}
+}
+
+func TestEqWriteFailureClassifiesOtherSlot(t *testing.T) {
+	sent := fixture(0, 0)
+	other := fixture(11, 0)
+	err := EqWriteFailure(sent, other, "/b/eq-slot11-x.hex")
+	var ee *EqError
+	if !errors.Is(err, ErrUnconfirmed) || !errors.As(err, &ee) {
+		t.Fatalf("other-slot echo: %v", err)
+	}
+	if ee.Code != CodeUnconfirmed || ee.Backup != "/b/eq-slot11-x.hex" || !bytes.Equal(ee.Sent, sent) || !bytes.Equal(ee.Got, other) {
+		t.Fatalf("%+v", ee)
+	}
+	for _, want := range []string{"unconfirmed", "slot 0", "slot 11", "/b/eq-slot11-x.hex", hex.EncodeToString(sent)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("message lacks %q: %v", want, err)
+		}
+	}
+	// same slot, different content: a plain mismatch, not "unconfirmed"
+	stale := fixture(0, 50)
+	err = EqWriteFailure(sent, stale, "/b/x")
+	if err == nil || errors.Is(err, ErrUnconfirmed) || !strings.Contains(err.Error(), "readback mismatch") {
+		t.Fatalf("same-slot echo: %v", err)
+	}
+	// silence is not unconfirmed either
+	if err := EqWriteFailure(sent, nil, "/b/x"); err == nil || errors.Is(err, ErrUnconfirmed) {
+		t.Fatalf("no echo: %v", err)
 	}
 }
