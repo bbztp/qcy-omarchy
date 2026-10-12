@@ -39,9 +39,10 @@ const (
 	eqBandSize = 7
 	eqHeader   = 3
 
-	// MaxCenti is the accepted range for band gains, in centi-dB (+/-8 dB).
-	MaxCenti = 800
-	MaxDB    = 8.0
+	// MaxCenti is the accepted range for band gains, in centi-dB (+/-12 dB: factory curves
+	// exceed 8 dB, down to -12).
+	MaxCenti = 1200
+	MaxDB    = 12.0
 	// MasterMaxCenti / MasterMaxDB: the master gain range (+/-12 dB).
 	MasterMaxCenti = 1200
 	MasterMaxDB    = 12.0
@@ -158,7 +159,7 @@ type EqResult struct {
 	BackupHistory string `json:"backupHistory"`        // append-only history entry for this write
 }
 
-// BandSpec is one caller-supplied band for EqOp.Bands. Gain is in dB (+/-8).
+// BandSpec is one caller-supplied band for EqOp.Bands. Gain is in dB (+/-12).
 // A position left out of EqOp.Bands is written empty (freq 0).
 type BandSpec struct {
 	Index int     `json:"index"` // position in the payload (0-19)
@@ -285,7 +286,7 @@ func le16(p []byte, off int) uint16 { return uint16(p[off]) | uint16(p[off+1])<<
 func masterCenti(p []byte) int { return int(int16(le16(p, 1))) }
 
 // CentiFromDB converts a band gain in dB to centi-dB, rejecting NaN, Inf and
-// anything outside +/-8 dB BEFORE any integer conversion (a float outside int
+// anything outside +/-12 dB BEFORE any integer conversion (a float outside int
 // range converts to an arbitrary value in Go).
 func CentiFromDB(db float64) (int, error) {
 	return centiInRange(db, MaxDB)

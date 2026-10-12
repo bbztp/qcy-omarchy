@@ -171,7 +171,7 @@ func TestLibrarySaveNoReplace(t *testing.T) {
 	for _, args := range [][]string{
 		{"save", "x"},
 		{"save", "x", "--gains", "1,2"},
-		{"save", "x", "--gains", "0,0,0,0,0,0,0,0,0,9"},
+		{"save", "x", "--gains", "0,0,0,0,0,0,0,0,0,12.01"},
 		{"save", "x", "--gains", tenFlat, "--master", "13"},
 		{"save", "!!!", "--gains", tenFlat, "--bogus"},
 	} {
@@ -516,5 +516,47 @@ func TestDaemonClientRequestKeepsEqCodes(t *testing.T) {
 		if !errors.Is(err, want) || err.Error() != "refused" {
 			t.Errorf("%s: err = %v", code, err)
 		}
+	}
+}
+
+func TestLibraryApplySlot255Writes73BytesWithExplicitMaster(t *testing.T) {
+	libEnv(t)
+	state := hexBytes(t, slot0Flat)
+	state[0] = 3
+	l, _ := useFakeLink(t, state)
+	mustSave(t, "Ten", "--gains", "1,2,3,4,5,6,7,8,-8,12", "--master", "2")
+	var err error
+	out := captureStdout(t, func() { err = cmdLibrary([]string{"apply", "ten", "--yes", "--slot", "255", "--json"}) })
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if len(l.writes) != 1 || len(l.writes[0]) != qcycore.EqLen || l.writes[0][0] != 0xFF {
+		t.Fatalf("writes = %x", l.writes)
+	}
+	if w := l.writes[0]; w[1] != 0xc8 || w[2] != 0x00 {
+		t.Fatalf("master bytes %x", w[1:3])
+	}
+	var res struct {
+		Confirmed bool `json:"confirmed"`
+		Wrote     struct {
+			Slot int `json:"slot"`
+		} `json:"wrote"`
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil || !res.Confirmed || res.Wrote.Slot != 255 {
+		t.Fatalf("%v %+v: %s", err, res, out)
+	}
+}
+
+func TestLibraryApplyRefusesOtherSlotsBeforeConnecting(t *testing.T) {
+	libEnv(t)
+	l, opened := useFakeLink(t, hexBytes(t, slot0Flat))
+	mustSave(t, "Ten", "--gains", tenFlat)
+	for _, s := range []string{"7", "6", "11", "1", "-1", "256", "x"} {
+		if err := cmdLibrary([]string{"apply", "ten", "--yes", "--slot", s}); err == nil {
+			t.Errorf("--slot %s accepted", s)
+		}
+	}
+	if *opened != 0 || len(l.writes) != 0 {
+		t.Fatalf("opened %d, writes %d", *opened, len(l.writes))
 	}
 }

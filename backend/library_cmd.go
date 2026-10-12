@@ -30,7 +30,7 @@ const libraryUsage = `usage: qcyctl library <subcommand>
   library import <file>
   library seed [--json]
   library import-device <name> [seconds]            (reads the active EQ from the earbuds)
-  library apply <id> --yes [--full-length] [--json] [seconds]   (writes the curve to slot 0)`
+  library apply <id> --yes [--full-length] [--slot 0|255] [--json] [seconds]   (writes the curve to slot 0, or 255 = the phone app's "Personalizado" buffer)`
 
 // libraryRunner opens the link to the earbuds (daemon first, direct otherwise).
 // A test replaces it with a fake; nothing else in this file touches Bluetooth.
@@ -505,10 +505,10 @@ func cmdLibraryImportDevice(args []string) error {
 	})
 }
 
-// libraryApplyOp builds the EqOp that writes c to slot 0, or refuses with the
-// reason. It never sets AllowProtected. Everything it can know offline it
+// libraryApplyOp builds the EqOp that writes c to slot (0 or the app's custom
+// slot 255, validated by the caller), or refuses with the reason. It never sets AllowProtected. Everything it can know offline it
 // checks here, so nothing is connected for a curve that cannot be written.
-func libraryApplyOp(c qcycore.Curve, fullLength bool) (qcycore.EqOp, error) {
+func libraryApplyOp(c qcycore.Curve, fullLength bool, slot int) (qcycore.EqOp, error) {
 	var op qcycore.EqOp
 	if ok, why := c.Applyable(); !ok {
 		tail := false
@@ -540,7 +540,6 @@ func libraryApplyOp(c qcycore.Curve, fullLength bool) (qcycore.EqOp, error) {
 	if err != nil {
 		return op, fmt.Errorf("curve %q: master gain: %w", c.ID, err)
 	}
-	slot := 0
 	bands := make([]qcycore.BandSpec, len(c.Bands))
 	for i, b := range c.Bands {
 		bands[i] = qcycore.BandSpec{Index: b.Index, Freq: b.Freq, Gain: b.Gain, Q: b.Q, Type: b.Type}
@@ -575,13 +574,21 @@ type libraryApplyOut struct {
 }
 
 func cmdLibraryApply(args []string) error {
-	const usage = "usage: qcyctl library apply <id> --yes [--full-length] [--json] [seconds]"
-	a, err := parseLibArgs(args, []string{"--yes", "--full-length", "--json"}, nil)
+	const usage = "usage: qcyctl library apply <id> --yes [--full-length] [--slot 0|255] [--json] [seconds]"
+	a, err := parseLibArgs(args, []string{"--yes", "--full-length", "--json"}, []string{"--slot"})
 	if err != nil || len(a.pos) < 1 || len(a.pos) > 2 {
 		return errors.New(usage)
 	}
 	if !a.bools["--yes"] {
-		return errors.New("library apply: this overwrites the EQ curve of slot 0 and makes it active; pass --yes to confirm (the active slot's payload is backed up first)")
+		return errors.New("library apply: this overwrites the EQ curve of the target slot (0 or 255) and makes it active; pass --yes to confirm (the active slot's payload is backed up first)")
+	}
+	slot := 0
+	if v, ok := a.vals["--slot"]; ok {
+		n, err := strconv.Atoi(v)
+		if err != nil || (n != 0 && n != qcycore.SlotCustomApp) {
+			return fmt.Errorf("library apply: --slot must be 0 or %d (the phone app's \"Personalizado\" buffer), got %q; protected and factory slots are never written", qcycore.SlotCustomApp, v)
+		}
+		slot = n
 	}
 	seconds, err := parseSeconds(a.pos[1:], 30)
 	if err != nil {
@@ -592,7 +599,7 @@ func cmdLibraryApply(args []string) error {
 		return err
 	}
 	full := a.bools["--full-length"]
-	op, err := libraryApplyOp(c, full)
+	op, err := libraryApplyOp(c, full, slot)
 	if err != nil {
 		return err
 	}

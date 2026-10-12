@@ -129,21 +129,21 @@ func TestApplyRejectsBadInput(t *testing.T) {
 		t.Fatal("master -1201 accepted")
 	}
 	g := [EqBands]int{}
-	g[4] = 900
+	g[4] = 1201
 	if _, err := ApplyEq(cur, EqOp{Gains: &g}); err == nil {
-		t.Fatal("band gain 900 accepted")
+		t.Fatal("band gain 1201 accepted")
 	}
 }
 
 func TestCentiFromDB(t *testing.T) {
-	ok := map[float64]int{0: 0, 8: 800, -8: -800, 1.5: 150, -3.456: -346, 0.004: 0}
+	ok := map[float64]int{0: 0, 8: 800, -8: -800, 12: 1200, -12: -1200, 1.5: 150, -3.456: -346, 0.004: 0}
 	for in, want := range ok {
 		got, err := CentiFromDB(in)
 		if err != nil || got != want {
 			t.Errorf("CentiFromDB(%v) = %d, %v; want %d", in, got, err, want)
 		}
 	}
-	for _, in := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), 8.01, -8.01, 1e30, -1e30} {
+	for _, in := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), 12.01, -12.01, 1e30, -1e30} {
 		if _, err := CentiFromDB(in); err == nil {
 			t.Errorf("CentiFromDB(%v) accepted", in)
 		}
@@ -151,11 +151,11 @@ func TestCentiFromDB(t *testing.T) {
 }
 
 func TestParseGains(t *testing.T) {
-	g, err := ParseGains("-3, 0,2.5,1,1,1,1,1,1,8")
-	if err != nil || g[0] != -300 || g[2] != 250 || g[9] != 800 {
+	g, err := ParseGains("-3, 0,2.5,1,1,1,1,1,1,12")
+	if err != nil || g[0] != -300 || g[2] != 250 || g[9] != 1200 {
 		t.Fatalf("%v %v", g, err)
 	}
-	for _, bad := range []string{"1,2,3", "1,1,1,1,1,1,1,1,1,9", "1,1,1,1,1,1,1,1,1,NaN", "1,1,1,1,1,1,1,1,1,Inf", "a,1,1,1,1,1,1,1,1,1"} {
+	for _, bad := range []string{"1,2,3", "1,1,1,1,1,1,1,1,1,12.01", "1,1,1,1,1,1,1,1,1,-12.01", "1,1,1,1,1,1,1,1,1,NaN", "1,1,1,1,1,1,1,1,1,Inf", "a,1,1,1,1,1,1,1,1,1"} {
 		if _, err := ParseGains(bad); err == nil {
 			t.Errorf("ParseGains(%q) accepted", bad)
 		}
@@ -552,7 +552,7 @@ func TestBandsSizeAndValidation(t *testing.T) {
 		"freq high":    {{Index: 0, Freq: 20001, Gain: 0, Q: 100, Type: 2}},
 		"q 0":          {{Index: 0, Freq: 100, Gain: 0, Q: 0, Type: 2}},
 		"q u16":        {{Index: 0, Freq: 100, Gain: 0, Q: 70000, Type: 2}},
-		"gain 8.01":    {{Index: 0, Freq: 100, Gain: 8.01, Q: 100, Type: 2}},
+		"gain 12.01":   {{Index: 0, Freq: 100, Gain: 12.01, Q: 100, Type: 2}},
 		"gain NaN":     {{Index: 0, Freq: 100, Gain: nan, Q: 100, Type: 2}},
 		"index -1":     {{Index: -1, Freq: 100, Gain: 0, Q: 100, Type: 2}},
 		"index 20":     {{Index: 20, Freq: 100, Gain: 0, Q: 100, Type: 2}},

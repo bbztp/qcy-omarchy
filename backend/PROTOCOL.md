@@ -132,7 +132,7 @@ positions not named are all zero (freq 0, type 0, no `0xFF` marker). The
 payload read is used only as proof of life and for the backup. Positions 0-9
 give the proven 73-byte payload with a zero tail; any position 10-19 gives 143
 bytes and needs `allowFull`. Per band: `index` 0-19 and unique, `freq`
-20-20000 Hz, `gain` -8..+8 dB, `q` 1-65535 (raw), `type` 0 or 2 only (the
+20-20000 Hz, `gain` -12..+12 dB, `q` 1-65535 (raw), `type` 0 or 2 only (the
 values seen on the device). `masterGain` may be omitted only when the target
 is the active slot (its own master gain is kept); for another slot it is
 required, because the reported master gain belongs to the active slot. `bands`
@@ -180,7 +180,7 @@ master-gain slider now needs `allowFull`).
 - **Master gain** (bytes 1-2): signed int16 in centi-dB, so `0x0096` is
   +1.50 dB. The client accepts -12..+12 dB (-1200..+1200) and rejects NaN, Inf
   and anything outside that range before converting to an integer. Band gains
-  stay limited to -8..+8 dB.
+  are limited to -12..+12 dB as well (the factory curves reach -12).
 - **Bands** (bytes 3-142): `[freq:2][gain:2][q:2][type:1]` each. Gain is signed
   centi-dB. **Frequency, Q and type are not fixed**: the hearing-test slot (11)
   carries per-user values, so a writer must preserve them. An earlier
@@ -307,7 +307,9 @@ that id stays valid for `show`/`apply`/`delete`.
 
 With the earbuds: `import-device <name> [seconds]` saves the active EQ
 (lossless payload, source device-import) and `apply <id> --yes [--full-length]
-[--json] [seconds]` writes a curve to **slot 0** in build mode (`bands`, master
+[--slot 0|255] [--json] [seconds]` writes a curve to **slot 0** (default) or, with
+`--slot 255`, to the phone app's "Personalizado" buffer (any other slot is
+refused; byte 0 of the payload is then `0xFF`) in build mode (`bands`, master
 gain from the curve) through the same path as `eq set` (daemon or direct,
 backup, readback). It never passes `allowProtected`; a protected active slot
 refuses it. A curve that is not `applyable` is refused before connecting; one

@@ -775,7 +775,7 @@ func usage() {
   qcyctl balance <left|center|right|0-100> [seconds]
   qcyctl eq get [--json] [seconds]
   qcyctl eq set <g1,g2,...,g10> --yes [--preset N] [--master-gain dB] [--allow-protected] [--full-length] [--json] [seconds]
-        (gains -8..+8 dB, master -12..+12; patches the live payload, keeps freq/Q/type; backs the slot up first;
+        (gains -12..+12 dB, master -12..+12; patches the live payload, keeps freq/Q/type; backs the slot up first;
          slots 6 and 11 are protected: --preset 6|11, or any --preset while one of them is active, needs --allow-protected;
          a payload with bands at positions 10-19 needs a 143-byte write, which needs --full-length)
   qcyctl eq preset <n> [seconds]   (unsupported on models without characteristic 000B)

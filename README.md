@@ -121,7 +121,7 @@ qcyctl anc noisy              # set ANC mode
 qcyctl ldac on                # toggles: game|sleep|ldac|multipoint|wind
 qcyctl find                   # flash the earbuds
 qcyctl library list           # saved EQ curves (offline)
-qcyctl library apply <id> --yes   # write a saved curve to slot 0
+qcyctl library apply <id> --yes [--slot 0|255]   # write a saved curve to slot 0 (or 255, the app's custom slot)
 ```
 
 The curve library (`qcyctl library`) keeps named EQ curves under
