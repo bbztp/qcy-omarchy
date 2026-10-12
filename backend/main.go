@@ -724,6 +724,8 @@ func main() {
 		err = cmdMasterGain(args)
 	case "keys":
 		err = cmdKeys(args)
+	case "library":
+		err = cmdLibrary(args)
 	default:
 		usage()
 		os.Exit(2)
@@ -756,6 +758,7 @@ func usage() {
   qcyctl eq preset <n> [seconds]   (unsupported on models without characteristic 000B)
   qcyctl master-gain <dB> [--full-length] [--json] [seconds]
         (-12..+12; only the master gain changes; --full-length is needed when the active slot has bands 10-19, e.g. slot 11)
+  qcyctl library <list|show|save|delete|export|import|seed|import-device|apply> ...   (curve library; see README)
   qcyctl keys get [seconds]
   qcyctl keys set <keyId:funId> [<keyId:funId> ...] [seconds]
 All setters read back by querying the opcode (FF 03 FE 01 <opcode>) and fail non-zero on mismatch.`)

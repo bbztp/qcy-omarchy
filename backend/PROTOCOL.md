@@ -262,6 +262,32 @@ restore command yet.
 All of these go through the daemon when it is running, and fall back to a
 direct connection when it is not.
 
+### Curve library CLI
+
+`qcyctl library ...` manages named EQ curves stored one JSON file each under
+`$XDG_DATA_HOME/qcy-omarchy/library` (format v1, see `internal/qcycore/presets.go`).
+"Preset" is not used: it already means a hardware slot.
+
+Offline (no Bluetooth, no daemon): `list [--json]` (order: user, device-import,
+factory-snapshot, then by name; unreadable files go to stderr), `show <id>`,
+`save <name> --gains g1,...,g10 [--master dB] [--note ..] [--replace]` (source
+user, positions 0-9 at 31..16000 Hz, Q 100, type 0, the slot 0 layout; never
+replaces unless `--replace`, and then only a source=user curve),
+`delete <id> --yes` (moved to `.trash`), `export <id> <file>`, `import <file>`,
+`seed` (idempotent; creates only the missing ones from
+`<backups>/eq-slotN-first.hex` and the `payload` field of
+`<backups>/preset-map/v3-*-slot6.json`).
+
+With the earbuds: `import-device <name> [seconds]` saves the active EQ
+(lossless payload, source device-import) and `apply <id> --yes [--full-length]
+[--json] [seconds]` writes a curve to **slot 0** in build mode (`bands`, master
+gain from the curve) through the same path as `eq set` (daemon or direct,
+backup, readback). It never passes `allowProtected`; a protected active slot
+refuses it. A curve that is not `applyable` is refused before connecting; one
+with bands at positions 10-19 needs `--full-length` (143 bytes, not proven).
+`--json` carries `wrote`, `backup` and `confirmed` (false plus `code` on an
+unconfirmed write, which also exits non-zero).
+
 ## Restarts caused by writing
 
 Two writes restart the earbuds, for different reasons:

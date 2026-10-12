@@ -100,7 +100,13 @@ qcyctl status                 # human-readable snapshot
 qcyctl anc noisy              # set ANC mode
 qcyctl ldac on                # toggles: game|sleep|ldac|multipoint|wind
 qcyctl find                   # flash the earbuds
+qcyctl library list           # saved EQ curves (offline)
+qcyctl library apply <id> --yes   # write a saved curve to slot 0
 ```
+
+The curve library (`qcyctl library`) keeps named EQ curves under
+`~/.local/share/qcy-omarchy/library`; `list`, `show`, `save`, `delete`,
+`export`, `import` and `seed` need no Bluetooth. See `backend/PROTOCOL.md`.
 
 Run `qcyctl` with no arguments for the full command list. Set `QCY_DEBUG=1` to
 trace the GATT traffic of the CLI on stderr; for the daemon set `QCYCTL_DEBUG=1`
