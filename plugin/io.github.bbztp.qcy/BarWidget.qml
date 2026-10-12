@@ -4,9 +4,10 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// QCY earbuds widget: the QCY wordmark in the bar and a popup with active
-// noise control, multipoint/LDAC/game toggles, and a readout of
-// the earbuds' state (firmware, per-ear battery, EQ curve, balance, auto-off).
+// QCY earbuds widget: the QCY wordmark in the bar and a popup in three tabs:
+// Status (battery, connection, noise mode), Som (live EQ curve + the curve
+// library: click a card to apply it) and Ajustes (scenes, toggles, balance,
+// touch controls, device info).
 //
 // Actions apply immediately with optimistic UI; no wait for a scan. Full status
 // is read on (re)connect, on manual refresh, and once a minute while the panel
@@ -47,41 +48,169 @@ Panel {
   readonly property var _levelGlyphs: ["󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"]
 
 
+  // Detailed noise scenes (Ajustes). The three headline modes on the Status
+  // tab are noiseButtons below.
   readonly property var ancModes: [
-    { key: "off", label: "Off" },
-    { key: "adaptive", label: "Adaptive" },
-    { key: "indoor", label: "Indoor" },
-    { key: "commuting", label: "Commuting" },
-    { key: "noisy", label: "Noisy" },
-    { key: "antiwind", label: "Anti-wind" },
-    { key: "transparency", label: "Transparency" }
+    { key: "adaptive", label: "Adaptativo" },
+    { key: "indoor", label: "Interno" },
+    { key: "commuting", label: "Deslocamento" },
+    { key: "noisy", label: "Ruidoso" },
+    { key: "antiwind", label: "Anti-vento" }
   ]
+
+  // Headline modes: glyphs are Material Design Icons code points (headphones,
+  // ear-hearing, volume-high). "Cancelamento" is the adaptive scene; the
+  // finer scenes are in Ajustes.
+  readonly property var noiseButtons: [
+    { key: "adaptive", label: "Cancelamento", glyph: 0xF02CB },
+    { key: "transparency", label: "Transparência", glyph: 0xF07E6 },
+    { key: "off", label: "Normal", glyph: 0xF057E }
+  ]
+  readonly property var _cancelScenes: ["adaptive", "indoor", "commuting", "noisy", "antiwind"]
+
   // LDAC is deliberately absent: writing 0x23 reboots this N70 and, unlike
   // multipoint below, the restart is not documented behaviour. Multipoint IS
   // listed because the N70 product notes state the earphones restart every time
   // Dual Device Connection is toggled — that is expected, not a fault.
   readonly property var toggleDefs: [
-    { key: "game", label: "Game mode" },
-    { key: "sleep", label: "Sleep mode" },
-    { key: "wind", label: "Wind detection" },
-    { key: "multipoint", label: "Multipoint" }
+    { key: "game", label: "Modo jogo", hint: "Menor latência" },
+    { key: "sleep", label: "Modo sono", hint: "Desativa os toques; sem efeito no som" },
+    { key: "wind", label: "Detecção de vento", hint: "" },
+    { key: "multipoint", label: "Multiponto", hint: "Reinicia os fones; é esperado, não é falha" }
   ]
 
-  // Notes shown once at the bottom rather than padded into the switch labels,
-  // where they blew the two-column layout out.
-  readonly property var notes:
-    "Multipoint restarts the earbuds — that is expected, not a fault.\n"
-    + "Sleep mode disables the touch controls; it has no audible effect."
+  // ---- library UI state ----
+  // A fill that is only a hint lighter than the panel, from the shell's
+  // foreground so it follows the theme.
+  readonly property color cardFill: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.06)
+  property bool saveOpen: false
+  property string pendingDeleteId: ""
+
+  readonly property bool isStale: !!(rep && rep.stale === true)
+  readonly property int activeSlot: rep && rep.eq && rep.eq.preset !== null && rep.eq.preset !== undefined
+    ? Number(rep.eq.preset) : -1
+  // Slots 6 (factory) and 11 (hearing test) are never overwritten.
+  readonly property bool slotProtected: activeSlot === 6 || activeSlot === 11
+  // A tail band (position 10+) means the device reports a populated 143-byte
+  // payload; master-gain then needs the unproven full-length write.
+  readonly property bool masterGainLocked: {
+    var b = root.eqBandModel
+    if (!b) return false
+    if (b.length > 10) return true
+    for (var i = 0; i < b.length; i++) {
+      if (Number(b[i].index) >= 10) return true
+    }
+    return false
+  }
+  readonly property bool canApplyLibrary: Qcy.connected && !!rep && activeSlot >= 0
+    && !slotProtected && Qcy.libraryOp.phase !== "running"
+  readonly property bool canSaveCurrent: Qcy.connected && !!rep && Qcy.libraryOp.phase !== "running"
+
+  function ancGroup() {
+    var s = currentAnc()
+    if (s === "transparency") return "transparency"
+    if (s === "off") return "off"
+    if (_cancelScenes.indexOf(s) !== -1) return "adaptive"
+    return ""
+  }
+
+  function entrySig(e) {
+    if (!e || !e.bands) return ""
+    return e.bands.map(function (x) { return x.freq + "/" + x.gain }).join(",")
+  }
+
+  // The library curve whose bands equal the live ones, if any.
+  function entryIsLive(e) {
+    return root._eqSig !== "" && root.activeSlot === 0 && entrySig(e) === root._eqSig
+  }
+
+  function curveName(id) {
+    var l = Qcy.library
+    for (var i = 0; i < l.length; i++) if (l[i].id === id) return l[i].name
+    return id
+  }
+
+  function activeCurveName() {
+    var l = Qcy.library
+    for (var i = 0; i < l.length; i++) {
+      if (entryIsLive(l[i])) return l[i].name
+    }
+    return eqLabel()
+  }
+
+  function sourceLabel(s) {
+    if (s === "user") return "SUA"
+    if (s === "device-import") return "DO APARELHO"
+    if (s === "factory-snapshot") return "DE FÁBRICA"
+    return String(s).toUpperCase()
+  }
+
+  function reasonText(r) {
+    var t = String(r || "")
+    if (t.indexOf("positions 10-19") !== -1 || t.indexOf("addressable") !== -1)
+      return "Usa bandas nas posições 10–19: a gravação de 143 bytes ainda não foi validada em hardware."
+    if (t.indexOf("type") !== -1) return "Tem uma banda de tipo não suportado."
+    return t !== "" ? t : "Não pode ser aplicada."
+  }
+
+  function nameValid(n) {
+    var t = String(n || "").trim()
+    return t.length > 0 && t.length <= 40 && t.charAt(0) !== "-"
+  }
+
+  function submitSave(n) {
+    if (!nameValid(n) || !canSaveCurrent) return
+    Qcy.libraryImportDevice(String(n).trim())
+    root.saveOpen = false
+    nameField.text = ""
+  }
+
+  function opText() {
+    var op = Qcy.libraryOp
+    if (op.phase === "idle") return ""
+    var extra = ""
+    if (op.backup !== "" && String(op.message).indexOf(op.backup) === -1)
+      extra = "\nBackup: " + op.backup
+    if (op.kind === "apply") {
+      var nm = curveName(op.id)
+      if (op.phase === "running") return "Aplicando \u201c" + nm + "\u201d…"
+      if (op.phase === "ok") return "Aplicado e confirmado pelo aparelho: " + nm + "." + extra
+      if (op.phase === "unconfirmed")
+        return "Gravado, mas o aparelho não confirmou." + (op.message !== "" ? "\n" + op.message : "") + extra
+      return "Não foi possível aplicar: " + op.message + extra
+    }
+    if (op.kind === "save") {
+      if (op.phase === "running") return "Salvando a curva atual…"
+      if (op.phase === "ok") return "Curva salva na biblioteca."
+      return "Não foi possível salvar: " + op.message
+    }
+    if (op.kind === "delete") {
+      if (op.phase === "running") return "Excluindo…"
+      if (op.phase === "ok") return "Curva excluída (movida para a lixeira da biblioteca)."
+      return "Não foi possível excluir: " + op.message
+    }
+    return ""
+  }
+
+  // Opening the Sound tab reads the library from disk (offline, no daemon).
+  onTabChanged: {
+    root.saveOpen = false
+    root.pendingDeleteId = ""
+    if (root.tab === 1) {
+      Qcy.libraryClearOp()
+      Qcy.libraryReload()
+    }
+  }
 
   // The tooltip is the fastest read of the earbud state without opening the
     // panel: both earbuds and the case, since that is the one that is easy to
     // forget. Falls back to the model name until the first battery read lands.
     function barTooltip() {
       var name = root.modelName
-      if (!Qcy.connected) return name + " — not connected"
-      if (!batt) return name + " — reading battery…"
-      var parts = ["L " + batt.left + "%", "R " + batt.right + "%"]
-      if (batt.casePresent) parts.push("case " + batt.case + "%")
+      if (!Qcy.connected) return name + " — desconectado"
+      if (!batt) return name + " — lendo a bateria…"
+      var parts = ["E " + batt.left + "%", "D " + batt.right + "%"]
+      if (batt.casePresent) parts.push("estojo " + batt.case + "%")
       return name + " — " + parts.join(" · ")
     }
 
@@ -91,10 +220,11 @@ Panel {
   }
 
   function heroStatus() {
-    if (!Qcy.connected) return "NOT CONNECTED"
-    if (Qcy.loading) return "READING…"
-    if (rep && rep.firmware && rep.firmware.left) return "FIRMWARE " + rep.firmware.left
-    return "CONNECTED"
+    if (!Qcy.connected) return "Desconectado"
+    if (isStale) return "Dados em cache há " + Math.max(0, Math.round(Number(rep.ageSeconds) || 0)) + " s (fones em uso por outro app)"
+    if (Qcy.loading) return "Lendo…"
+    if (!rep) return "Ocioso"
+    return "Conectado"
   }
 
   // The model name BlueZ reports, trimmed of the vendor prefix so the header
@@ -215,7 +345,7 @@ Panel {
     var db = Math.max(root.masterGainMin, Math.min(root.masterGainMax, Number(v)))
     if (isNaN(db)) return
     db = Math.round(db * 10) / 10
-    Qcy.set("Master gain", ["master-gain", db.toFixed(1)])
+    Qcy.set("Ganho geral", ["master-gain", db.toFixed(1)])
     // Optimistic: the next full read reconciles.
     root._masterGainDb = db
     root._masterGainSig = String(db)
@@ -250,7 +380,7 @@ Panel {
 
   function startFit() {
     fitRunning = true
-    Qcy.set("Ear-tip fit check", ["fit", "start"])
+    Qcy.set("Teste de vedação", ["fit", "start"])
     // The earbuds play a few seconds of sound while they measure the seal; the
     // panel has no completion event to wait on, so clear the flag on a timer.
     fitTimer.restart()
@@ -266,22 +396,21 @@ Panel {
     if (!rep || !rep.eq || rep.eq.preset === null || rep.eq.preset === undefined) return "—"
     var p = rep.eq.preset
     // Slot 11 is the profile this user created with the app's hearing test.
-    if (p === 11) return "Custom (hearing test)"
-    // Map hardware slots 0-4 to named presets
-    var names = ["Pop", "Rock", "Classical", "Jazz", "Bass Booster"]
-    if (p >= 0 && p <= 4) return names[p]
-    return "Preset #" + p
+    if (p === 11) return "Personalizado (teste auditivo)"
+    if (p === 6) return "Clássico de fábrica (slot 6)"
+    // Slot 0 holds whatever was last written there; its name is unknown.
+    return "Slot " + p
   }
 
   function updatedLabel() {
     var tick = root.nowTick // binding dependency for the "ago" clock
     if (Qcy.error !== "") return Qcy.error
-    if (Qcy.loading) return "Reading earbuds…"
-    if (!Qcy.updatedAt) return "Open to read the earbuds' state"
+    if (Qcy.loading) return "Lendo os fones…"
+    if (!Qcy.updatedAt) return "Abra para ler o estado dos fones"
     var s = Math.round((Date.now() - Qcy.updatedAt) / 1000)
-    if (s < 5) return "Updated just now"
-    if (s < 60) return "Updated " + s + "s ago"
-    return "Updated " + Math.round(s / 60) + "m ago"
+    if (s < 5) return "Atualizado agora"
+    if (s < 60) return "Atualizado há " + s + " s"
+    return "Atualizado há " + Math.round(s / 60) + " min"
   }
 
   function setToggle(key, label, on) {
@@ -314,9 +443,9 @@ Panel {
   }
 
   readonly property var ancStrengthChoices: [
-    { label: "Low", value: 0 },
-    { label: "Med", value: 1 },
-    { label: "High", value: 2 }
+    { label: "Baixa", value: 0 },
+    { label: "Média", value: 1 },
+    { label: "Alta", value: 2 }
   ]
 
   function setAncStrength(value) {
@@ -325,7 +454,7 @@ Panel {
     optimistic = next
     // The scene has to be re-sent with the new strength; the earbuds treat the
     // third ANC parameter as part of the same command.
-    Qcy.set("ANC strength", ["anc", currentAnc(), "--level", String(value)])
+    Qcy.set("Intensidade ANC", ["anc", currentAnc(), "--level", String(value)])
   }
 
   // ---- sliders -------------------------------------------------------------
@@ -349,11 +478,11 @@ Panel {
   // ---- auto power-off ------------------------------------------------------
 
   readonly property var autoOffChoices: [
-    { label: "Never", value: "never" },
-    { label: "15m", value: "15" },
-    { label: "30m", value: "30" },
-    { label: "60m", value: "60" },
-    { label: "90m", value: "90" }
+    { label: "Nunca", value: "never" },
+    { label: "15 min", value: "15" },
+    { label: "30 min", value: "30" },
+    { label: "60 min", value: "60" },
+    { label: "90 min", value: "90" }
   ]
 
   // Touch-control remap table, decoded from the pairs reported for characteristic
@@ -422,7 +551,7 @@ Panel {
     var next = Object.assign({}, optimistic)
     next["autoOff"] = value
     optimistic = next
-    Qcy.set("Auto power-off", ["auto-off", value])
+    Qcy.set("Desligamento automático", ["auto-off", value])
   }
 
   Component.onCompleted: {
@@ -438,6 +567,7 @@ Panel {
       if (Qcy.connected) Qcy.pollBattery()
       batteryTimer.running = opened
       statusTimer.running = opened
+      if (root.tab === 1) Qcy.libraryReload()
     }
   }
 
@@ -554,12 +684,14 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(380))
+    contentWidth: panel.fittedContentWidth(Style.space(420))
     contentHeight: panel.fittedContentHeight(column.implicitHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      // Typing a curve name must not trigger the panel's single-key shortcuts.
+      blocked: nameField.activeFocus
       onCloseRequested: root.close()
       onTextKey: function (t) {
         if (t === "r" || t === "R") Qcy.refresh()
@@ -609,11 +741,8 @@ Panel {
           spacing: Style.space(14)
 
           // ---------- Tabs ----------
-          // A single scrolling column was taller than the panel, so everything
-          // below the fold — including the touch-control map — was silently cut
-          // off. Splitting the same content into three short tabs keeps every
-          // section reachable and makes the panel read horizontally, the way the
-          // earbuds' own app is organised.
+          // Status (device + noise mode), Som (live curve + library) and
+          // Ajustes (everything else). Short tabs keep every section reachable.
           Row {
             id: tabBar
             width: parent.width
@@ -621,9 +750,9 @@ Panel {
 
             Repeater {
               model: [
-                { label: "Device", index: 0 },
-                { label: "Sound", index: 1 },
-                { label: "Settings", index: 2 }
+                { label: "Status", index: 0 },
+                { label: "Som", index: 1 },
+                { label: "Ajustes", index: 2 }
               ]
               TabButton {
                 required property var modelData
@@ -634,23 +763,21 @@ Panel {
             }
           }
 
-          // ---------- Hero ----------
-          // Earbuds in the middle with their charge either side, the way the
-          // earbuds' own app presents the device screen. Reading the panel should
-          // not mean parsing a column of text lines.
+          // =====================================================================
+          // STATUS
+          // =====================================================================
           Column {
-            // Tab 0: only this section shows on the active tab.
             visible: root.tab === 0
             width: parent.width
-            spacing: Style.space(10)
+            spacing: Style.space(14)
 
+            // Earbuds in the middle with their charge either side.
             Item {
               width: parent.width
               implicitHeight: Math.max(
                 Math.max(heroArt.height, heroPillLeft.height),
                 heroPillRight.height)
 
-              // A compact charge pill: glyph plus percentage.
               Image {
                 id: heroArt
                 anchors.centerIn: parent
@@ -685,206 +812,130 @@ Panel {
               }
             }
 
-            // The Row cannot size itself from children whose height is bound to
-            // the Row: `height: parent.height` inside it is a cycle, the Row
-            // resolves to 0, and the model name and status line vanish. The Item
-            // wrapper owns the height so the Row's children can fill it.
-            Item {
+            // Name (level one) and connection state (level two).
+            Column {
               width: parent.width
-              implicitHeight: Style.font.title + Style.space(8)
+              spacing: Style.space(4)
 
-              Row {
-                // A Row cannot use anchors itself, and neither can its children —
-                // anchoring them makes Row stop positioning. The wrapper owns the
-                // height and this Row takes it from there, so the children's
-                // `height: parent.height` resolves to that instead of looping
-                // back through the Row's own implicit height.
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.verticalCenter: parent.verticalCenter
-                height: parent.height
-                spacing: Style.space(8)
+              Text {
+                width: parent.width
+                text: root.modelName
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+                font.bold: true
+                elide: Text.ElideRight
+                horizontalAlignment: Text.AlignHCenter
+              }
 
-                Text {
-                  text: root.modelName
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.title
-                  font.bold: true
-                  height: parent.height
-                  elide: Text.ElideRight
-                  verticalAlignment: Text.AlignVCenter
-                }
-                Text {
-                  text: "·"
-                  color: Qt.darker(root.foreground, 1.8)
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.title
-                  height: parent.height
-                  verticalAlignment: Text.AlignVCenter
-                }
-                Text {
-                  text: root.heroStatus()
-                  color: Qt.darker(root.foreground, 1.4)
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                  font.letterSpacing: 0.8
-                  height: parent.height
-                  verticalAlignment: Text.AlignVCenter
+              Item {
+                width: parent.width
+                implicitHeight: stateRow.implicitHeight
+
+                Row {
+                  id: stateRow
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  spacing: Style.space(6)
+
+                  Rectangle {
+                    width: Style.space(8)
+                    height: width
+                    radius: width / 2
+                    anchors.verticalCenter: stateText.verticalCenter
+                    color: root.isStale ? Color.urgent : root.accent
+                  }
+                  Text {
+                    id: stateText
+                    text: root.heroStatus()
+                    color: Qt.darker(root.foreground, 1.3)
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
                 }
               }
             }
-          }
 
-          // ---------- Case battery ----------
-          // Left and right are shown beside the earbuds in the hero; only the
-          // case needs its own row, and it is often the one people forget.
-          BatteryGauge {
-            // Tab 0: only this section shows on the active tab.
-            visible: root.tab === 0 && !!(root.batt && root.batt.casePresent)
-            width: parent.width
-            label: "Case"
-            level: root.batt ? root.batt.case : 0
-            charging: root.batt ? root.batt.caseCharging : false
-          }
+            // Battery card: the case is the one people forget; left and right
+            // are repeated as gauges so the three read the same way.
+            Card {
+              width: parent.width
+              visible: !!root.batt
 
-          PanelSeparator {
-            // Tab 0 only: an ungated separator stacks up at the top of the Sound
-            // and Settings tabs, above content it has nothing to divide.
-            visible: root.tab === 0 && !!(root.batt && root.batt.casePresent)
-            foreground: root.foreground
-          }
-
-          // ---------- Noise control ----------
-          Column {
-            // Tab 0: only this section shows on the active tab.
-            visible: root.tab === 0
-            width: parent.width
-            spacing: Style.space(8)
-
-            PanelSectionHeader {
-              text: "NOISE CONTROL"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
+              BatteryGauge {
+                width: parent.width
+                label: "Esq."
+                level: root.batt ? root.batt.left : 0
+                charging: root.batt ? root.batt.leftCharging : false
+              }
+              BatteryGauge {
+                width: parent.width
+                label: "Dir."
+                level: root.batt ? root.batt.right : 0
+                charging: root.batt ? root.batt.rightCharging : false
+              }
+              BatteryGauge {
+                width: parent.width
+                present: !!(root.batt && root.batt.casePresent)
+                label: "Estojo"
+                level: root.batt ? root.batt.case : 0
+                charging: root.batt ? root.batt.caseCharging : false
+              }
             }
 
-            Flow {
+            // Noise mode: three big buttons, only when the unit answers ANC.
+            Column {
               width: parent.width
               spacing: Style.space(8)
+              visible: root.has("anc")
 
-              Repeater {
-                model: root.ancModes
-                Chip {
-                  required property var modelData
-                  label: modelData.label
-                  active: root.currentAnc() === modelData.key
-                  onClicked: root.setAnc(modelData.key)
-                }
+              PanelSectionHeader {
+                text: "MODO DE RUÍDO"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
               }
-            }
 
-            // Strength dial, shown only for the scenes that honour it. Adaptive
-            // and anti-wind read back 0 whatever is written, so offering the
-            // control there would be a lie.
-            ChoiceRow {
-              width: parent.width
-              visible: root.ancStrengthApplies
-              label: "Intensity"
-              model: root.ancStrengthChoices
-              current: String(root.ancStrength)
-              onPicked: function (v) { root.setAncStrength(Number(v)) }
-            }
-          }
+              Row {
+                id: noiseRow
+                width: parent.width
+                spacing: Style.space(8)
 
-          PanelSeparator { visible: root.tab === 0; foreground: root.foreground }
-
-          // ---------- Modes ----------
-          // Two columns: a single stack of label+switch rows is what made the
-          // panel feel like a wall of text. Short labels keep each cell readable.
-          Grid {
-            // Tab 0: only this section shows on the active tab.
-            visible: root.tab === 0
-            width: parent.width
-            columns: 2
-            columnSpacing: Style.space(18)
-            rowSpacing: Style.space(12)
-
-            Repeater {
-              model: root.toggleDefs
-              Item {
-                required property var modelData
-                // Model stays constant and each row hides itself, rather than
-                // filtering the array: `rep` is a fresh object on every status
-                // read, so a derived array would give the Repeater a new model
-                // each time and rebuild every delegate mid-interaction, which
-                // drops clicks and flickers the panel.
-                visible: modelData.requires === undefined || root.has(modelData.requires)
-                // Grid sizes cells for us; taking half the grid width keeps the
-                // switch column aligned across both columns.
-                width: (parent.width - Style.space(18)) / 2
-                implicitHeight: Math.max(modeLabel.implicitHeight, modeSwitch.implicitHeight)
-
-                Text {
-                  id: modeLabel
-                  text: modelData.label
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  anchors.left: parent.left
-                  anchors.right: modeSwitch.left
-                  anchors.rightMargin: Style.space(10)
-                  anchors.verticalCenter: parent.verticalCenter
-                  elide: Text.ElideRight
-                }
-
-                ToggleSwitch {
-                  id: modeSwitch
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  checked: root.toggleState(modelData.key)
-                  // Deliberately not bound to `busy`. ToggleSwitch swallows
-                  // clicks while busy, and Qcy.loading is true for every
-                  // background read the panel runs — so binding it here made the
-                  // switches dead most of the time while the ANC chips (which
-                  // have no such guard) kept working. Qcy.set() queues rather
-                  // than drops, so overlapping clicks are safe.
-                  foreground: root.foreground
-                  accent: root.accent
-                  onToggled: {
-                    root.setToggle(modelData.key, modelData.label, !root.toggleState(modelData.key))
+                Repeater {
+                  model: root.noiseButtons
+                  ModeButton {
+                    required property var modelData
+                    label: modelData.label
+                    glyph: String.fromCodePoint(modelData.glyph)
+                    active: root.ancGroup() === modelData.key
+                    btnWidth: (noiseRow.width - Style.space(8) * 2) / 3
+                    onClicked: {
+                      if (root.ancGroup() !== modelData.key) root.setAnc(modelData.key)
+                    }
                   }
                 }
               }
             }
           }
 
-          PanelSeparator { visible: root.tab === 0; foreground: root.foreground }
-
-          // ---------- Sound ----------
-          // Laid out the way a sound app does it: the EQ profile first with its
-          // curve, then the tone controls, then the listening controls. Every
-          // section hides itself when the device does not report the feature.
+          // =====================================================================
+          // SOM
+          // =====================================================================
           Column {
-            // Tab 1: only this section shows on the active tab.
-            visible: root.tab === 1 && !!root.rep
+            visible: root.tab === 1
             width: parent.width
-            spacing: Style.space(16)
+            spacing: Style.space(14)
 
-            // ---- EQ profile + curve ----
-            Column {
+            // ---- Live curve ----
+            Card {
               width: parent.width
-              spacing: Style.space(8)
+              visible: !!root.rep
 
-              // Label on the left, value on the right. Row lays its children out directly,
-              // so the value is placed with an explicit x offset rather than an
-              // anchor — anchors conflict with Row and break its positioning.
               Item {
                 width: parent.width
-                implicitHeight: eqName.implicitHeight
+                implicitHeight: liveTitle.implicitHeight
 
                 Text {
-                  id: eqName
-                  text: "EQUALIZER"
+                  id: liveTitle
+                  text: "CURVA ATUAL"
                   color: Qt.darker(root.foreground, 1.35)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -894,27 +945,30 @@ Panel {
                   anchors.verticalCenter: parent.verticalCenter
                 }
                 Text {
-                  text: root.eqLabel()
+                  text: root.activeCurveName()
                   color: root.foreground
                   font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
+                  font.pixelSize: Style.font.body
                   font.bold: true
+                  anchors.left: liveTitle.right
+                  anchors.leftMargin: Style.space(10)
                   anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
+                  elide: Text.ElideLeft
+                  horizontalAlignment: Text.AlignRight
                 }
               }
 
-              ChoiceRow {
+              EqCurve {
                 width: parent.width
-                label: "EQ preset"
-                model: root.eqPresetModel
-                current: String(root.eqPreset())
-                readOnly: true
+                bands: root.eqBands()
               }
 
               SliderRow {
                 width: parent.width
-                label: "Master gain"
+                enabled: !root.masterGainLocked
+                opacity: root.masterGainLocked ? 0.5 : 1.0
+                label: "Ganho geral"
                 minimum: root.masterGainMin
                 maximum: root.masterGainMax
                 step: 0.5
@@ -924,217 +978,374 @@ Panel {
                 onReleased: function (v) { root.eqSetMasterGain(v) }
               }
 
-              EqCurve {
-                width: parent.width
-                bands: root.eqBands()
-              }
-
               Text {
                 width: parent.width
-                text: "The preset is shown for reference and is not changed from here. Before any write, the earbuds' EQ state is saved to ~/.local/share/qcy-omarchy/backups/."
-                color: Qt.darker(root.foreground, 1.8)
+                visible: root.masterGainLocked
+                text: "Ajuste de ganho geral desativado: a gravação completa de 143 bytes ainda não foi validada em hardware."
+                color: Qt.darker(root.foreground, 1.5)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
-                font.italic: true
                 wrapMode: Text.WordWrap
               }
             }
 
-            PanelSeparator { foreground: root.foreground }
+            Text {
+              width: parent.width
+              visible: !root.rep
+              text: Qcy.loading ? "Lendo os fones…" : "Abra o painel com os fones conectados para ver a curva atual."
+              color: Qt.darker(root.foreground, 1.5)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
+            }
 
-            // ---- Tone ----
+            // ---- Protected slot warning ----
+            Card {
+              width: parent.width
+              visible: root.slotProtected
+
+              Text {
+                width: parent.width
+                text: "Efeito de fábrica ou seu custom está ativo (slot " + root.activeSlot
+                  + "). Para não sobrescrever, a biblioteca não aplica enquanto o slot 6 ou 11 estiver ativo."
+                color: Color.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WordWrap
+              }
+            }
+
+            // ---- Library ----
             Column {
               width: parent.width
-              spacing: Style.space(12)
+              spacing: Style.space(8)
 
-              Item {
+              PanelSectionHeader {
+                text: "BIBLIOTECA"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              Text {
                 width: parent.width
-                // The whole row goes, label included. Hiding only the switch left
-                // a labelled 34px gap with nothing in it.
-                visible: root.has("spatial")
-                implicitHeight: spatialSwitch.implicitHeight
+                visible: Qcy.libraryError !== ""
+                text: Qcy.libraryError
+                color: Color.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WordWrap
+              }
 
-                Text {
-                  text: "Spatial audio"
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  anchors.left: parent.left
-                  anchors.right: spatialSwitch.left
-                  anchors.rightMargin: Style.space(10)
-                  anchors.verticalCenter: parent.verticalCenter
-                  elide: Text.ElideRight
-                }
+              Text {
+                width: parent.width
+                visible: Qcy.libraryError === "" && Qcy.library.length === 0
+                text: Qcy.libraryLoading || !Qcy.libraryLoaded
+                  ? "Carregando a biblioteca…"
+                  : "A biblioteca está vazia. Salve a curva atual abaixo."
+                color: Qt.darker(root.foreground, 1.5)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WordWrap
+              }
 
-                ToggleSwitch {
-                  id: spatialSwitch
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  // Hidden when the device does not answer the spatial query,
-                  // rather than offering a switch that does nothing.
-                  checked: root.toggleState("spatial")
-                  foreground: root.foreground
-                  accent: root.accent
-                  onToggled: {
-                    root.setToggle("spatial", "Spatial audio", !root.toggleState("spatial"))
+              Grid {
+                id: libGrid
+                width: parent.width
+                columns: 2
+                columnSpacing: Style.space(8)
+                rowSpacing: Style.space(8)
+
+                Repeater {
+                  model: Qcy.library
+                  CurveCard {
+                    required property var modelData
+                    entry: modelData
+                    cardWidth: (libGrid.width - Style.space(8)) / 2
+                    canApply: root.canApplyLibrary
+                    live: root.entryIsLive(modelData)
+                    phase: Qcy.libraryOp.kind === "apply" && Qcy.libraryOp.id === modelData.id
+                      ? Qcy.libraryOp.phase : "idle"
+                    confirmingDelete: root.pendingDeleteId === modelData.id
+                    deleteBlocked: Qcy.libraryOp.phase === "running"
+                    onApplyRequested: {
+                      root.pendingDeleteId = ""
+                      Qcy.libraryApply(modelData.id)
+                    }
+                    onDeleteAsked: root.pendingDeleteId = modelData.id
+                    onDeleteCancelled: root.pendingDeleteId = ""
+                    onDeleteConfirmed: {
+                      root.pendingDeleteId = ""
+                      Qcy.libraryDelete(modelData.id)
+                    }
                   }
                 }
               }
 
+              // Result of the last library operation, with the backup path
+              // when the write was sent but not confirmed.
+              Text {
+                width: parent.width
+                visible: root.opText() !== ""
+                text: root.opText()
+                color: Qcy.libraryOp.phase === "error" ? Color.urgent : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WrapAnywhere
+              }
+            }
+
+            // ---- Save current curve ----
+            Column {
+              width: parent.width
+              spacing: Style.space(8)
+
+              Chip {
+                visible: !root.saveOpen
+                opacity: root.canSaveCurrent ? 1.0 : 0.5
+                label: "Salvar curva atual na biblioteca"
+                onClicked: {
+                  if (!root.canSaveCurrent) return
+                  root.saveOpen = true
+                  nameField.forceActiveFocus()
+                }
+              }
+
+              Column {
+                width: parent.width
+                spacing: Style.space(8)
+                visible: root.saveOpen
+
+                TextField {
+                  id: nameField
+                  width: parent.width
+                  placeholderText: "Nome da curva"
+                  maximumLength: 40
+                  foreground: root.foreground
+                  accent: root.accent
+                  onAccepted: root.submitSave(text)
+                  Keys.onEscapePressed: root.saveOpen = false
+                }
+
+                Row {
+                  spacing: Style.space(8)
+                  Chip {
+                    label: "Salvar"
+                    active: root.nameValid(nameField.text)
+                    onClicked: root.submitSave(nameField.text)
+                  }
+                  Chip {
+                    label: "Cancelar"
+                    onClicked: root.saveOpen = false
+                  }
+                }
+              }
+            }
+          }
+
+          // =====================================================================
+          // AJUSTES
+          // =====================================================================
+          Column {
+            visible: root.tab === 2
+            width: parent.width
+            spacing: Style.space(14)
+
+            // ---- Advanced noise scenes ----
+            Column {
+              width: parent.width
+              spacing: Style.space(8)
+              visible: root.has("anc")
+
+              PanelSectionHeader {
+                text: "CENAS DE CANCELAMENTO"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              Flow {
+                width: parent.width
+                spacing: Style.space(8)
+
+                Repeater {
+                  model: root.ancModes
+                  Chip {
+                    required property var modelData
+                    label: modelData.label
+                    active: root.currentAnc() === modelData.key
+                    onClicked: root.setAnc(modelData.key)
+                  }
+                }
+              }
+
+              // Adaptive and anti-wind read back 0 whatever is written, so the
+              // dial is hidden for them rather than shown doing nothing.
+              ChoiceRow {
+                width: parent.width
+                visible: root.ancStrengthApplies
+                label: "Intensidade"
+                model: root.ancStrengthChoices
+                current: String(root.ancStrength)
+                onPicked: function (v) { root.setAncStrength(Number(v)) }
+              }
+            }
+
+            // ---- Functions: one list, one row each ----
+            Card {
+              width: parent.width
+
+              Repeater {
+                model: root.toggleDefs
+                ToggleRow {
+                  required property var modelData
+                  width: parent.width
+                  label: modelData.label
+                  hint: modelData.hint
+                  checked: root.toggleState(modelData.key)
+                  onToggled: root.setToggle(modelData.key, modelData.label, !root.toggleState(modelData.key))
+                }
+              }
+
+              ToggleRow {
+                width: parent.width
+                visible: root.has("spatial")
+                label: "Áudio espacial"
+                hint: ""
+                checked: root.toggleState("spatial")
+                onToggled: root.setToggle("spatial", "Áudio espacial", !root.toggleState("spatial"))
+              }
+            }
+
+            // ---- Audio ----
+            Card {
+              width: parent.width
+
               SliderRow {
                 width: parent.width
-                label: "Balance"
+                label: "Balanço"
                 minimum: 0
                 maximum: 100
                 step: 1
                 suffix: "%"
                 value: root.sliderValue("balance", 50)
-                onReleased: function (v) { root.commitSlider("balance", "Balance", function (n) { return ["balance", String(Math.round(n))] }, Math.round(v)) }
+                onReleased: function (v) { root.commitSlider("balance", "Balanço", function (n) { return ["balance", String(Math.round(n))] }, Math.round(v)) }
               }
 
-              // The device reports its prompt volume as 0..max; the slider follows
-              // that range instead of the CLI's 0-255, which this firmware ignores.
+              // The device reports its prompt volume as 0..max; the slider
+              // follows that range instead of the CLI's 0-255.
               SliderRow {
                 width: parent.width
-                // The probe answered "unsupported" for this firmware, so the
-                // slider would be a control the device ignores.
                 visible: root.has("promptVol")
-                label: "Prompt volume"
+                label: "Volume dos avisos"
                 minimum: 0
                 maximum: root.promptMax()
                 step: 1
                 value: root.sliderValue("promptVolume", 6)
-                onReleased: function (v) { root.commitSlider("promptVolume", "Prompt volume", function (n) { return ["prompt-vol", String(Math.round(n))] }, Math.round(v)) }
+                onReleased: function (v) { root.commitSlider("promptVolume", "Volume dos avisos", function (n) { return ["prompt-vol", String(Math.round(n))] }, Math.round(v)) }
               }
 
               ChoiceRow {
                 width: parent.width
-                label: "Auto power-off"
+                label: "Desligamento automático"
                 model: root.autoOffChoices
                 current: root.currentAutoOff()
                 onPicked: function (v) { root.setAutoOff(v) }
               }
             }
 
-            PanelSeparator { foreground: root.foreground }
-
             // ---- Fit ----
-            Item {
+            Card {
               width: parent.width
-              implicitHeight: fitButton.implicitHeight
               visible: root.has("fit")
 
-              Text {
-                text: "Ear-tip fit check"
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-              }
+              Item {
+                width: parent.width
+                implicitHeight: fitButton.implicitHeight
 
-              Chip {
-                id: fitButton
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                label: root.fitRunning ? "Playing…" : "Start"
-                active: root.fitRunning
-                onClicked: {
-                  if (Qcy.settling) return
-                  root.startFit()
+                Text {
+                  text: "Teste de vedação das pontas"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Chip {
+                  id: fitButton
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  label: root.fitRunning ? "Tocando…" : "Iniciar"
+                  active: root.fitRunning
+                  onClicked: {
+                    if (Qcy.settling) return
+                    root.startFit()
+                  }
                 }
               }
             }
-          }
 
-          PanelSeparator {
-            visible: root.tab === 1 && !!root.rep
-            foreground: root.foreground
-          }
-
-          // ---------- Touch controls ----------
-          // The remap table as read back from characteristic 000D. Read-only for
-          // now: a full gesture editor needs the function-id vocabulary, which
-          // is device-side and undocumented.
-          Column {
-            // Tab 2: only this section shows on the active tab.
-            visible: root.tab === 2 && root.touchRows().length > 0
-            width: parent.width
-            spacing: Style.space(8)
-
-            PanelSectionHeader {
-              text: "TOUCH CONTROLS"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            // Column-major via Grid: each cell is an independent row that sizes
-            // itself, so the action text can elide instead of spilling over its
-            // neighbour. The previous version hard-coded the cell width, which is
-            // what made the labels overlap.
-            Grid {
-              id: touchGrid
+            // ---- Touch controls (read-only) ----
+            Column {
+              visible: root.touchRows().length > 0
               width: parent.width
-              columns: 2
-              columnSpacing: Style.space(20)
-              rowSpacing: Style.space(7)
+              spacing: Style.space(8)
 
-              Repeater {
-                model: root.touchRows()
-                TouchCell {
-                  required property var modelData
-                  slot: modelData.slot
-                  action: modelData.action
-                  cellWidth: (touchGrid.width - Style.space(20)) / 2
+              PanelSectionHeader {
+                text: "CONTROLES DE TOQUE"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              Grid {
+                id: touchGrid
+                width: parent.width
+                columns: 2
+                columnSpacing: Style.space(20)
+                rowSpacing: Style.space(7)
+
+                Repeater {
+                  model: root.touchRows()
+                  TouchCell {
+                    required property var modelData
+                    slot: modelData.slot
+                    action: modelData.action
+                    cellWidth: (touchGrid.width - Style.space(20)) / 2
+                  }
                 }
+              }
+            }
+
+            // ---- Device ----
+            Column {
+              width: parent.width
+              spacing: Style.space(8)
+
+              PanelSectionHeader {
+                text: "APARELHO"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              StatRow {
+                width: parent.width
+                label: "Modelo"
+                value: root.modelName
+              }
+              StatRow {
+                width: parent.width
+                label: "Firmware"
+                value: root.rep && root.rep.firmware && root.rep.firmware.left
+                  ? root.rep.firmware.left : "—"
               }
             }
           }
 
-          PanelSeparator {
-            visible: root.tab === 2
-            foreground: root.foreground
-          }
-
-          // ---------- Device info ----------
-          // Model and firmware only. The EQ preset used to be listed here as
-          // well as on the Sound tab; it belongs with the curve it describes, so
-          // this block carries nothing but static facts about the hardware.
-          Column {
-            visible: root.tab === 2
-            width: parent.width
-            spacing: Style.space(8)
-
-            PanelSectionHeader {
-              text: "DEVICE"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            StatRow {
-              width: column.width
-              label: "Model"
-              value: root.modelName
-            }
-            StatRow {
-              width: column.width
-              label: "Firmware"
-              value: root.rep && root.rep.firmware && root.rep.firmware.left
-                ? root.rep.firmware.left : "—"
-            }
-          }
-
-          PanelSeparator {
-            visible: root.tab === 2
-            foreground: root.foreground
-          }
-
-          // ---------- Actions ----------
+          // ---------- Footer (all tabs) ----------
           Row {
             spacing: Style.space(8)
 
             Chip {
-              label: Qcy.loading ? "Reading…" : "Refresh"
+              label: Qcy.loading ? "Lendo…" : "Atualizar"
               active: Qcy.loading
               onClicked: if (!Qcy.loading) Qcy.refresh()
             }
@@ -1159,19 +1370,6 @@ Panel {
             wrapMode: Text.WordWrap
             width: parent.width
           }
-
-          // Behaviour notes, so the "why is there no sound" questions have an
-          // answer in the panel rather than only in the commit log.
-          Text {
-            text: root.notes
-            color: Qt.darker(root.foreground, 1.7)
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            font.italic: true
-            wrapMode: Text.WordWrap
-            lineHeight: 1.25
-            width: parent.width
-          }
         }
       }
     }
@@ -1191,6 +1389,7 @@ Panel {
       ? Style.selectedFillFor(root.foreground, root.accent)
       : (chipMouse.containsMouse ? Style.hoverFillFor(root.foreground, root.accent) : "transparent")
     borderSpec: Border.controlSpec(chip.active ? "selected" : "normal", root.foreground, root.accent)
+    Behavior on color { ColorAnimation { duration: 120 } }
 
     Text {
       id: chipLabel
@@ -1272,7 +1471,7 @@ Panel {
       color: Qt.darker(root.foreground, 1.3)
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
-      width: Style.space(44)
+      width: Style.space(52)
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
     }
@@ -1340,13 +1539,15 @@ Panel {
   component EqCurve: Item {
     id: curve
     required property var bands
+    // Mini version for library cards: no frequency labels, shorter plot.
+    property bool compact: false
 
     readonly property real maxGain: 10
     // The plot stops short of the bottom so the band labels have room INSIDE
     // this item. They used to be anchored to the delegate's bottom edge, which
     // put them ~2px past `height` and on top of whatever followed.
-    readonly property real plotHeight: Style.spacing.controlHeight * 1.6
-    readonly property int labelHeight: Math.ceil(Style.font.caption * 0.85) + Style.space(2)
+    readonly property real plotHeight: Style.spacing.controlHeight * (curve.compact ? 0.9 : 1.6)
+    readonly property int labelHeight: curve.compact ? 0 : Math.ceil(Style.font.caption * 0.85) + Style.space(2)
     implicitHeight: plotHeight + labelHeight
 
     Rectangle {
@@ -1379,7 +1580,7 @@ Panel {
           readonly property real gainDb: Math.max(-curve.maxGain, Math.min(curve.maxGain, Number(modelData.gain) || 0))
           readonly property real barHeight: Math.abs(gainDb) / curve.maxGain * (parent.height / 2)
           anchors.horizontalCenter: parent.horizontalCenter
-          width: Math.max(2, parent.width - Style.space(6))
+          width: Math.max(2, parent.width - Style.space(curve.compact ? 2 : 6))
           height: Math.max(1, barHeight)
           y: gainDb >= 0 ? parent.height / 2 - height : parent.height / 2
           radius: 2
@@ -1389,6 +1590,7 @@ Panel {
         Text {
           // `root` here is the enclosing panel, exactly as it is everywhere
           // else in this file: an inline component does NOT shadow it.
+          visible: !curve.compact
           readonly property int hz: modelData.freq || 0
           text: hz >= 1000
             ? ((hz % 1000 === 0 ? (hz / 1000) : (hz / 1000).toFixed(1)) + "k")
@@ -1543,6 +1745,7 @@ Panel {
       : "transparent"
     borderSpec: Border.controlSpec(
       tabBtn.active ? "selected" : "normal", root.foreground, root.accent)
+    Behavior on color { ColorAnimation { duration: 120 } }
 
     Text {
       anchors.centerIn: parent
@@ -1558,6 +1761,257 @@ Panel {
       anchors.fill: parent
       cursorShape: Qt.PointingHandCursor
       onClicked: root.tab = tabBtn.index
+    }
+  }
+
+  // A rounded surface with a faint fill; children are laid out in a column
+  // with generous padding. `active` gives it the selected highlight.
+  component Card: BorderSurface {
+    id: card
+    property bool active: false
+    property real inset: Style.space(12)
+    default property alias content: cardBody.data
+
+    implicitHeight: cardBody.implicitHeight + card.inset * 2
+    radius: Style.cornerRadius
+    color: card.active ? Style.selectedFillFor(root.foreground, root.accent) : root.cardFill
+    borderSpec: Border.controlSpec(card.active ? "selected" : "normal", root.foreground, root.accent)
+    Behavior on color { ColorAnimation { duration: 120 } }
+
+    Column {
+      id: cardBody
+      x: card.inset
+      y: card.inset
+      width: card.width - card.inset * 2
+      spacing: Style.space(10)
+    }
+  }
+
+  // A big square-ish mode button: glyph over label.
+  component ModeButton: BorderSurface {
+    id: mb
+    required property string label
+    required property string glyph
+    property bool active: false
+    property real btnWidth: 0
+    signal clicked()
+
+    width: mb.btnWidth
+    implicitHeight: Style.spacing.controlHeight * 2
+    radius: Style.cornerRadius
+    color: mb.active
+      ? Style.selectedFillFor(root.foreground, root.accent)
+      : (mbMouse.containsMouse ? Style.hoverFillFor(root.foreground, root.accent) : root.cardFill)
+    borderSpec: Border.controlSpec(mb.active ? "selected" : "normal", root.foreground, root.accent)
+    Behavior on color { ColorAnimation { duration: 120 } }
+
+    Column {
+      anchors.centerIn: parent
+      width: parent.width - Style.space(8)
+      spacing: Style.space(4)
+
+      Text {
+        width: parent.width
+        text: mb.glyph
+        color: mb.active ? root.accent : root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.title * 1.5
+        horizontalAlignment: Text.AlignHCenter
+      }
+      Text {
+        width: parent.width
+        text: mb.label
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        font.bold: mb.active
+        elide: Text.ElideRight
+        horizontalAlignment: Text.AlignHCenter
+      }
+    }
+
+    MouseArea {
+      id: mbMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: mb.clicked()
+    }
+  }
+
+  // A settings row: label (level one) with an optional hint (level two) and a
+  // switch on the right.
+  component ToggleRow: Item {
+    id: trow
+    required property string label
+    property string hint: ""
+    property bool checked: false
+    signal toggled()
+
+    implicitHeight: Math.max(trowText.implicitHeight, trowSwitch.implicitHeight)
+
+    Column {
+      id: trowText
+      anchors.left: parent.left
+      anchors.right: trowSwitch.left
+      anchors.rightMargin: Style.space(10)
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(2)
+
+      Text {
+        width: parent.width
+        text: trow.label
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        elide: Text.ElideRight
+      }
+      Text {
+        width: parent.width
+        visible: trow.hint !== ""
+        text: trow.hint
+        color: Qt.darker(root.foreground, 1.6)
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        wrapMode: Text.WordWrap
+      }
+    }
+
+    // Deliberately not bound to `busy`: Qcy.set() queues rather than drops, so
+    // overlapping clicks are safe (see the note in the old toggle grid).
+    ToggleSwitch {
+      id: trowSwitch
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      checked: trow.checked
+      foreground: root.foreground
+      accent: root.accent
+      onToggled: trow.toggled()
+    }
+  }
+
+  // One library curve. Clicking applies it; it is disabled (with the reason in
+  // a small line) when it cannot be written or the active slot is protected.
+  component CurveCard: BorderSurface {
+    id: cc
+    required property var entry
+    property real cardWidth: 0
+    property bool canApply: false
+    property bool live: false
+    // idle | running | ok | unconfirmed | error — this card's own apply state.
+    property string phase: "idle"
+    property bool confirmingDelete: false
+    property bool deleteBlocked: false
+    signal applyRequested()
+    signal deleteAsked()
+    signal deleteCancelled()
+    signal deleteConfirmed()
+
+    readonly property bool entryApplyable: cc.entry.applyable === true
+    readonly property bool usable: cc.canApply && cc.entryApplyable
+    readonly property bool isUser: cc.entry.source === "user"
+    readonly property real master: Number(cc.entry.masterGain) || 0
+
+    width: cc.cardWidth
+    implicitHeight: ccBody.implicitHeight + Style.space(24)
+    radius: Style.cornerRadius
+    opacity: (cc.usable || cc.phase !== "idle" || cc.live) ? 1.0 : 0.55
+    color: (cc.live || cc.phase === "ok")
+      ? Style.selectedFillFor(root.foreground, root.accent)
+      : ((ccMouse.containsMouse && cc.usable) ? Style.hoverFillFor(root.foreground, root.accent) : root.cardFill)
+    borderSpec: Border.controlSpec((cc.live || cc.phase === "ok") ? "selected" : "normal", root.foreground, root.accent)
+    Behavior on color { ColorAnimation { duration: 120 } }
+    Behavior on opacity { NumberAnimation { duration: 120 } }
+
+    MouseArea {
+      id: ccMouse
+      anchors.fill: parent
+      enabled: cc.usable
+      hoverEnabled: true
+      cursorShape: cc.usable ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onClicked: cc.applyRequested()
+    }
+
+    Column {
+      id: ccBody
+      x: Style.space(12)
+      y: Style.space(12)
+      width: cc.width - Style.space(24)
+      spacing: Style.space(6)
+
+      Text {
+        width: parent.width
+        text: cc.entry.name
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        font.bold: true
+        elide: Text.ElideRight
+      }
+
+      Text {
+        width: parent.width
+        text: root.sourceLabel(cc.entry.source) + " · " + cc.entry.nBands + " bandas · "
+          + (cc.master >= 0 ? "+" : "") + cc.master.toFixed(1) + " dB"
+        color: Qt.darker(root.foreground, 1.5)
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        elide: Text.ElideRight
+      }
+
+      EqCurve {
+        width: parent.width
+        bands: cc.entry.bands
+        compact: true
+      }
+
+      Text {
+        width: parent.width
+        visible: text !== ""
+        text: {
+          if (cc.phase === "running") return "Aplicando…"
+          if (cc.phase === "ok") return "Aplicado (confirmado)"
+          if (cc.phase === "unconfirmed") return "Gravado, mas o aparelho não confirmou"
+          if (cc.phase === "error") return "Falhou"
+          if (!cc.entryApplyable) return root.reasonText(cc.entry.applyableReason)
+          if (cc.live) return "Em uso"
+          return ""
+        }
+        color: (cc.phase === "error" || cc.phase === "unconfirmed") ? Color.urgent : Qt.darker(root.foreground, 1.3)
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        wrapMode: Text.WordWrap
+      }
+
+      Row {
+        visible: cc.isUser && cc.phase !== "running"
+        spacing: Style.space(6)
+
+        Chip {
+          visible: !cc.confirmingDelete
+          opacity: cc.deleteBlocked ? 0.5 : 1.0
+          label: "Excluir"
+          onClicked: if (!cc.deleteBlocked) cc.deleteAsked()
+        }
+        Text {
+          visible: cc.confirmingDelete
+          anchors.verticalCenter: parent.verticalCenter
+          text: "Excluir?"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+        Chip {
+          visible: cc.confirmingDelete
+          label: "Sim"
+          onClicked: cc.deleteConfirmed()
+        }
+        Chip {
+          visible: cc.confirmingDelete
+          label: "Não"
+          onClicked: cc.deleteCancelled()
+        }
+      }
     }
   }
 

@@ -65,6 +65,11 @@ or move it into place with `omarchy bar move io.github.bbztp.qcy --section right
 The full state is read on connect and when the panel opens; the panel shows
 `Reading…` while it does.
 
+The panel has three tabs: **Status** (battery, connection state, noise mode),
+**Som** (live EQ curve and the curve library: clicking a card runs
+`qcyctl library apply <id> --yes`; it is disabled while slot 6 or 11 is active)
+and **Ajustes** (noise scenes, toggles, balance, touch controls, device info).
+
 ## Settings
 
 Configurable per widget in `shell.json` (or via the shell's settings UI):

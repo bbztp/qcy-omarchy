@@ -72,14 +72,14 @@ Singleton {
   // Age in seconds of a status served from the daemon's cache, or -1 when the
   // report on screen is fresh.
   property int staleAgeSeconds: -1
-  readonly property string busyMessage: "Earbuds are in use by another app \u2014 close it and refresh"
+  readonly property string busyMessage: "Os fones est\u00e3o em uso por outro app \u2014 feche-o e atualize"
   property double updatedAt: 0     // Date.now() of the last successful read
   property string busyAction: ""   // label of an in-flight setter, for UI feedback
 
   // True from the moment a click is accepted until its setter has exited.
   // Reads are dropped while this holds, and the UI uses it to ignore clicks
   // that would arrive while a previous setter is still going out.
-  readonly property bool settling: setProc.running || _pendingSet !== null
+  readonly property bool settling: setProc.running || _pendingSet !== null || _run !== null
 
   // Only one qcyctl may touch the LE adapter at a time (see note in connectQCY).
   // Reads are low priority and run in the background; a user action PREEMPTS a
@@ -105,8 +105,13 @@ Singleton {
   // one instead of being dropped: the first click of a session also has to pay
   // the daemon's lazy LE connect, and silently swallowing the clicks made during
   // that window is what made the panel feel stuck. Last click wins.
-  function set(action, args) {
-    _pendingSet = { action: action, args: args }
+  //
+  // `done` (optional) is called once with (exitCode, stdout, stderr) after the
+  // setter has exited and both streams have ended; exitCode -1 means the
+  // command never ran (replaced by a later click, or the earbuds went away).
+  function set(action, args, done) {
+    _dropPending("replaced")
+    _pendingSet = { action: action, args: args, done: done ? done : null }
     if (statusProc.running || batteryProc.running) {
       if (statusProc.running) { statusProc.signal(9); statusProc.running = false }
       if (batteryProc.running) { batteryProc.signal(9); batteryProc.running = false }
@@ -114,9 +119,21 @@ Singleton {
       _drain()
     }
   }
-  function _startSet(action, args) {
+  function _dropPending(why) {
+    var p = _pendingSet
+    _pendingSet = null
+    if (p && p.done) {
+      try { p.done(-1, "", why) } catch (e) { console.warn("qcy: callback failed:", e) }
+    }
+  }
+
+  // The run whose callback is waiting for exit + both streams, or null.
+  property var _run: null
+
+  function _startSet(action, args, done) {
     error = ""
     busyAction = action
+    _run = done ? { done: done, exit: -1, out: "", err: "", haveExit: false, haveOut: false, haveErr: false } : null
     setProc.command = [root.binary].concat(args, [String(root.scanSeconds)])
     setProc.running = true
   }
@@ -137,10 +154,11 @@ Singleton {
   // Run the highest-priority queued work once the adapter is free.
   function _drain() {
     if (statusProc.running || setProc.running || batteryProc.running) return
+    if (_run !== null) return
     if (_pendingSet) {
       var s = _pendingSet
       _pendingSet = null
-      _startSet(s.action, s.args)
+      _startSet(s.action, s.args, s.done)
       return
     }
     if (_wantBattery && connected) pollBattery()
@@ -158,13 +176,13 @@ Singleton {
         var age = Math.max(0, Math.round(Number(report.ageSeconds) || 0))
         staleAgeSeconds = age
         busy = true
-        error = busyMessage + " (showing the last reading, " + age + " s old)"
+        error = busyMessage + " (mostrando a \u00faltima leitura, de " + age + " s atr\u00e1s)"
       } else {
         staleAgeSeconds = -1
         busy = false
       }
     } catch (e) {
-      error = "Could not parse qcyctl output"
+      error = "N\u00e3o foi poss\u00edvel ler a sa\u00edda do qcyctl"
     }
   }
 
@@ -233,7 +251,7 @@ Singleton {
       busy = false
       staleAgeSeconds = -1
       _wantBattery = false
-      _pendingSet = null
+      _dropPending("disconnected")
     }
   }
 
@@ -252,7 +270,7 @@ Singleton {
         root.error = root.busyMessage
       } else if (failed && root.report === null) {
         root.busy = false
-        root.error = "Could not read the earbuds (exit " + exitCode + ")"
+        root.error = "N\u00e3o foi poss\u00edvel ler os fones (c\u00f3digo " + exitCode + ")"
       }
       if (failed) root._scheduleRetry(wasBusy)
       else if (exitCode === 0 && !root.busy) root._retryCount = 0
@@ -283,17 +301,63 @@ Singleton {
           root.busy = true
           root.error = root.busyMessage
         } else {
-          root.error = "Command failed (exit " + exitCode + ")"
+          // A caller with a callback explains the failure itself.
+          if (root._run === null) root.error = "O comando falhou (c\u00f3digo " + exitCode + ")"
         }
         root.setFailed()
         // No immediate re-read when the earbuds are held elsewhere: that would
         // clear the message and only contest the link again.
         if (!wasBusy) root.refresh()
       }
+      if (root._run !== null) {
+        root._run.exit = exitCode
+        root._run.haveExit = true
+        joinTimer.restart()
+        root._joinRun()
+      }
       root._drain()
     }
-    stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { id: setErr; waitForEnd: true }
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (root._run !== null) {
+          root._run.out = text
+          root._run.haveOut = true
+          root._joinRun()
+        }
+      }
+    }
+    stderr: StdioCollector {
+      id: setErr
+      waitForEnd: true
+      onStreamFinished: {
+        if (root._run !== null) {
+          root._run.err = text
+          root._run.haveErr = true
+          root._joinRun()
+        }
+      }
+    }
+  }
+
+  // Delivers a setter's result once exit and both streams have all arrived;
+  // whichever of the three comes last triggers it. The timer is a safety net
+  // for a stream that never reports its end.
+  function _joinRun(force) {
+    var r = _run
+    if (r === null) return
+    if (!force && !(r.haveExit && r.haveOut && r.haveErr)) return
+    joinTimer.stop()
+    _run = null
+    try { r.done(r.exit, r.out, r.err) } catch (e) { console.warn("qcy: callback failed:", e) }
+    _drain()
+  }
+
+  Timer {
+    id: joinTimer
+    interval: 3000
+    repeat: false
+    onTriggered: root._joinRun(true)
   }
 
   Process {
@@ -307,5 +371,214 @@ Singleton {
       waitForEnd: true
       onStreamFinished: root._applyBattery(text)
     }
+  }
+
+  // ------------------------------------------------------- curve library
+  //
+  // `qcyctl library list/seed/delete` are offline (files only, never the
+  // daemon), so they run on their own process and may overlap Bluetooth work.
+  // `apply` and `import-device` talk to the earbuds and go through set(), so
+  // they queue with the other setters.
+
+  property var library: []          // parsed `library list --json`
+  property bool libraryLoaded: false
+  property bool libraryLoading: false
+  property string libraryError: ""
+  property bool _seeded: false
+
+  // Last library operation, for the panel to show:
+  //   kind: apply | save | delete
+  //   phase: idle | running | ok | unconfirmed | error
+  property var libraryOp: ({ kind: "", phase: "idle", id: "", message: "", backup: "" })
+
+  function _setOp(kind, phase, id, message, backup) {
+    libraryOp = { kind: kind, phase: phase, id: id || "", message: message || "", backup: backup || "" }
+  }
+
+  function _parseJson(text) {
+    var t = text ? String(text).trim() : ""
+    if (t === "") return null
+    try { return JSON.parse(t) } catch (e) { return null }
+  }
+
+  // Last meaningful stderr line, for messages when there is no JSON.
+  function _lastLine(text) {
+    var lines = String(text || "").split("\n")
+    for (var i = lines.length - 1; i >= 0; i--) {
+      var l = lines[i].trim()
+      if (l !== "") return l
+    }
+    return ""
+  }
+
+  property var _offQueue: []
+  property var _offRun: null
+
+  function runOffline(args, done) {
+    _offQueue = _offQueue.concat([{ args: args, done: done }])
+    _offNext()
+  }
+
+  function _offNext() {
+    if (offProc.running || _offRun !== null || _offQueue.length === 0) return
+    var j = _offQueue[0]
+    _offQueue = _offQueue.slice(1)
+    _offRun = { done: j.done, exit: -1, out: "", err: "", haveExit: false, haveOut: false, haveErr: false }
+    offProc.command = [root.binary].concat(j.args)
+    offTimer.restart()
+    offProc.running = true
+  }
+
+  function _offJoin(force) {
+    var r = _offRun
+    if (r === null) return
+    if (!force && !(r.haveExit && r.haveOut && r.haveErr)) return
+    offTimer.stop()
+    _offRun = null
+    try { if (r.done) r.done(r.exit, r.out, r.err) } catch (e) { console.warn("qcy: callback failed:", e) }
+    _offNext()
+  }
+
+  Process {
+    id: offProc
+    onExited: function (exitCode) {
+      if (root._offRun !== null) {
+        root._offRun.exit = exitCode
+        root._offRun.haveExit = true
+        root._offJoin()
+      }
+    }
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (root._offRun !== null) {
+          root._offRun.out = text
+          root._offRun.haveOut = true
+          root._offJoin()
+        }
+      }
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (root._offRun !== null) {
+          root._offRun.err = text
+          root._offRun.haveErr = true
+          root._offJoin()
+        }
+      }
+    }
+  }
+
+  // Offline commands finish in milliseconds; this only guards a binary that
+  // never started.
+  Timer {
+    id: offTimer
+    interval: 15000
+    repeat: false
+    onTriggered: {
+      if (offProc.running) offProc.signal(9)
+      root._offJoin(true)
+    }
+  }
+
+  // Reload the list. On a first, empty library, seed it once (idempotent) and
+  // read again.
+  function libraryReload() {
+    libraryLoading = true
+    runOffline(["library", "list", "--json"], function (code, out, err) {
+      var arr = root._parseJson(out)
+      if (code !== 0 || !Array.isArray(arr)) {
+        root.libraryLoading = false
+        root.libraryError = root._lastLine(err) || "Não foi possível ler a biblioteca"
+        return
+      }
+      if (arr.length === 0 && !root._seeded) {
+        root._seeded = true
+        root.runOffline(["library", "seed", "--json"], function (c2, o2, e2) {
+          root.libraryLoading = false
+          // Whatever seed said, show what is there now.
+          root.libraryReload()
+        })
+        return
+      }
+      root.libraryError = ""
+      root.library = arr
+      root.libraryLoaded = true
+      root.libraryLoading = false
+    })
+  }
+
+  // Writes the curve to slot 0 and makes it active. Never passes
+  // --allow-protected nor --full-length: the backend refuses what is unsafe.
+  function libraryApply(id) {
+    if (libraryOp.phase === "running") return
+    _setOp("apply", "running", id, "", "")
+    set("Aplicar curva", ["library", "apply", id, "--yes", "--json"], function (code, out, err) {
+      var j = root._parseJson(out)
+      if (code === 0 && j && j.confirmed === true) {
+        root._setOp("apply", "ok", id, "", j.backup || "")
+        root.refresh()
+        return
+      }
+      if (code === -1) {
+        root._setOp("apply", "error", id, "Cancelado: outra ação foi enviada ou os fones saíram de alcance.", "")
+        return
+      }
+      var backup = j && j.backup ? j.backup : ""
+      if (j && j.code === "unconfirmed") {
+        root._setOp("apply", "unconfirmed", id, j.error || "", backup)
+        root.refresh()
+        return
+      }
+      var msg
+      if (j && j.code === "protected_slot")
+        msg = "O slot ativo é protegido (6 ou 11); nada foi gravado."
+      else if (j && j.code === "full_length_required")
+        msg = "Esta curva precisa do formato de 143 bytes, ainda não validado; nada foi gravado."
+      else if (j && j.code === "busy" || root._isBusyText(err))
+        msg = root.busyMessage
+      else if (j && j.code === "not_found")
+        msg = "Fones não encontrados (desligados ou fora de alcance)."
+      else
+        msg = (j && j.error) ? j.error : (root._lastLine(err) || ("O comando falhou (código " + code + ")"))
+      root._setOp("apply", "error", id, msg, backup)
+    })
+  }
+
+  // Saves the EQ the earbuds are using now as a new library curve.
+  function libraryImportDevice(name) {
+    if (libraryOp.phase === "running") return
+    _setOp("save", "running", "", "", "")
+    set("Salvar curva", ["library", "import-device", name, "--json"], function (code, out, err) {
+      var j = root._parseJson(out)
+      if (code === 0 && j && j.id) {
+        root._setOp("save", "ok", j.id, "", "")
+        root.libraryReload()
+        return
+      }
+      var msg = code === -1
+        ? "Cancelado: outra ação foi enviada ou os fones saíram de alcance."
+        : (root._isBusyText(err) ? root.busyMessage : (root._lastLine(err) || ("O comando falhou (código " + code + ")")))
+      root._setOp("save", "error", "", msg, "")
+    })
+  }
+
+  // Moves a user curve to the library's .trash (recoverable by hand).
+  function libraryDelete(id) {
+    if (libraryOp.phase === "running") return
+    _setOp("delete", "running", id, "", "")
+    runOffline(["library", "delete", id, "--yes"], function (code, out, err) {
+      if (code === 0) {
+        root._setOp("delete", "ok", id, "", "")
+        root.libraryReload()
+      } else {
+        root._setOp("delete", "error", id, root._lastLine(err) || ("O comando falhou (código " + code + ")"), "")
+      }
+    })
+  }
+
+  function libraryClearOp() {
+    if (libraryOp.phase !== "running") _setOp("", "idle", "", "", "")
   }
 }
