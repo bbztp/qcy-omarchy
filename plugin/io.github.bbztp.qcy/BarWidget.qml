@@ -167,9 +167,36 @@ Panel {
     return t !== "" ? t : "Não pode ser aplicada."
   }
 
+  // Same rule as the backend Slug (qcycore/presets.go): the draft owns this id.
+  function nameSlug(n) {
+    var fold = { "á": "a", "à": "a", "â": "a", "ã": "a", "ä": "a",
+                 "é": "e", "è": "e", "ê": "e", "ë": "e",
+                 "í": "i", "ì": "i", "î": "i", "ï": "i",
+                 "ó": "o", "ò": "o", "ô": "o", "õ": "o", "ö": "o",
+                 "ú": "u", "ù": "u", "û": "u", "ü": "u", "ç": "c", "ñ": "n" }
+    var s = String(n || "").trim().toLowerCase()
+    var out = ""
+    var dash = true
+    for (var i = 0; i < s.length; i++) {
+      var c = fold[s.charAt(i)] || s.charAt(i)
+      if ((c >= "a" && c <= "z") || (c >= "0" && c <= "9")) {
+        out += c
+        dash = false
+      } else if (!dash) {
+        out += "-"
+        dash = true
+      }
+    }
+    return out.slice(0, 40).replace(/^-+|-+$/g, "")
+  }
+
+  function nameReserved(n) {
+    return nameSlug(n) === Qcy.draftId
+  }
+
   function nameValid(n) {
     var t = String(n || "").trim()
-    return t.length > 0 && t.length <= 40 && t.charAt(0) !== "-"
+    return t.length > 0 && t.length <= 40 && t.charAt(0) !== "-" && !nameReserved(t)
   }
 
   function submitSave(n) {
@@ -265,6 +292,8 @@ Panel {
 
   // Stops "listen" mode and any pending debounce (tab change, panel close).
   function stopListening() {
+    // A release is still pending: send the last value instead of dropping it.
+    if (listenTimer.running && root.editorHwOk) root.applyDraft()
     listenTimer.stop()
     root.listenLive = false
   }
@@ -1348,6 +1377,16 @@ Panel {
                 }
               }
 
+              Text {
+                width: parent.width
+                visible: root.nameReserved(editNameField.text)
+                text: "Nome reservado para o rascunho"
+                color: Color.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WordWrap
+              }
+
               Chip {
                 label: "Salvar na biblioteca"
                 active: root.nameValid(editNameField.text) && root.editorCanSave
@@ -1469,6 +1508,16 @@ Panel {
                   accent: root.accent
                   onAccepted: root.submitSave(text)
                   Keys.onEscapePressed: root.closeSave()
+                }
+
+                Text {
+                  width: parent.width
+                  visible: root.nameReserved(nameField.text)
+                  text: "Nome reservado para o rascunho"
+                  color: Color.urgent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  wrapMode: Text.WordWrap
                 }
 
                 Row {
@@ -2449,6 +2498,7 @@ Panel {
             onPressed: function (mouse) { dragArea.setFrom(mouse.y) }
             onPositionChanged: function (mouse) { if (dragArea.pressed) dragArea.setFrom(mouse.y) }
             onReleased: be.committed()
+            onCanceled: be.committed()
             onDoubleClicked: {
               be.edited(slot.index, 0)
               be.committed()

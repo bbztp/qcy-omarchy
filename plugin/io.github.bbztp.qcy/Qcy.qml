@@ -695,6 +695,7 @@ Singleton {
       } else {
         root._setOp("delete", "error", id, root._lastLine(err) || ("O comando falhou (código " + code + ")"), "")
       }
+      root._draftKick()
     })
   }
 
