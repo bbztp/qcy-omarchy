@@ -1782,7 +1782,8 @@ Panel {
   component EqCurve: Item {
     id: curve
     required property var bands
-    // Mini version for library cards: no frequency labels, shorter plot.
+    // Mini version for library cards: shorter plot, tiny frequency labels
+    // carved out of the plot's own height so the card does not grow.
     property bool compact: false
 
     readonly property real maxGain: 12
@@ -1790,14 +1791,17 @@ Panel {
     // this item. They used to be anchored to the delegate's bottom edge, which
     // put them ~2px past `height` and on top of whatever followed.
     readonly property real plotHeight: Style.spacing.controlHeight * (curve.compact ? 1.1 : 1.6)
+    readonly property real compactLabelPx: Style.font.caption * (curve.bands.length > 10 ? 0.5 : 0.6)
     readonly property int labelHeight: curve.compact ? 0 : Math.ceil(Style.font.caption * 0.85) + Style.space(2)
+    // Where the bars live: all of the plot, minus the label strip in compact mode.
+    readonly property real drawHeight: curve.compact ? curve.plotHeight - Math.ceil(curve.compactLabelPx) - 1 : curve.plotHeight
     implicitHeight: plotHeight + labelHeight
 
     Rectangle {
       id: zeroLine
       anchors.left: parent.left
       anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
+      y: curve.drawHeight / 2
       height: 1
       color: Qt.darker(root.foreground, 1.9)
     }
@@ -1814,7 +1818,7 @@ Panel {
 
         x: band.index * band.slotWidth
         width: band.slotWidth
-        height: curve.plotHeight
+        height: curve.drawHeight
 
         // Bar grows from the 0 dB line (vertical centre of the plot): up for
         // a boost, down for a cut, clamped to +-maxGain.
@@ -1828,6 +1832,22 @@ Panel {
           y: gainDb >= 0 ? parent.height / 2 - height : parent.height / 2
           radius: 2
           color: gainDb >= 0 ? root.accent : Qt.darker(root.foreground, 1.5)
+        }
+
+        Text {
+          // Compact cards: a tiny label under each mark (see drawHeight).
+          // Narrow slots: every 2nd or 3rd label only, so none runs into
+          // its neighbour.
+          visible: curve.compact && band.index % Math.max(1, Math.ceil(curve.compactLabelPx * 2.6 / band.slotWidth)) === 0
+          readonly property int hz: modelData.freq || 0
+          text: hz >= 1000
+            ? ((hz % 1000 === 0 ? (hz / 1000) : (hz / 1000).toFixed(1)) + "k")
+            : String(hz)
+          color: Qt.darker(root.foreground, 1.5)
+          font.family: root.fontFamily
+          font.pixelSize: curve.compactLabelPx
+          anchors.horizontalCenter: parent.horizontalCenter
+          y: curve.drawHeight + 1
         }
 
         Text {
@@ -2220,6 +2240,16 @@ Panel {
         font.pixelSize: Style.font.caption
         font.bold: cc.live
         elide: Text.ElideRight
+
+        // The effect's own overall gain, small, at the bottom right.
+        Text {
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          text: root.fmtDb(cc.entry.masterGain) + " dB"
+          color: Qt.darker(root.foreground, 1.4)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption * 0.85
+        }
       }
 
       // Small menu, in place of the curve while open.
