@@ -339,12 +339,24 @@ func TestLibraryApplyProtectedActiveSlotRefusedByApplyEq(t *testing.T) {
 	data := libEnv(t)
 	l, opened := useFakeLink(t, hexBytes(t, realClassico6)) // active slot 6
 	mustSave(t, "Ten", "--gains", tenFlat)
-	err := cmdLibrary([]string{"apply", "ten", "--yes"})
+	err := cmdLibrary([]string{"apply", "ten", "--yes", "--slot", "0"})
 	if !errors.Is(err, qcycore.ErrProtectedSlot) {
 		t.Fatalf("err = %v", err)
 	}
 	if *opened != 1 || len(l.writes) != 0 || backupFiles(t, data) != 0 {
 		t.Fatalf("opened %d, writes %d, backups %d", *opened, len(l.writes), backupFiles(t, data))
+	}
+}
+
+func TestLibraryApplyDefaultsToSlot255EvenWithProtectedActive(t *testing.T) {
+	libEnv(t)
+	l, _ := useFakeLink(t, hexBytes(t, realClassico6)) // active slot 6
+	mustSave(t, "Ten", "--gains", tenFlat)
+	if err := cmdLibrary([]string{"apply", "ten", "--yes"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if len(l.writes) != 1 || len(l.writes[0]) != qcycore.EqLen || l.writes[0][0] != 0xFF {
+		t.Fatalf("writes = %x", l.writes)
 	}
 }
 
@@ -355,7 +367,7 @@ func TestLibraryApplyTenBandsWrites73BytesToSlot0(t *testing.T) {
 	l, _ := useFakeLink(t, state)
 	mustSave(t, "Ten", "--gains", "1,2,3,4,5,6,7,8,-8,0", "--master", "2")
 	var err error
-	out := captureStdout(t, func() { err = cmdLibrary([]string{"apply", "ten", "--yes", "--json"}) })
+	out := captureStdout(t, func() { err = cmdLibrary([]string{"apply", "ten", "--yes", "--slot", "0", "--json"}) })
 	if len(l.writes) != 1 || len(l.writes[0]) != qcycore.EqLen || l.writes[0][0] != 0 {
 		t.Fatalf("writes = %x (err %v)", l.writes, err)
 	}
@@ -395,7 +407,7 @@ func TestLibraryApplyUnconfirmedReportsFalse(t *testing.T) {
 	l.echo = state // device keeps reporting slot 3
 	mustSave(t, "Ten", "--gains", tenFlat)
 	var err error
-	out := captureStdout(t, func() { err = cmdLibrary([]string{"apply", "ten", "--yes", "--json"}) })
+	out := captureStdout(t, func() { err = cmdLibrary([]string{"apply", "ten", "--yes", "--slot", "0", "--json"}) })
 	if !errors.Is(err, qcycore.ErrUnconfirmed) {
 		t.Fatalf("err = %v", err)
 	}
@@ -415,7 +427,7 @@ func TestLibraryApplyFullLengthWritesWholePayload(t *testing.T) {
 	if _, err := qcycore.SeedFromPayload(qcycore.SourceDeviceImport, 11, "Tail", realCustom11); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmdLibrary([]string{"apply", "tail", "--yes", "--full-length"}); err != nil {
+	if err := cmdLibrary([]string{"apply", "tail", "--yes", "--full-length", "--slot", "0"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(l.writes) != 1 || len(l.writes[0]) != qcycore.EqReadLen || l.writes[0][0] != 0 {
@@ -480,7 +492,7 @@ func TestLibraryApplyViaDaemonUnconfirmedKeepsTypedError(t *testing.T) {
 	mustSave(t, "Ten", "--gains", tenFlat)
 	useWireDaemon(t, `{"ok":false,"error":"eq: written but unconfirmed: x","code":"unconfirmed","sent":"00c800","deviceReported":"0b50","backup":"/b/history.hex"}`)
 	var err error
-	out := captureStdout(t, func() { err = cmdLibrary([]string{"apply", "ten", "--yes", "--json"}) })
+	out := captureStdout(t, func() { err = cmdLibrary([]string{"apply", "ten", "--yes", "--slot", "0", "--json"}) })
 	var ee *qcycore.EqError
 	if !errors.Is(err, qcycore.ErrUnconfirmed) || !errors.As(err, &ee) {
 		t.Fatalf("err = %v", err)

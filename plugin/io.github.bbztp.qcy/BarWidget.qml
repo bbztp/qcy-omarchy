@@ -84,9 +84,9 @@ Panel {
   property string pendingDeleteId: ""
 
   // ---- curve editor state ----
-  // Ten bars at the slot 0 layout (the same table `library save` writes).
+  // Ten bars at the standard 10-band layout (the same table `library save` writes).
   readonly property var editorFreqs: [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
-  readonly property real editorMaxDb: 8
+  readonly property real editorMaxDb: 12
   property bool editorOpen: false
   property var editGains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   property real editMaster: 0
@@ -100,7 +100,9 @@ Panel {
   readonly property bool isStale: !!(rep && rep.stale === true)
   readonly property int activeSlot: rep && rep.eq && rep.eq.preset !== null && rep.eq.preset !== undefined
     ? Number(rep.eq.preset) : -1
-  // Slots 6 (factory) and 11 (hearing test) are never overwritten.
+  // Slots 6 (factory) and 11 (hearing test) are never overwritten: applying a
+  // library curve writes the custom slot 255, so this only drives the info note
+  // and the master-gain write rule, never the Ouvir/Aplicar enablement.
   readonly property bool slotProtected: activeSlot === 6 || activeSlot === 11
   // A tail band (position 10+) means the device reports a populated 143-byte
   // payload; master-gain then needs the unproven full-length write.
@@ -114,7 +116,7 @@ Panel {
     return false
   }
   readonly property bool canApplyLibrary: Qcy.connected && !!rep && activeSlot >= 0
-    && !slotProtected && Qcy.libraryOp.phase !== "running"
+    && Qcy.libraryOp.phase !== "running"
   readonly property bool canSaveCurrent: Qcy.connected && !!rep && Qcy.libraryOp.phase !== "running"
 
   function ancGroup() {
@@ -132,7 +134,7 @@ Panel {
 
   // The library curve whose bands equal the live ones, if any.
   function entryIsLive(e) {
-    return root._eqSig !== "" && root.activeSlot === 0 && entrySig(e) === root._eqSig
+    return root._eqSig !== "" && root.activeSlot === 255 && entrySig(e) === root._eqSig
   }
 
   function curveName(id) {
@@ -223,11 +225,11 @@ Panel {
     }).join(",")
   }
 
-  // Needs the earbuds, a known non-protected active slot and an editable
-  // curve. Deliberately does not look at libraryOp.phase: the draft request is
+  // Needs the earbuds, a known active slot and an editable curve (a
+  // protected factory slot does not block: the write goes to slot 255). Deliberately does not look at libraryOp.phase: the draft request is
   // queued by Qcy (last one wins), so a release during an apply is not lost.
   readonly property bool editorHwOk: Qcy.connected && !!rep && activeSlot >= 0
-    && !slotProtected && editorBlocked === ""
+    && editorBlocked === ""
   readonly property bool editorCanSave: editorBlocked === "" && Qcy.libraryOp.phase !== "running"
 
   // bands: array of {index?, freq, gain, q?, type?}; isCard says it came from a
@@ -1172,39 +1174,16 @@ Panel {
               wrapMode: Text.WordWrap
             }
 
-            // ---- Protected slot warning: one quiet strip, not repeated per curve ----
-            BorderSurface {
+            // ---- Info note: applying writes Personalizado, factory effect untouched ----
+            Text {
               width: parent.width
               visible: root.slotProtected
-              implicitHeight: warnRow.implicitHeight + Style.space(20)
-              radius: Style.cornerRadius
-              color: "transparent"
-              borderSpec: Border.controlSpec("selected", root.foreground, root.accent)
-
-              Row {
-                id: warnRow
-                x: Style.space(12)
-                y: Style.space(10)
-                width: parent.width - Style.space(24)
-                spacing: Style.space(10)
-
-                Text {
-                  id: warnIcon
-                  text: String.fromCodePoint(0xF033E)
-                  color: root.accent
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.title
-                }
-                Text {
-                  width: parent.width - warnIcon.implicitWidth - Style.space(10)
-                  text: "Efeito de fábrica ativo: " + root.slotLabel() + ". "
-                    + "Para não sobrescrevê-lo, a biblioteca não aplica curvas enquanto o slot 6 ou 11 estiver ativo."
-                  color: Qt.darker(root.foreground, 1.15)
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  wrapMode: Text.WordWrap
-                }
-              }
+              text: "Aplicar grava em Personalizado, como o app do celular; este efeito ("
+                + root.slotLabel() + ") não é alterado."
+              color: Qt.darker(root.foreground, 1.5)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
             }
 
             // ---- Library ----
@@ -1251,7 +1230,6 @@ Panel {
                     required property var modelData
                     entry: modelData
                     cardWidth: libList.width
-                    slotProtected: root.slotProtected
                     canApply: root.canApplyLibrary
                     live: root.entryIsLive(modelData)
                     phase: Qcy.libraryOp.kind === "apply" && Qcy.libraryOp.id === modelData.id
@@ -1364,16 +1342,6 @@ Panel {
 
               Text {
                 width: parent.width
-                visible: root.slotProtected
-                text: root.slotLabel() + " (protegido) está ativo: você pode editar e salvar, mas não ouvir nem aplicar."
-                color: Color.urgent
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                wrapMode: Text.WordWrap
-              }
-
-              Text {
-                width: parent.width
                 visible: root.editorNote !== ""
                 text: root.editorNote
                 color: Qt.darker(root.foreground, 1.5)
@@ -1392,7 +1360,7 @@ Panel {
 
               Text {
                 width: parent.width
-                text: "Arraste uma barra (±8 dB, passos de 0,5 dB). Duplo clique zera a barra."
+                text: "Arraste uma barra (±12 dB, passos de 0,5 dB). Duplo clique zera a barra."
                 color: Qt.darker(root.foreground, 1.5)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
@@ -1421,7 +1389,7 @@ Panel {
                 width: parent.width
                 opacity: root.editorHwOk ? 1.0 : 0.5
                 label: "Ouvir enquanto edita"
-                hint: "Ao soltar uma barra, aplica o rascunho nos fones (sobrescreve o slot 0)"
+                hint: "Ao soltar uma barra, aplica o rascunho nos fones (grava em Personalizado)"
                 checked: root.listenLive
                 onToggled: {
                   if (root.listenLive) root.stopListening()
@@ -2285,13 +2253,12 @@ Panel {
   // One library curve, one wide row: name and a small info line on the left, a
   // mini curve and a compact "Editar" on the right. Clicking the row applies it;
   // it is dimmed (and says why, in a small line) when it cannot be written.
-  // The protected-slot warning lives in one strip above the list, not here.
+  // The factory-effect note lives once above the list, not here.
   component CurveCard: BorderSurface {
     id: cc
     required property var entry
     property real cardWidth: 0
     property bool canApply: false
-    property bool slotProtected: false
     property bool live: false
     // idle | running | ok | unconfirmed | error — this card's own apply state.
     property string phase: "idle"
@@ -2430,7 +2397,7 @@ Panel {
     }
   }
 
-  // Ten draggable vertical bars (positions 0..9, slot 0 frequency table). The
+  // Ten draggable vertical bars (positions 0..9, standard frequency table). The
   // gain is above each bar, the frequency below. It owns no state: it reports
   // edited(index, dB) while dragging and committed() on release.
   component BarEditor: Item {

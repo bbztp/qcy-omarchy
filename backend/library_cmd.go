@@ -30,7 +30,7 @@ const libraryUsage = `usage: qcyctl library <subcommand>
   library import <file>
   library seed [--json]
   library import-device <name> [seconds]            (reads the active EQ from the earbuds)
-  library apply <id> --yes [--full-length] [--slot 0|255] [--json] [seconds]   (writes the curve to slot 0, or 255 = the phone app's "Personalizado" buffer)`
+  library apply <id> --yes [--full-length] [--slot 0|255] [--json] [seconds]   (writes the curve to slot 255 by default = the phone app's "Personalizado" buffer, the only target allowed while slot 6 or 11 is active; --slot 0 is the old test slot)`
 
 // libraryRunner opens the link to the earbuds (daemon first, direct otherwise).
 // A test replaces it with a fake; nothing else in this file touches Bluetooth.
@@ -506,8 +506,8 @@ func cmdLibraryImportDevice(args []string) error {
 }
 
 // libraryApplyOp builds the EqOp that writes c to slot (0 or the app's custom
-// slot 255, validated by the caller), or refuses with the reason. It never sets AllowProtected. Everything it can know offline it
-// checks here, so nothing is connected for a curve that cannot be written.
+// slot 255, validated by the caller), or refuses with the reason. It never sets
+// AllowProtected. Everything it can know offline it checks here, so nothing is connected for a curve that cannot be written.
 func libraryApplyOp(c qcycore.Curve, fullLength bool, slot int) (qcycore.EqOp, error) {
 	var op qcycore.EqOp
 	if ok, why := c.Applyable(); !ok {
@@ -580,9 +580,9 @@ func cmdLibraryApply(args []string) error {
 		return errors.New(usage)
 	}
 	if !a.bools["--yes"] {
-		return errors.New("library apply: this overwrites the EQ curve of the target slot (0 or 255) and makes it active; pass --yes to confirm (the active slot's payload is backed up first)")
+		return errors.New("library apply: this overwrites the EQ curve of the target slot (255 by default, or 0) and makes it active; pass --yes to confirm (the active slot's payload is backed up first)")
 	}
-	slot := 0
+	slot := qcycore.SlotCustomApp
 	if v, ok := a.vals["--slot"]; ok {
 		n, err := strconv.Atoi(v)
 		if err != nil || (n != 0 && n != qcycore.SlotCustomApp) {

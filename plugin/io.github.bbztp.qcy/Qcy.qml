@@ -538,7 +538,7 @@ Singleton {
     })
   }
 
-  // Writes the curve to slot 0 and makes it active. Never passes
+  // Writes the curve to the custom slot 255 (default --slot) and makes it active. Never passes
   // --allow-protected nor --full-length: the backend refuses what is unsafe.
   function libraryApply(id) {
     if (libraryOp.phase === "running") return

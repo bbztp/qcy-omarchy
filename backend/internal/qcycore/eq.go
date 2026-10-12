@@ -375,6 +375,13 @@ func checkProtected(active, target int, op EqOp) error {
 		return &EqError{Code: CodeProtectedSlot, Msg: fmt.Sprintf(
 			"eq: slot %d is protected (%s); refusing the write; use --allow-protected (AllowProtected) to override", slot, why)}
 	}
+	// Slot 255 is the phone app's "Personalizado" buffer: measured on the
+	// hardware, writing it with 6 or 11 active leaves 6 and 11 byte-identical,
+	// and the app itself does this. It is the one safe target (the active
+	// slot is still backed up by the caller before the write).
+	if op.Slot != nil && *op.Slot == SlotCustomApp {
+		return nil
+	}
 	switch {
 	case op.Slot != nil && IsProtectedSlot(*op.Slot):
 		return refuse(*op.Slot, "factory or hearing-test curve whose current content cannot be read back once replaced; omit the slot to adjust the active one")

@@ -307,12 +307,16 @@ that id stays valid for `show`/`apply`/`delete`.
 
 With the earbuds: `import-device <name> [seconds]` saves the active EQ
 (lossless payload, source device-import) and `apply <id> --yes [--full-length]
-[--slot 0|255] [--json] [seconds]` writes a curve to **slot 0** (default) or, with
-`--slot 255`, to the phone app's "Personalizado" buffer (any other slot is
-refused; byte 0 of the payload is then `0xFF`) in build mode (`bands`, master
-gain from the curve) through the same path as `eq set` (daemon or direct,
-backup, readback). It never passes `allowProtected`; a protected active slot
-refuses it. A curve that is not `applyable` is refused before connecting; one
+[--slot 0|255] [--json] [seconds]` writes a curve to **slot 255** (default), the
+phone app's "Personalizado" buffer (byte 0 of the payload is `0xFF`), or, with
+`--slot 0`, to the old test slot (any other slot is refused), in build mode
+(`bands`, master gain from the curve) through the same path as `eq set` (daemon
+or direct, backup, readback). It never passes `allowProtected`. Slot 255 is the
+only target that stays allowed while slot 6 or 11 is active (measured: the
+phone app does exactly this, and slots 6 and 11 were re-read identical
+afterwards; `ApplyEq` lifts the protected-slot refusal for an explicit slot
+255, the active slot is still backed up first); `--slot 0` with a protected
+active slot is refused. A curve that is not `applyable` is refused before connecting; one
 with bands at positions 10-19 needs `--full-length` (143 bytes, not proven).
 `--json` carries `wrote`, `backup` and `confirmed` (false plus `code` on an
 unconfirmed write, which also exits non-zero).
