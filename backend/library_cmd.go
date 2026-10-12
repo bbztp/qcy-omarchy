@@ -18,11 +18,11 @@ import (
 // `qcyctl library ...`: the curve library (named EQ curves stored under the
 // data directory). "preset" is deliberately not used in the name: it already
 // means a hardware slot. list/show/save/delete/export/import/seed are offline;
-// only import-device and apply talk to the earbuds, through the same path as
-// `eq set` (runViaDaemon, eqApply, backup, readback).
+// import-device, apply and compose (without --dry-run) talk to the earbuds,
+// through the same path as `eq set` (runViaDaemon, eqApply, backup, readback).
 
 const libraryUsage = `usage: qcyctl library <subcommand>
-  library list [--json]
+  library list [--all] [--json]                      (factory effects in the app's order, then Experiência auditiva, then yours; --all also shows the old seeds a newer curve replaced)
   library show <id> [--json]
   library save <name> --gains g1,...,g10 [--master dB] [--note text] [--replace] [--json]
   library delete <id> --yes
@@ -30,7 +30,8 @@ const libraryUsage = `usage: qcyctl library <subcommand>
   library import <file>
   library seed [--json]
   library import-device <name> [seconds]            (reads the active EQ from the earbuds)
-  library apply <id> --yes [--full-length] [--slot 0|255] [--json] [seconds]   (writes the curve to slot 255 by default = the phone app's "Personalizado" buffer, the only target allowed while slot 6 or 11 is active; --slot 0 is the old test slot)`
+  library apply <id> --yes [--full-length] [--slot 0|255] [--json] [seconds]   (writes the curve to slot 255 by default = the phone app's "Personalizado" buffer, the only target allowed while slot 6 or 11 is active, and the only one that takes bands at positions 10-19 without --full-length; --slot 0 is the old test slot)
+  library compose --base <id|none> --gains g1,...,g10 [--master dB] (--yes | --dry-run) [--json] [seconds]   (the phone app's layout in slot 255: your non-zero bars, then the base effect's bands)`
 
 // libraryRunner opens the link to the earbuds (daemon first, direct otherwise).
 // A test replaces it with a fake; nothing else in this file touches Bluetooth.
@@ -66,6 +67,8 @@ func cmdLibrary(args []string) error {
 		return cmdLibraryImportDevice(rest)
 	case "apply":
 		return cmdLibraryApply(rest)
+	case "compose":
+		return cmdLibraryCompose(rest)
 	}
 	return fmt.Errorf("library: unknown subcommand %q\n%s", args[0], libraryUsage)
 }
@@ -130,21 +133,37 @@ func newLibraryEntry(c qcycore.Curve) libraryEntry {
 	return libraryEntry{Curve: c, NBands: len(c.Bands), Applyable: ok, Reason: why}
 }
 
-func sourceRank(s string) int {
-	switch s {
-	case qcycore.SourceUser:
-		return 0
-	case qcycore.SourceDeviceImport:
-		return 1
+// curveRank orders the library: 0 the factory effects (in the app's order, see
+// qcycore.FactoryEffects), 1 the hearing-test curve, 2 the user's own curves, 3
+// everything else (device imports, older seeds). sub is the position among the
+// factory effects.
+func curveRank(c qcycore.Curve) (rank, sub int) {
+	if c.Source == qcycore.SourceFactorySnapshot {
+		for i, e := range qcycore.FactoryEffects {
+			if c.ID == qcycore.FactoryCurveID(e) {
+				return 0, i
+			}
+		}
 	}
-	return 2
+	switch {
+	case c.Source != qcycore.SourceUser && c.ID == qcycore.HearingTestCurveID():
+		return 1, 0
+	case c.Source == qcycore.SourceUser:
+		return 2, 0
+	}
+	return 3, 0
 }
 
 func sortCurves(cs []qcycore.Curve) {
 	sort.SliceStable(cs, func(i, j int) bool {
 		a, b := cs[i], cs[j]
-		if ra, rb := sourceRank(a.Source), sourceRank(b.Source); ra != rb {
+		ra, sa := curveRank(a)
+		rb, sb := curveRank(b)
+		if ra != rb {
 			return ra < rb
+		}
+		if sa != sb {
+			return sa < sb
 		}
 		if an, bn := strings.ToLower(a.Name), strings.ToLower(b.Name); an != bn {
 			return an < bn
@@ -153,14 +172,39 @@ func sortCurves(cs []qcycore.Curve) {
 	})
 }
 
+// hideSuperseded drops the curves an older seed created under another id
+// (qcycore.SupersededCurveIDs) while their replacement is in the library. A
+// user's own curve is never hidden. It returns the kept curves and how many it
+// dropped.
+func hideSuperseded(cs []qcycore.Curve) ([]qcycore.Curve, int) {
+	have := map[string]bool{}
+	for _, c := range cs {
+		have[c.ID] = true
+	}
+	sup := qcycore.SupersededCurveIDs()
+	kept := cs[:0:0]
+	for _, c := range cs {
+		if repl, ok := sup[c.ID]; ok && c.Source != qcycore.SourceUser && c.ID != repl && have[repl] {
+			continue
+		}
+		kept = append(kept, c)
+	}
+	return kept, len(cs) - len(kept)
+}
+
 func cmdLibraryList(args []string) error {
-	a, err := parseLibArgs(args, []string{"--json"}, nil)
+	const usage = "usage: qcyctl library list [--all] [--json]"
+	a, err := parseLibArgs(args, []string{"--json", "--all"}, nil)
 	if err != nil || len(a.pos) != 0 {
-		return errors.New("usage: qcyctl library list [--json]")
+		return errors.New(usage)
 	}
 	curves, errs := qcycore.ListCurves()
 	for _, e := range errs {
 		fmt.Fprintf(os.Stderr, "qcyctl: library: skipping %v\n", e)
+	}
+	hidden := 0
+	if !a.bools["--all"] {
+		curves, hidden = hideSuperseded(curves)
 	}
 	sortCurves(curves)
 	entries := make([]libraryEntry, len(curves))
@@ -181,6 +225,9 @@ func cmdLibraryList(args []string) error {
 		}
 		fmt.Printf("%-24s %-16s slot=%-3d bands=%-2d master=%+.2fdB applyable=%s  %q\n",
 			e.ID, e.Source, e.Slot, e.NBands, e.MasterGain, ap, e.Name)
+	}
+	if hidden > 0 {
+		fmt.Printf("(%d older curve(s) replaced by a newer one are hidden; --all shows them)\n", hidden)
 	}
 	return nil
 }
@@ -362,9 +409,47 @@ func readSmallFile(path string) ([]byte, error) {
 	return data, nil
 }
 
-// seedLibrary creates the curves that are missing from the backup directory's
-// raw payloads. Only the hex files and the "payload" field of the slot 6
-// snapshots are read; an id already in the library is skipped.
+// hearingTestPayload finds the user's hearing-test payload in the backups:
+// eq-slot11-first.hex, else the "payload" field of the first
+// preset-map/experiencia-auditiva-slot11-*.json that has one.
+func hearingTestPayload(dir string) (payload string, errs []string) {
+	if data, err := readSmallFile(filepath.Join(dir, "eq-slot11-first.hex")); err == nil {
+		return string(data), nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		errs = append(errs, err.Error())
+	}
+	jsons, _ := filepath.Glob(filepath.Join(dir, "preset-map", "experiencia-auditiva-slot11-*.json"))
+	sort.Strings(jsons)
+	for _, p := range jsons {
+		data, err := readSmallFile(p)
+		if err != nil {
+			errs = append(errs, err.Error())
+			continue
+		}
+		var f struct {
+			Payload string `json:"payload"`
+		}
+		if err := json.Unmarshal(data, &f); err != nil || f.Payload == "" {
+			errs = append(errs, fmt.Sprintf("%s: no usable payload field", p))
+			continue
+		}
+		return f.Payload, errs
+	}
+	return "", errs
+}
+
+// seedLibrary creates the curves that are missing, never touching one that is
+// there:
+//
+//  1. one factory-snapshot curve per qcycore.FactoryEffects entry, from the
+//     payloads embedded in the binary (no backup directory needed);
+//  2. "Experiência auditiva" (device-import, slot 11) from the user's backups;
+//  3. a device-import curve for every other eq-slotN-first.hex (slot 0, 255,
+//     ...), named as older versions named them. Slots the embedded factory data
+//     or the hearing-test curve now cover are not seeded again under the old
+//     "(slot N)" names: those ids are listed as superseded (qcycore.SupersededCurveIDs).
+//
+// An id already in the library is skipped, never renamed or replaced.
 func seedLibrary() (seedReport, error) {
 	rep := seedReport{Created: []seedItem{}, Skipped: []seedItem{}, Errors: []string{}}
 	dir, err := qcycore.BackupDir()
@@ -393,6 +478,26 @@ func seedLibrary() (seedReport, error) {
 		}
 	}
 
+	covered := map[int]bool{qcycore.HearingTestSlot: true}
+	for _, e := range qcycore.FactoryEffects {
+		covered[e.Slot] = true
+		add(qcycore.SourceFactorySnapshot, e.Slot, e.Name, "", e.Payload)
+	}
+
+	payload, errs := hearingTestPayload(dir)
+	rep.Errors = append(rep.Errors, errs...)
+	switch {
+	case payload != "":
+		add(qcycore.SourceDeviceImport, qcycore.HearingTestSlot, qcycore.HearingTestName, "", payload)
+	default:
+		id := qcycore.HearingTestCurveID()
+		reason := "no backup of the hearing-test curve (eq-slot11-first.hex or preset-map/experiencia-auditiva-slot11-*.json)"
+		if _, err := qcycore.LoadCurve(id); err == nil {
+			reason = "already in the library"
+		}
+		rep.Skipped = append(rep.Skipped, seedItem{ID: id, Reason: reason})
+	}
+
 	type hexSrc struct {
 		slot int
 		path string
@@ -401,7 +506,7 @@ func seedLibrary() (seedReport, error) {
 	if ents, err := os.ReadDir(dir); err == nil {
 		for _, e := range ents {
 			if m := firstHexRe.FindStringSubmatch(e.Name()); m != nil && e.Type().IsRegular() {
-				if n, err := strconv.Atoi(m[1]); err == nil && n <= 255 {
+				if n, err := strconv.Atoi(m[1]); err == nil && n <= 255 && !covered[n] {
 					hexes = append(hexes, hexSrc{n, filepath.Join(dir, e.Name())})
 				}
 			}
@@ -416,29 +521,10 @@ func seedLibrary() (seedReport, error) {
 		}
 		legacy := fmt.Sprintf("Slot %d (primeira leitura)", h.slot)
 		name, lg := legacy, ""
-		// Slot 6 keeps the legacy name: "Clássico (slot 6)" is the factory snapshot's.
-		if eff, ok := qcycore.EffectName(h.slot); ok && h.slot != 6 {
+		if eff, ok := qcycore.EffectName(h.slot); ok {
 			name, lg = fmt.Sprintf("%s (slot %d)", eff, h.slot), legacy
 		}
 		add(qcycore.SourceDeviceImport, h.slot, name, lg, string(data))
-	}
-
-	jsons, _ := filepath.Glob(filepath.Join(dir, "preset-map", "v3-*-slot6.json"))
-	sort.Strings(jsons)
-	for _, p := range jsons {
-		data, err := readSmallFile(p)
-		if err != nil {
-			rep.Errors = append(rep.Errors, err.Error())
-			continue
-		}
-		var f struct {
-			Payload string `json:"payload"`
-		}
-		if err := json.Unmarshal(data, &f); err != nil || f.Payload == "" {
-			rep.Errors = append(rep.Errors, fmt.Sprintf("%s: no usable payload field", p))
-			continue
-		}
-		add(qcycore.SourceFactorySnapshot, 6, "Clássico (slot 6)", "", f.Payload)
 	}
 	return rep, nil
 }
@@ -507,34 +593,13 @@ func cmdLibraryImportDevice(args []string) error {
 
 // libraryApplyOp builds the EqOp that writes c to slot (0 or the app's custom
 // slot 255, validated by the caller), or refuses with the reason. It never sets
-// AllowProtected. Everything it can know offline it checks here, so nothing is connected for a curve that cannot be written.
+// AllowProtected. Everything it can know offline it checks here, so nothing is
+// connected for a curve that cannot be written. Bands at positions 10-19 make a
+// 143-byte payload: slot 255 takes it as is, slot 0 needs fullLength.
 func libraryApplyOp(c qcycore.Curve, fullLength bool, slot int) (qcycore.EqOp, error) {
 	var op qcycore.EqOp
 	if ok, why := c.Applyable(); !ok {
-		tail := false
-		for _, b := range c.Bands {
-			if b.Index >= qcycore.EqBands {
-				tail = true
-			}
-		}
-		if !tail {
-			return op, fmt.Errorf("curve %q cannot be applied: %s", c.ID, why)
-		}
-		if !fullLength {
-			return op, fmt.Errorf("curve %q cannot be applied: %s; writing it needs the 143-byte format, which has NOT been proven on the hardware; pass --full-length to allow it", c.ID, why)
-		}
-		// With --full-length only the tail may be what blocks it: check the rest.
-		head := c
-		head.Payload = ""
-		head.Bands = nil
-		for _, b := range c.Bands {
-			if b.Index < qcycore.EqBands {
-				head.Bands = append(head.Bands, b)
-			}
-		}
-		if ok, why := head.Applyable(); !ok {
-			return op, fmt.Errorf("curve %q cannot be applied: %s", c.ID, why)
-		}
+		return op, fmt.Errorf("curve %q cannot be applied: %s", c.ID, why)
 	}
 	mc, err := qcycore.MasterCentiFromDB(c.MasterGain)
 	if err != nil {
@@ -545,13 +610,23 @@ func libraryApplyOp(c qcycore.Curve, fullLength bool, slot int) (qcycore.EqOp, e
 		bands[i] = qcycore.BandSpec{Index: b.Index, Freq: b.Freq, Gain: b.Gain, Q: b.Q, Type: b.Type}
 	}
 	op = qcycore.EqOp{Slot: &slot, MasterCenti: &mc, Bands: bands, AllowFullLength: fullLength}
-	// Dry run against a neutral active slot 0: band ranges, band count and the
-	// length rule fail here, offline. The protected-slot rule depends on the
-	// real active slot and is enforced by ApplyEq on the live payload.
-	if _, err := qcycore.ApplyEq(make([]byte, qcycore.EqLen), op); err != nil {
+	if _, err := dryRunEq(op); err != nil {
+		if errors.Is(err, qcycore.ErrFullLengthRequired) {
+			return op, &qcycore.EqError{Code: qcycore.CodeFullLengthRequired, Msg: fmt.Sprintf(
+				"curve %q cannot be applied to slot %d: it has bands at positions 10-19, which need the 143-byte format; that format has NOT been proven on the hardware for slot %d; pass --full-length to allow it (slot %d takes it without the flag)",
+				c.ID, slot, slot, qcycore.SlotCustomApp)}
+		}
 		return op, fmt.Errorf("curve %q cannot be applied: %w", c.ID, err)
 	}
 	return op, nil
+}
+
+// dryRunEq builds the payload op would write against a neutral active slot 0:
+// band ranges, band count and the length rule fail here, offline. The
+// protected-slot rule depends on the real active slot and is enforced by
+// ApplyEq on the live payload.
+func dryRunEq(op qcycore.EqOp) ([]byte, error) {
+	return qcycore.ApplyEq(make([]byte, qcycore.EqLen), op)
 }
 
 type libraryApplyWrote struct {
@@ -563,6 +638,7 @@ type libraryApplyWrote struct {
 
 type libraryApplyOut struct {
 	ID         string            `json:"id"`
+	Base       string            `json:"base,omitempty"` // compose only
 	Confirmed  bool              `json:"confirmed"`
 	Wrote      libraryApplyWrote `json:"wrote"`
 	Result     *qcycore.EqResult `json:"result,omitempty"`
@@ -571,6 +647,40 @@ type libraryApplyOut struct {
 	Code       string            `json:"code,omitempty"`
 	Sent       string            `json:"sent,omitempty"`
 	DeviceSaid string            `json:"deviceReported,omitempty"`
+}
+
+// libraryWrite is the write path shared by `library apply` and `library
+// compose`: the daemon (or a direct link) reads the active payload, builds the
+// payload from op, backs it up, writes and confirms by readback. verb and
+// subject only shape the text output.
+func libraryWrite(verb, subject string, out libraryApplyOut, op qcycore.EqOp, seconds int, jsonOut bool) error {
+	out.Wrote = libraryApplyWrote{Slot: *op.Slot, MasterGain: float64(*op.MasterCenti) / 100, Bands: op.Bands}
+	return libraryRunner(seconds, func(dc daemonAPI) error {
+		res, err := dc.eqApply(op)
+		if err != nil {
+			var ee *qcycore.EqError
+			if jsonOut && errors.As(err, &ee) {
+				out.Error, out.Code, out.Backup = ee.Msg, ee.Code, ee.Backup
+				if ee.Sent != nil {
+					out.Sent = fmt.Sprintf("%x", ee.Sent)
+					out.DeviceSaid = fmt.Sprintf("%x", ee.Got)
+				}
+				_ = printJSON(out)
+			}
+			return err
+		}
+		out.Confirmed = true
+		out.Result = res
+		out.Backup = res.BackupHistory
+		out.Wrote.FullLength = res.FullLength
+		if jsonOut {
+			return printJSON(out)
+		}
+		fmt.Printf("library %s confirmed: %s -> slot=%d masterGain=%+.2fdB %s\n", verb, subject, res.Slot, res.MasterGain, fmtEq(&res.EqSnapshot))
+		warnFullLength(res)
+		fmt.Printf("backup: %s\n", res.BackupHistory)
+		return nil
+	})
 }
 
 func cmdLibraryApply(args []string) error {
@@ -598,42 +708,137 @@ func cmdLibraryApply(args []string) error {
 	if err != nil {
 		return err
 	}
-	full := a.bools["--full-length"]
-	op, err := libraryApplyOp(c, full, slot)
+	op, err := libraryApplyOp(c, a.bools["--full-length"], slot)
 	if err != nil {
 		return err
 	}
-	jsonOut := a.bools["--json"]
-	out := libraryApplyOut{
-		ID: c.ID,
-		Wrote: libraryApplyWrote{
-			Slot: *op.Slot, MasterGain: float64(*op.MasterCenti) / 100, Bands: op.Bands,
-		},
+	return libraryWrite("apply", c.ID, libraryApplyOut{ID: c.ID}, op, seconds, a.bools["--json"])
+}
+
+// ---------- compose ----------
+
+// composeMasterDefault is the master gain of a compose without a base curve
+// and without --master: the -12 dB every factory effect reports.
+const composeMasterDefault = -12.0
+
+// composeBands lays bands out the way the phone app does in slot 255: first
+// the user's bars (only those with a non-zero gain, at the ISO frequency of the
+// bar, Q 100, type 255), then the bands of the base effect in their original
+// order. Positions are consecutive from 0. More than EqMaxBands is an error.
+func composeBands(base *qcycore.Curve, gains [qcycore.EqBands]int) ([]qcycore.BandSpec, error) {
+	var out []qcycore.BandSpec
+	for i, g := range gains {
+		if g == 0 {
+			continue
+		}
+		out = append(out, qcycore.BandSpec{Index: len(out), Freq: defaultBandTable[i], Gain: float64(g) / 100, Q: defaultBandQ, Type: composeUserBandType})
 	}
-	return libraryRunner(seconds, func(dc daemonAPI) error {
-		res, err := dc.eqApply(op)
+	user := len(out)
+	if base != nil {
+		for _, b := range base.Bands {
+			out = append(out, qcycore.BandSpec{Index: len(out), Freq: b.Freq, Gain: b.Gain, Q: b.Q, Type: b.Type})
+		}
+	}
+	if len(out) > qcycore.EqMaxBands {
+		return nil, fmt.Errorf("library compose: %d bars of yours + %d bands of the base = %d bands, but the earbuds hold at most %d; zero some bars or pick a base with fewer bands", user, len(out)-user, len(out), qcycore.EqMaxBands)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("library compose: nothing to write: every gain is 0 and there is no base curve")
+	}
+	return out, nil
+}
+
+// composeUserBandType is the type byte the phone app gives to the user's bars.
+const composeUserBandType = 0xff
+
+type libraryComposePlan struct {
+	Base       string           `json:"base"`
+	Slot       int              `json:"slot"`
+	MasterGain float64          `json:"masterGain"`
+	NBands     int              `json:"nBands"`
+	FullLength bool             `json:"fullLength"`
+	Payload    string           `json:"payload"`
+	Bands      []qcycore.EqBand `json:"bands"`
+}
+
+func cmdLibraryCompose(args []string) error {
+	const usage = "usage: qcyctl library compose --base <id|none> --gains g1,...,g10 [--master dB] (--yes | --dry-run) [--json] [seconds]"
+	a, err := parseLibArgs(args, []string{"--yes", "--dry-run", "--json"}, []string{"--base", "--gains", "--master"})
+	if err != nil {
+		return fmt.Errorf("library compose: %w\n%s", err, usage)
+	}
+	if len(a.pos) > 1 {
+		return errors.New(usage)
+	}
+	baseArg, okB := a.vals["--base"]
+	gainsArg, okG := a.vals["--gains"]
+	if !okB || !okG {
+		return errors.New("library compose: --base and --gains are required\n" + usage)
+	}
+	dry := a.bools["--dry-run"]
+	if !dry && !a.bools["--yes"] {
+		return errors.New("library compose: this overwrites slot 255 (the phone app's \"Personalizado\") and makes it active; pass --yes to confirm (the active slot's payload is backed up first), or --dry-run to only print the payload")
+	}
+	gains, err := qcycore.ParseGains(gainsArg)
+	if err != nil {
+		return fmt.Errorf("library compose: %w", err)
+	}
+	seconds, err := parseSeconds(a.pos, 30)
+	if err != nil {
+		return err
+	}
+	var base *qcycore.Curve
+	masterC, err := qcycore.MasterCentiFromDB(composeMasterDefault)
+	if err != nil {
+		return err
+	}
+	baseName := "none"
+	if baseArg != "none" {
+		c, err := qcycore.LoadCurve(baseArg)
 		if err != nil {
-			var ee *qcycore.EqError
-			if jsonOut && errors.As(err, &ee) {
-				out.Error, out.Code, out.Backup = ee.Msg, ee.Code, ee.Backup
-				if ee.Sent != nil {
-					out.Sent = fmt.Sprintf("%x", ee.Sent)
-					out.DeviceSaid = fmt.Sprintf("%x", ee.Got)
-				}
-				_ = printJSON(out)
-			}
 			return err
 		}
-		out.Confirmed = true
-		out.Result = res
-		out.Backup = res.BackupHistory
-		out.Wrote.FullLength = res.FullLength
-		if jsonOut {
-			return printJSON(out)
+		if ok, why := c.Applyable(); !ok {
+			return fmt.Errorf("library compose: base %q cannot be written: %s", c.ID, why)
 		}
-		fmt.Printf("library apply confirmed: %s -> slot=%d masterGain=%+.2fdB %s\n", c.ID, res.Slot, res.MasterGain, fmtEq(&res.EqSnapshot))
-		warnFullLength(res)
-		fmt.Printf("backup: %s\n", res.BackupHistory)
+		if masterC, err = qcycore.MasterCentiFromDB(c.MasterGain); err != nil {
+			return fmt.Errorf("library compose: base %q: master gain: %w", c.ID, err)
+		}
+		base, baseName = &c, c.ID
+	}
+	if v, ok := a.vals["--master"]; ok {
+		if masterC, err = parseDBArg("library compose: --master", v); err != nil {
+			return err
+		}
+	}
+	bands, err := composeBands(base, gains)
+	if err != nil {
+		return err
+	}
+	slot := qcycore.SlotCustomApp
+	op := qcycore.EqOp{Slot: &slot, MasterCenti: &masterC, Bands: bands}
+	payload, err := dryRunEq(op)
+	if err != nil {
+		return fmt.Errorf("library compose: %w", err)
+	}
+	snap, err := qcycore.DecodeEq(payload)
+	if err != nil {
+		return err
+	}
+	if dry {
+		plan := libraryComposePlan{
+			Base: baseName, Slot: slot, MasterGain: snap.MasterGain, NBands: len(snap.Bands),
+			FullLength: qcycore.FullLength(payload), Payload: snap.Payload, Bands: snap.Bands,
+		}
+		if a.bools["--json"] {
+			return printJSON(plan)
+		}
+		fmt.Printf("library compose (dry run, nothing written): base=%s slot=%d masterGain=%+.2fdB bands=%d fullLength=%v\npayload: %s\n",
+			plan.Base, plan.Slot, plan.MasterGain, plan.NBands, plan.FullLength, plan.Payload)
+		for _, b := range plan.Bands {
+			fmt.Printf("  band %-2d %5d Hz  %+.2f dB  q=%d type=%d\n", b.Index, b.Freq, b.Gain, b.Q, b.Type)
+		}
 		return nil
-	})
+	}
+	return libraryWrite("compose", "base="+baseName, libraryApplyOut{ID: "compose", Base: baseName}, op, seconds, a.bools["--json"])
 }

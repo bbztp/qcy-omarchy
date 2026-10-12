@@ -240,6 +240,46 @@ func TestDaemonEqApplyFullLengthNeedsFlag(t *testing.T) {
 	}
 }
 
+// Slot 255 (the app's "Personalizado") takes the 143-byte payload through the
+// socket with no allowFull, the empty positions carry the 0xFF type marker, the
+// echo that the device gives (marker included) confirms it, and the same bands
+// to another slot still need allowFull. Band types 3 and 255 are accepted.
+func TestDaemonEqApplySlot255ImpliesFullLength(t *testing.T) {
+	bands := []interface{}{
+		bandArgs(0, 125, 3, 100, 255), bandArgs(1, 200, -9, 70, 2), bandArgs(2, 7000, -1, 120, 3),
+		bandArgs(12, 8000, 4, 70, 2),
+	}
+	d, sess, bdir := eqTestDaemon(t, mustHexBytes(t, realCustom11), applyWrite(false))
+	res, err := eqApplyReq(d, map[string]interface{}{"slot": float64(255), "masterGain": float64(-1200), "bands": bands})
+	if err != nil {
+		t.Fatalf("slot 255 without allowFull: %v", err)
+	}
+	if sess.writeCount() != 1 || backupCount(t, bdir) == 0 {
+		t.Fatalf("writes %d backups %d", sess.writeCount(), backupCount(t, bdir))
+	}
+	w := sess.writes[0]
+	if len(w) != qcycore.EqReadLen || w[0] != 0xff || w[3+6] != 255 || w[3+2*7+6] != 3 {
+		t.Fatalf("wrote %d bytes: %x", len(w), w)
+	}
+	if got := hex.EncodeToString(w[3+19*7:]); got != "000000000000ff" {
+		t.Fatalf("empty position 19 = %s", got)
+	}
+	if r := res.(*qcycore.EqResult); r.Slot != 255 || !r.FullLength || len(r.Bands) != 4 {
+		t.Fatalf("result %+v", r)
+	}
+	// any other target keeps the requirement
+	d2, sess2, _ := eqTestDaemon(t, mustHexBytes(t, realCustom11), applyWrite(false))
+	_, err = eqApplyReq(d2, map[string]interface{}{"slot": float64(0), "masterGain": float64(-1200), "allowProtected": true, "bands": bands})
+	if responseCode(err) != "full_length_required" || sess2.writeCount() != 0 {
+		t.Fatalf("slot 0 without allowFull: %v (code %q), writes %d", err, responseCode(err), sess2.writeCount())
+	}
+	// type 7 is still refused
+	_, err = eqApplyReq(d2, map[string]interface{}{"slot": float64(255), "masterGain": float64(0), "bands": []interface{}{bandArgs(0, 100, 0, 100, 7)}})
+	if err == nil || sess2.writeCount() != 0 {
+		t.Fatalf("type 7: %v", err)
+	}
+}
+
 // The master-gain slider of the protected Classico slot (blank tail) keeps
 // working: it is a 73-byte write.
 func TestDaemonEqApplyMasterOnProtectedActive73(t *testing.T) {

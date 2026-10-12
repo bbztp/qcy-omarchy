@@ -108,7 +108,10 @@ without `--yes`; it changes only band positions 0-9 and leaves positions 10+
 (custom curves may use up to 20 bands) as read. The master gain range is
 -12..+12 dB. When a curve uses positions 10+, the write sends the full
 143-byte payload (`fullLength: true` in `--json` output, plus a warning): the
-73-byte write is proven on the earbuds, the 143-byte one is not.
+73-byte write is proven on the earbuds; the 143-byte one is not proven for the
+factory slots and needs `--full-length` there, but slot 255 (the app's
+"Personalizado", where the phone app itself writes up to 143 bytes) takes it
+without the flag.
 
 ## `qcyctl`
 
@@ -120,13 +123,21 @@ qcyctl status                 # human-readable snapshot
 qcyctl anc noisy              # set ANC mode
 qcyctl ldac on                # toggles: game|sleep|ldac|multipoint|wind
 qcyctl find                   # flash the earbuds
-qcyctl library list           # saved EQ curves (offline)
+qcyctl library seed           # the 8 factory effects (embedded) + Experiência auditiva, offline, idempotent
+qcyctl library list [--all]   # saved EQ curves (offline): factory in the app's order, Experiência auditiva, then yours; --all also shows older seeds
 qcyctl library apply <id> --yes [--slot 255|0]   # write a saved curve to slot 255 (default: the app's "Personalizado" buffer, the only safe target while a factory effect 6/11 is active) or 0
+qcyctl library compose --base predefinido --gains 0,0,3,0,0,-2,0,0,0,4.5 --yes   # your bars on top of a factory effect, in the app's layout, into slot 255
+qcyctl library compose --base none --gains 1,0,0,0,0,0,0,0,0,0 --dry-run --json  # only print the payload and the resulting bands
 ```
 
 The curve library (`qcyctl library`) keeps named EQ curves under
 `~/.local/share/qcy-omarchy/library`; `list`, `show`, `save`, `delete`,
-`export`, `import` and `seed` need no Bluetooth. See `backend/PROTOCOL.md`.
+`export`, `import`, `seed` and `compose --dry-run` need no Bluetooth. The
+library applies and composes any curve to slot 255: every seeded curve is
+applyable (band types 0, 2, 3 and 255 are accepted, positions 0-19). `compose`
+puts the non-zero bars of `--gains` (ISO 31..16000 Hz, Q 100, type 255) first and
+the base effect's bands after them, up to 20 bands, with the base's master
+gain (or `--master`, default -12). See `backend/PROTOCOL.md`.
 
 Run `qcyctl` with no arguments for the full command list. Set `QCY_DEBUG=1` to
 trace the GATT traffic of the CLI on stderr; for the daemon set `QCYCTL_DEBUG=1`

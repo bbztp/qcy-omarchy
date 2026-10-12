@@ -1206,7 +1206,8 @@ var eqConfirmTimeout = 4 * time.Second
 // eqApply is the only path that writes 0x22. Under ONE txMu it reads the live
 // payload, builds the payload from op (qcycore.ApplyEq: patched over what the
 // device reported, or constructed from op.Bands; it also refuses protected
-// slots and the unproven 143-byte format unless op allows them), saves the
+// slots and the unproven 143-byte format unless op allows them; an explicit
+// slot 255 implies the 143-byte format), saves the
 // pre-write payload as a backup (the write is aborted if that fails), writes,
 // and confirms by readback. A device that keeps reporting another slot after
 // the write yields a qcycore.EqError with CodeUnconfirmed.

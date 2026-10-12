@@ -27,8 +27,11 @@ import (
 // and is used whenever bytes 73.. carry no band (all zero, or only the 0xFF
 // "empty" type marker; see TailBlank). When the tail holds a band
 // (any other non-zero byte) the full read length would have to be sent (format
-// NOT proven on the device): ApplyEq refuses that unless EqOp.AllowFullLength is
-// set, and results then carry fullLength=true.
+// NOT proven on the device for the factory slots): ApplyEq refuses that unless
+// EqOp.AllowFullLength is set, and results then carry fullLength=true. The one
+// exception is an explicit write to slot SlotCustomApp (255): the phone app
+// itself writes its "Personalizado" curves there with up to 143 bytes, so
+// ApplyEq allows the 143-byte format for that target without the flag.
 const (
 	EqOpcode = 0x22
 	// EqLen is the proven write length; EqReadLen the length the device reports.
@@ -54,6 +57,25 @@ const (
 	MinBandQ    = 1
 	MaxBandQ    = 65535
 )
+
+// BandTypes are the band type bytes accepted in a write. 0 and 2 are the
+// regular band types; 3 was read back from factory presets 1, 10 and 14; 255
+// (0xFF) is the type the phone app gives to the user's own bars in slot 255.
+// Anything else has never been observed and is refused (1, 7, ...).
+var BandTypes = []int{0, 2, 3, 255}
+
+// BandTypeSupported reports whether t is in BandTypes.
+func BandTypeSupported(t int) bool {
+	for _, v := range BandTypes {
+		if v == t {
+			return true
+		}
+	}
+	return false
+}
+
+// emptyTypeMarker is the type byte the device reports in an empty position.
+const emptyTypeMarker = 0xff
 
 // ProtectedSlots are the slots ApplyEq refuses to write into, or to switch away
 // from, unless EqOp.AllowProtected is set: 6 is the factory "Classico" curve
@@ -166,7 +188,7 @@ type BandSpec struct {
 	Freq  int     `json:"freq"`  // Hz, MinBandFreq..MaxBandFreq
 	Gain  float64 `json:"gain"`  // dB
 	Q     int     `json:"q"`     // raw payload units, MinBandQ..MaxBandQ
-	Type  int     `json:"type"`  // 0 or 2 (the only values seen on the device)
+	Type  int     `json:"type"`  // one of BandTypes: 0, 2, 3 or 255 (the values seen on the device)
 }
 
 // EqOp describes a write.
@@ -191,7 +213,9 @@ type EqOp struct {
 	AllowProtected bool
 	// AllowFullLength lets the write use the 143-byte format, which is NOT
 	// proven on the device. Without it ApplyEq refuses any payload longer than
-	// EqLen.
+	// EqLen, except when Slot is explicitly SlotCustomApp (255): the phone app
+	// writes up to 143 bytes there, so that target implies the flag. The
+	// implicit allowance looks at Slot only, never at the active slot.
 	AllowFullLength bool
 }
 
@@ -320,7 +344,8 @@ func centiInRange(db, max float64) (int, error) {
 //     also switches the device away from it); op.Bands on a protected active
 //     slot (it replaces the whole curve). A master or band-gain patch of the
 //     active protected slot (Slot nil) stays allowed.
-//   - without AllowFullLength: any payload longer than EqLen. A patch gets that
+//   - without AllowFullLength: any payload longer than EqLen, unless op.Slot is
+//     explicitly SlotCustomApp (255; see EqOp.AllowFullLength). A patch gets that
 //     length only when bytes EqLen.. of cur hold a band (not TailBlank); Bands
 //     get it only when a position is >= EqBands.
 //
@@ -355,7 +380,8 @@ func ApplyEq(cur []byte, op EqOp) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(out) > EqLen && !op.AllowFullLength {
+	implicitFull := op.Slot != nil && *op.Slot == SlotCustomApp
+	if len(out) > EqLen && !op.AllowFullLength && !implicitFull {
 		why := "bands at positions 10-19"
 		if op.Bands == nil {
 			why = "the payload holds a band beyond position 9, bytes 73.. are not blank"
@@ -426,6 +452,12 @@ func patchEq(cur []byte, op EqOp) ([]byte, error) {
 // target slot, the master gain and each band at its position. Positions 0-9
 // only give EqLen bytes with a zero tail; any position >= EqBands gives
 // EqReadLen. cur is read for the active slot's master gain only.
+//
+// A 143-byte payload for slot SlotCustomApp carries the format the device
+// reports for the app's own writes: every position that holds no band is all
+// zero except its type byte, which is 0xFF (the empty marker). That keeps the
+// payload sent identical to what the device echoes, so EqMatch compares like
+// with like. Other targets keep the all-zero tail.
 func buildEq(cur []byte, target int, op EqOp) ([]byte, error) {
 	if len(op.Bands) == 0 {
 		return nil, errors.New("eq: bands is empty; a write must name at least one band")
@@ -445,8 +477,8 @@ func buildEq(cur []byte, target int, op EqOp) ([]byte, error) {
 			return nil, fmt.Errorf("eq: band %d: freq %d Hz outside %d-%d", b.Index, b.Freq, MinBandFreq, MaxBandFreq)
 		case b.Q < MinBandQ || b.Q > MaxBandQ:
 			return nil, fmt.Errorf("eq: band %d: q %d outside %d-%d", b.Index, b.Q, MinBandQ, MaxBandQ)
-		case b.Type != 0 && b.Type != 2:
-			return nil, fmt.Errorf("eq: band %d: type %d not allowed (only 0 and 2 have been observed on the device)", b.Index, b.Type)
+		case !BandTypeSupported(b.Type):
+			return nil, fmt.Errorf("eq: band %d: type %d not allowed (the device has shown 0, 2, 3 and 255)", b.Index, b.Type)
 		}
 		seen[b.Index] = true
 		if b.Index >= EqBands {
@@ -479,22 +511,33 @@ func buildEq(cur []byte, target int, op EqOp) ([]byte, error) {
 		out[o+4], out[o+5] = byte(b.Q), byte(b.Q>>8)
 		out[o+6] = byte(b.Type)
 	}
+	if n == EqReadLen && target == SlotCustomApp {
+		for i, used := range seen {
+			if !used {
+				out[eqHeader+i*eqBandSize+eqBandSize-1] = emptyTypeMarker
+			}
+		}
+	}
 	return out, nil
 }
 
 // EqMatch returns the predicate that decides whether a device echo confirms a
 // write of sent. Zero tolerance: the echo must be at least as long as sent and
 // its first len(sent) bytes (slot, master gain, every band written) must equal
-// sent exactly. The echo may be longer (73 sent, 143 echoed), but then the part
-// beyond what was sent must hold no band (TailBlank): a 73-byte write that the
-// device answers with a populated tail did not produce the curve that was
-// meant. op is kept for call-site compatibility.
+// sent, with one exception: a position that holds no band (freq, gain and q all
+// zero) matches an empty position whose type byte is 0 or the 0xFF marker, in
+// either direction, because the device reports its empty positions with the
+// marker whichever of the two was written. The echo may be longer (73 sent, 143
+// echoed), but then the part beyond what was sent must hold no band
+// (TailBlank): a 73-byte write that the device answers with a populated tail
+// did not produce the curve that was meant. op is kept for call-site
+// compatibility.
 func EqMatch(sent []byte, op EqOp) func([]byte) bool {
 	return func(got []byte) bool {
 		if len(sent) < EqLen || len(got) < len(sent) {
 			return false
 		}
-		if !bytes.Equal(got[:len(sent)], sent) {
+		if !sameBands(sent, got[:len(sent)]) {
 			return false
 		}
 		// TailBlank takes the whole payload (it inspects bytes EqLen.. in place).
@@ -503,6 +546,34 @@ func EqMatch(sent []byte, op EqOp) func([]byte) bool {
 		}
 		return true
 	}
+}
+
+// sameBands compares two payloads of equal length position by position; see
+// EqMatch for the empty-position allowance.
+func sameBands(a, b []byte) bool {
+	if !bytes.Equal(a[:eqHeader], b[:eqHeader]) {
+		return false
+	}
+	off := eqHeader
+	for ; off+eqBandSize <= len(a); off += eqBandSize {
+		x, y := a[off:off+eqBandSize], b[off:off+eqBandSize]
+		if bytes.Equal(x, y) || (emptyPosition(x) && emptyPosition(y)) {
+			continue
+		}
+		return false
+	}
+	return bytes.Equal(a[off:], b[off:])
+}
+
+// emptyPosition reports whether one 7-byte band position holds no band: freq,
+// gain and q are zero and the type byte is 0 or the 0xFF marker.
+func emptyPosition(p []byte) bool {
+	for _, c := range p[:eqBandSize-1] {
+		if c != 0 {
+			return false
+		}
+	}
+	return p[eqBandSize-1] == 0 || p[eqBandSize-1] == emptyTypeMarker
 }
 
 // EqWriteFailure is the error for a write whose echo never matched. got is the

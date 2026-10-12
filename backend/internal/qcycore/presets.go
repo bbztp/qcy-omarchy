@@ -237,21 +237,19 @@ func ValidateCurve(c Curve) error {
 	return nil
 }
 
-// Applyable reports whether the curve can be written to the earbuds with the
-// proven write path: no band at position 10 or above (TailBlank on the payload)
-// and only band types 0 and 2. It is derived and never persisted.
+// Applyable reports whether the curve can be written to the earbuds: every
+// band must have a type the device has shown (BandTypes: 0, 2, 3, 255) and sit
+// at a position the payload has (0-19). Bands at positions 10-19 do not make a
+// curve unapplyable: slot 255 takes the 143-byte format without a flag, and any
+// other target refuses it in ApplyEq (needs --full-length). It is derived and
+// never persisted.
 func (c Curve) Applyable() (bool, string) {
-	if c.Payload != "" {
-		if p, err := hex.DecodeString(c.Payload); err == nil && !TailBlank(p) {
-			return false, "uses band positions 10-19 (full-length write is not proven)"
-		}
-	}
 	for _, b := range c.Bands {
-		if b.Index >= EqBands {
-			return false, fmt.Sprintf("band at position %d (only 0-9 are addressable)", b.Index)
+		if b.Index < 0 || b.Index >= EqMaxBands {
+			return false, fmt.Sprintf("band at position %d (the payload has positions 0-%d)", b.Index, EqMaxBands-1)
 		}
-		if b.Type != 0 && b.Type != 2 {
-			return false, fmt.Sprintf("band %d has type %d (only 0 and 2 are supported)", b.Index, b.Type)
+		if !BandTypeSupported(b.Type) {
+			return false, fmt.Sprintf("band %d has type %d (supported: 0, 2, 3, 255)", b.Index, b.Type)
 		}
 	}
 	return true, ""

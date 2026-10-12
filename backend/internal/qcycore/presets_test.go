@@ -87,7 +87,7 @@ func TestCurveRoundtripLossless(t *testing.T) {
 		applyable         bool
 	}{
 		{"Classico 6", realClassico6, SourceFactorySnapshot, 6, true},
-		{"Custom 11", realCustom11, SourceDeviceImport, 11, false},
+		{"Custom 11", realCustom11, SourceDeviceImport, 11, true}, // positions 10-12 are fine now: slot 255 takes 143 bytes
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			libEnv(t)
@@ -380,9 +380,14 @@ func TestApplyableTable(t *testing.T) {
 		ok bool
 	}{
 		"plain":       {userCurve("mine"), true},
-		"position 10": {mod(func(c *Curve) { c.Bands = append(c.Bands, EqBand{Index: 10, Freq: 900, Q: 50, Type: 2}) }), false},
+		"position 10": {mod(func(c *Curve) { c.Bands = append(c.Bands, EqBand{Index: 10, Freq: 900, Q: 50, Type: 2}) }), true},
+		"position 19": {mod(func(c *Curve) { c.Bands = append(c.Bands, EqBand{Index: 19, Freq: 900, Q: 50, Type: 2}) }), true},
 		"type 1":      {mod(func(c *Curve) { c.Bands[0].Type = 1 }), false},
+		"type 7":      {mod(func(c *Curve) { c.Bands[0].Type = 7 }), false},
 		"type 0":      {mod(func(c *Curve) { c.Bands[0].Type = 0 }), true},
+		"type 2":      {mod(func(c *Curve) { c.Bands[0].Type = 2 }), true},
+		"type 3":      {mod(func(c *Curve) { c.Bands[0].Type = 3 }), true},
+		"type 255":    {mod(func(c *Curve) { c.Bands[0].Type = 255 }), true},
 	} {
 		if ok, why := tc.c.Applyable(); ok != tc.ok || (!ok && why == "") {
 			t.Errorf("%s: ok=%v why=%q", name, ok, why)
@@ -508,5 +513,64 @@ func TestSeedFromPayloadRejects(t *testing.T) {
 	}
 	if cs, _ := ListCurves(); len(cs) != 0 {
 		t.Fatalf("rejected seeds left %d curves", len(cs))
+	}
+}
+
+// Every embedded factory payload decodes, round-trips through the library
+// format and is applyable (types 3 and 255 included).
+func TestFactoryEffectsEmbedded(t *testing.T) {
+	libEnv(t)
+	wantOrder := []string{"Predefinido", "Popular", "Bass pesados", "Rock", "Suave", "Clássico", "Agudos suaves", "Som espacial"}
+	wantSlot := []int{1, 2, 3, 4, 5, 6, 14, 10}
+	if len(FactoryEffects) != len(wantOrder) {
+		t.Fatalf("%d factory effects", len(FactoryEffects))
+	}
+	for i, e := range FactoryEffects {
+		if e.Name != wantOrder[i] || e.Slot != wantSlot[i] {
+			t.Errorf("entry %d = %d %q", i, e.Slot, e.Name)
+		}
+		if n, ok := EffectName(e.Slot); !ok || n != e.Name {
+			t.Errorf("EffectName(%d) = %q", e.Slot, n)
+		}
+		p := mustHex(t, e.Payload)
+		if int(p[0]) != e.Slot || masterCenti(p) != -1200 {
+			t.Errorf("%s: slot byte %d master %d", e.Name, p[0], masterCenti(p))
+		}
+		c, err := SeedFromPayload(SourceFactorySnapshot, e.Slot, e.Name, e.Payload)
+		if err != nil {
+			t.Fatalf("%s: %v", e.Name, err)
+		}
+		if c.ID != FactoryCurveID(e) || c.Payload != e.Payload {
+			t.Errorf("%s: id %q", e.Name, c.ID)
+		}
+		if ok, why := c.Applyable(); !ok {
+			t.Errorf("%s not applyable: %s", e.Name, why)
+		}
+	}
+	// slot 10 is slot 1 with another byte 0, as measured
+	if FactoryEffects[7].Payload[2:] != FactoryEffects[0].Payload[2:] {
+		t.Error("Som espacial differs from Predefinido beyond byte 0")
+	}
+	// slot 1's band 4 is type 3, the one band type the old rule refused
+	if s := mustDecode(t, mustHex(t, FactoryEffects[0].Payload)); s.Bands[4].Type != 3 {
+		t.Errorf("Predefinido band 4 type = %d", s.Bands[4].Type)
+	}
+}
+
+func TestSupersededCurveIDs(t *testing.T) {
+	m := SupersededCurveIDs()
+	for old, want := range map[string]string{
+		"classico-slot-6":              "classico",
+		"slot-11-primeira-leitura":     "experiencia-auditiva",
+		"experiencia-auditiva-slot-11": "experiencia-auditiva",
+		"predefinido-slot-1":           "predefinido",
+		"som-espacial-slot-10":         "som-espacial",
+	} {
+		if m[old] != want {
+			t.Errorf("%s -> %q, want %q", old, m[old], want)
+		}
+	}
+	if _, ok := m["slot-0-primeira-leitura"]; ok {
+		t.Error("slot 0 has no replacement")
 	}
 }

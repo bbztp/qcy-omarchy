@@ -118,11 +118,16 @@ positions 10-19 are the "tail", bytes 73-142).
 **proven** format and is used whenever the tail holds no band (all zero, or
 only the `0xFF` type marker of an empty position). If any position 10-19 is
 populated, the payload to write is the full length read (143 bytes). That
-format is **not proven on the device**, so it is **refused** unless the caller
-passes `--full-length` (CLI) / `allowFull: true` (socket); the result then
-carries `fullLength: true` and the CLI prints a warning. A patch carries
-everything not named in the command over byte for byte from the payload just
-read.
+format is **not proven on the device** for the factory slots, so it is
+**refused** unless the caller passes `--full-length` (CLI) / `allowFull: true`
+(socket); the result then carries `fullLength: true` and the CLI prints a
+warning. **Exception: an explicit target of slot 255** (`slot: 255` /
+`--slot 255`, the phone app's "Personalizado" buffer): the app itself writes
+its custom curves there with up to 143 bytes (measured), so that target implies
+`allowFull`. The allowance looks at the explicit slot only: any other target
+keeps the requirement, and so does a slot-less patch while slot 255 happens to
+be active. A patch carries everything not named in the command over byte for
+byte from the payload just read.
 
 **Build mode (`bands`).** A caller may instead give the whole curve as
 structured bands (`{index, freq, gain (dB), q, type}`; library presets use
@@ -131,9 +136,15 @@ the payload read: byte 0 is the target slot, bytes 1-2 the master gain,
 positions not named are all zero (freq 0, type 0, no `0xFF` marker). The
 payload read is used only as proof of life and for the backup. Positions 0-9
 give the proven 73-byte payload with a zero tail; any position 10-19 gives 143
-bytes and needs `allowFull`. Per band: `index` 0-19 and unique, `freq`
-20-20000 Hz, `gain` -12..+12 dB, `q` 1-65535 (raw), `type` 0 or 2 only (the
-values seen on the device). `masterGain` may be omitted only when the target
+bytes and needs `allowFull` (implied for slot 255). **Tail of a 143-byte
+payload for slot 255:** every position that holds no band is all zero except
+its type byte, which is `0xFF`, exactly what the device reports for payloads
+the app wrote (`preset-map/teste2-slot255-*.json`), so the echo is comparable
+byte for byte. Other targets keep the all-zero tail. Per band: `index` 0-19 and
+unique, `freq` 20-20000 Hz, `gain` -12..+12 dB, `q` 1-65535 (raw), `type` one
+of **0, 2, 3, 255** (the values seen on the device: 3 on factory presets 1, 10
+and 14, 255 on the app's own bars in slot 255); 1, 7 and every other value are
+refused. `masterGain` may be omitted only when the target
 is the active slot (its own master gain is kept); for another slot it is
 required, because the reported master gain belongs to the active slot. `bands`
 and `gains` are mutually exclusive.
@@ -223,8 +234,11 @@ Order of operations (done under one transaction lock in the daemon):
 4. write the patched payload;
 5. confirm by readback with zero tolerance: the echo (which may be longer than
    what was sent) must equal every byte sent: slot, master gain and every
-   band written. When 73 bytes were sent and the echo is longer, the echo's
-   bytes 73.. must also hold no band (zero, or `0xFF` empty-type markers).
+   band written. The one allowance: a position that holds no band (freq, gain
+   and q zero) matches an empty position whose type byte is 0 or `0xFF`, either
+   way round (the device reports empty positions with the marker). When 73
+   bytes were sent and the echo is longer, the echo's bytes 73.. must also hold
+   no band (zero, or `0xFF` empty-type markers).
 
 The earbuds first answer a query with the pre-change state, so confirmation
 keeps re-querying until the echo matches or the deadline passes. At the
@@ -289,21 +303,34 @@ direct connection when it is not.
 `$XDG_DATA_HOME/qcy-omarchy/library` (format v1, see `internal/qcycore/presets.go`).
 "Preset" is not used: it already means a hardware slot.
 
-Offline (no Bluetooth, no daemon): `list [--json]` (order: user, device-import,
-factory-snapshot, then by name; unreadable files go to stderr), `show <id>`,
+Offline (no Bluetooth, no daemon): `list [--all] [--json]`, `show <id>`,
 `save <name> --gains g1,...,g10 [--master dB] [--note ..] [--replace]` (source
 user, positions 0-9 at 31..16000 Hz, Q 100, type 0, the slot 0 layout; never
 replaces unless `--replace`, and then only a source=user curve),
 `delete <id> --yes` (moved to `.trash`), `export <id> <file>`, `import <file>`,
-`seed` (idempotent; creates only the missing ones from
-`<backups>/eq-slotN-first.hex` and the `payload` field of
-`<backups>/preset-map/v3-*-slot6.json`). New seeds are named
-`<effect> (slot N)` (e.g. `Experiência auditiva (slot 11)`, id
-`experiencia-auditiva-slot-11`) for slots known to `EffectName`, else
-`Slot N (primeira leitura)`; slot 6 stays `Clássico (slot 6)`. Existing curves
-are never renamed: when the legacy id (e.g. `slot-11-primeira-leitura`) is
-already in the library the seed skips it instead of adding a duplicate, and
-that id stays valid for `show`/`apply`/`delete`.
+`seed [--json]`, and `compose --dry-run` (below). Unreadable files go to stderr.
+
+**Display order of `list`:** the factory effects in the phone app's order
+(Predefinido, Popular, Bass pesados, Rock, Suave, Clássico, Agudos suaves, Som
+espacial), then Experiência auditiva, then your own curves (source user, by
+name), then everything else (device imports such as the old slot 0 curve and
+"Personalizado (slot 255)"). Older seeds that a newer curve replaces
+(`classico-slot-6`, `slot-11-primeira-leitura`, `experiencia-auditiva-slot-11`,
+`<effect>-slot-N`, `slot-N-primeira-leitura`; see `qcycore.SupersededCurveIDs`)
+are hidden by default and shown by `--all`; they are never deleted or renamed
+and stay valid for `show`/`apply`/`delete`. `slot-0-primeira-leitura` has no
+replacement and is always listed. A user's own curve is never hidden.
+
+**`seed`** is idempotent and never renames, replaces or deletes a curve (an id
+already in the library is skipped, whatever its source). It creates:
+
+| Curve (id) | Source | Slot | From |
+|---|---|---|---|
+| Predefinido, Popular, Bass pesados, Rock, Suave, Clássico, Agudos suaves, Som espacial | factory-snapshot | 1, 2, 3, 4, 5, 6, 14, 10 | payloads **embedded in the binary** (`internal/qcycore/factory.go`; public factory data, measured on the device) |
+| Experiência auditiva (`experiencia-auditiva`) | device-import | 11 | `<backups>/eq-slot11-first.hex`, else `<backups>/preset-map/experiencia-auditiva-slot11-*.json` (`payload`); skipped with a reason when neither exists |
+| Slot 0 (primeira leitura), Personalizado (slot 255), ... | device-import | N | every other `<backups>/eq-slotN-first.hex`, named as older versions named them; factory slots and 11 are no longer seeded this way, the curves above replace them |
+
+Every seeded curve is `applyable` (see below).
 
 With the earbuds: `import-device <name> [seconds]` saves the active EQ
 (lossless payload, source device-import) and `apply <id> --yes [--full-length]
@@ -316,10 +343,41 @@ only target that stays allowed while slot 6 or 11 is active (measured: the
 phone app does exactly this, and slots 6 and 11 were re-read identical
 afterwards; `ApplyEq` lifts the protected-slot refusal for an explicit slot
 255, the active slot is still backed up first); `--slot 0` with a protected
-active slot is refused. A curve that is not `applyable` is refused before connecting; one
-with bands at positions 10-19 needs `--full-length` (143 bytes, not proven).
-`--json` carries `wrote`, `backup` and `confirmed` (false plus `code` on an
-unconfirmed write, which also exits non-zero).
+active slot is refused.
+
+A curve is `applyable` when every band has a type in 0, 2, 3, 255 (anything
+else is refused before connecting). Bands at positions 10-19 do **not** make a
+curve unapplyable: slot 255 takes the 143-byte payload with no flag (see Write
+format); `--slot 0` with such a curve is refused offline unless `--full-length`
+is given. `--json` carries `wrote`, `backup` and `confirmed` (false plus `code`
+on an unconfirmed write, which also exits non-zero).
+
+**`compose`** builds the layout the phone app writes into slot 255 for "your
+curve on top of a factory effect", and writes it through the same path as
+`apply` (daemon or direct, backup of the active payload, readback, `unconfirmed`
+handling; `allowProtected` is never passed and there is no `--slot`):
+
+```
+qcyctl library compose --base <id|none> --gains g1,...,g10 [--master dB] --yes [--json] [seconds]
+qcyctl library compose --base <id|none> --gains g1,...,g10 [--master dB] --dry-run [--json]
+```
+
+- **Layout:** first one band per bar of `--gains` whose gain is not 0 (dB,
+  -12..+12), at the bar's ISO frequency (31, 62, 125, 250, 500, 1000, 2000,
+  4000, 8000, 16000 Hz), Q 100, type 255, in bar order; then the bands of the
+  base curve in their original order, with their own freq/gain/Q/type. Positions
+  are consecutive from 0. Up to 20 bands in all; more is an error that names
+  both counts. `--base none` writes only the bars (at least one bar must be
+  non-zero).
+- **Payload:** at most 10 bands give the 73-byte payload with a zero tail; 11-20
+  give 143 bytes with the app's tail (`0xFF` in the type of every empty
+  position), allowed without a flag because the target is slot 255.
+- **Master gain:** `--master dB` if given, else the base curve's master gain,
+  else -12 (what every factory effect reports).
+- **`--dry-run`** (no `--yes` needed) loads the base from the library, builds
+  and validates the payload and prints it without connecting to anything. With
+  `--json`: `{base, slot, masterGain, nBands, fullLength, payload (hex), bands:[{index, freq, gain, q, type}]}`.
+  A real write prints the `apply` result plus `base`, with `id: "compose"`.
 
 ## Restarts caused by writing
 
@@ -423,7 +481,7 @@ to `busy` and `not_found`):
 | `code` | Meaning | Written? |
 |---|---|---|
 | `protected_slot` | the target or the active slot is 6 or 11; pass `allowProtected` | no |
-| `full_length_required` | the payload needs 143 bytes (unproven); pass `allowFull` | no |
+| `full_length_required` | the payload needs 143 bytes (unproven); pass `allowFull` (not needed when the explicit `slot` is 255) | no |
 | `unconfirmed` | the write was sent, the device keeps reporting another slot | sent, unknown |
 | none | validation error, backup failure or readback mismatch | see message |
 

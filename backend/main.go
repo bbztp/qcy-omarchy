@@ -801,7 +801,7 @@ func usage() {
   qcyctl eq preset <n> [seconds]   (unsupported on models without characteristic 000B)
   qcyctl master-gain <dB> [--full-length] [--json] [seconds]
         (-12..+12; only the master gain changes; --full-length is needed when the active slot has bands 10-19, e.g. slot 11)
-  qcyctl library <list|show|save|delete|export|import|seed|import-device|apply> ...   (curve library; see README)
+  qcyctl library <list|show|save|delete|export|import|seed|import-device|apply|compose> ...   (curve library; see README)
   qcyctl keys get [seconds]
   qcyctl keys set <keyId:funId> [<keyId:funId> ...] [seconds]
 All setters read back by querying the opcode (FF 03 FE 01 <opcode>) and fail non-zero on mismatch.`)
@@ -2386,7 +2386,7 @@ func cmdEqPreset(args []string) error {
 // which (unlike the 73-byte one) has not been proven on the device.
 func warnFullLength(res *qcycore.EqResult) {
 	if res.FullLength {
-		fmt.Fprintf(os.Stderr, "warning: fullLength=true: wrote the full 143-byte payload (--full-length); this format is NOT proven on the device (readback was confirmed byte for byte)\n")
+		fmt.Fprintf(os.Stderr, "warning: fullLength=true: wrote the full 143-byte payload (slot 255 takes it without --full-length, as the phone app does; any other slot needs the flag); this format is NOT proven for the factory slots (readback was confirmed byte for byte)\n")
 	}
 }
 

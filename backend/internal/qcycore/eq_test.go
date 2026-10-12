@@ -547,7 +547,10 @@ func TestBandsSizeAndValidation(t *testing.T) {
 	bad := map[string][]BandSpec{
 		"empty":        {},
 		"type 1":       {{Index: 0, Freq: 100, Gain: 0, Q: 100, Type: 1}},
-		"type 0xff":    {{Index: 0, Freq: 100, Gain: 0, Q: 100, Type: 0xff}},
+		"type 7":       {{Index: 0, Freq: 100, Gain: 0, Q: 100, Type: 7}},
+		"type 254":     {{Index: 0, Freq: 100, Gain: 0, Q: 100, Type: 254}},
+		"type 256":     {{Index: 0, Freq: 100, Gain: 0, Q: 100, Type: 256}},
+		"type -1":      {{Index: 0, Freq: 100, Gain: 0, Q: 100, Type: -1}},
 		"freq 0":       {{Index: 0, Freq: 0, Gain: 0, Q: 100, Type: 2}},
 		"freq high":    {{Index: 0, Freq: 20001, Gain: 0, Q: 100, Type: 2}},
 		"q 0":          {{Index: 0, Freq: 100, Gain: 0, Q: 0, Type: 2}},
@@ -744,5 +747,162 @@ func TestEffectName(t *testing.T) {
 	p[0] = 11
 	if s, _ := DecodeEq(p); s.Effect != "Experiência auditiva" {
 		t.Fatalf("%+v", s)
+	}
+}
+
+// The device has shown band types 0, 2, 3 (factory presets 1, 10, 14) and 255
+// (the app's own bars in slot 255). Everything else is refused.
+func TestBandTypesAcceptedAndRefused(t *testing.T) {
+	cur := fixture(8, 0)
+	m := 0
+	for _, typ := range []int{0, 2, 3, 255} {
+		b := []BandSpec{{Index: 0, Freq: 100, Gain: 1, Q: 100, Type: typ}}
+		next, err := ApplyEq(cur, EqOp{Bands: b, MasterCenti: &m})
+		if err != nil {
+			t.Errorf("type %d refused: %v", typ, err)
+			continue
+		}
+		if got := next[3+6]; int(got) != typ {
+			t.Errorf("type %d: wrote %d", typ, got)
+		}
+		if !BandTypeSupported(typ) {
+			t.Errorf("BandTypeSupported(%d) = false", typ)
+		}
+	}
+	for _, typ := range []int{1, 4, 7, 254, 256, -1} {
+		b := []BandSpec{{Index: 0, Freq: 100, Gain: 1, Q: 100, Type: typ}}
+		if _, err := ApplyEq(cur, EqOp{Bands: b, MasterCenti: &m}); err == nil {
+			t.Errorf("type %d accepted", typ)
+		}
+		if BandTypeSupported(typ) {
+			t.Errorf("BandTypeSupported(%d) = true", typ)
+		}
+	}
+}
+
+// Slot 255 is the phone app's buffer and takes up to 143 bytes: an explicit
+// target of 255 implies AllowFullLength. Every other target keeps the refusal,
+// and so does a patch of an active slot 255 that names no slot.
+func TestSlot255ImpliesFullLength(t *testing.T) {
+	cur := fixture(8, 0)
+	m := -1200
+	wide := append(bands3(), BandSpec{Index: 12, Freq: 12000, Gain: 1, Q: 100, Type: 2})
+
+	next, err := ApplyEq(cur, EqOp{Slot: intp(SlotCustomApp), Bands: wide, MasterCenti: &m})
+	if err != nil {
+		t.Fatalf("255 with a band at position 12, no flag: %v", err)
+	}
+	if len(next) != EqReadLen || next[0] != 0xff {
+		t.Fatalf("len %d slot %#x", len(next), next[0])
+	}
+	if !FullLength(next) {
+		t.Fatal("FullLength false for 143 bytes")
+	}
+	// the app's format: empty positions are all zero except type 0xFF
+	named := map[int]bool{0: true, 4: true, 9: true, 12: true}
+	for i := 0; i < EqMaxBands; i++ {
+		pos := next[3+i*7 : 3+(i+1)*7]
+		if named[i] {
+			if pos[0] == 0 && pos[1] == 0 {
+				t.Errorf("position %d empty", i)
+			}
+			continue
+		}
+		if !bytes.Equal(pos, []byte{0, 0, 0, 0, 0, 0, 0xff}) {
+			t.Errorf("position %d = %x, want 000000000000ff", i, pos)
+		}
+	}
+	if s := mustDecode(t, next); len(s.Bands) != 4 || s.Bands[3].Index != 12 {
+		t.Fatalf("decoded %+v", s.Bands)
+	}
+	// the device echoing the payload back confirms it
+	match := EqMatch(next, EqOp{Slot: intp(SlotCustomApp)})
+	if !match(next) {
+		t.Fatal("identical echo refused")
+	}
+	// zeros where the marker was sent (or the reverse) is the same empty position
+	zeroed := append([]byte(nil), next...)
+	for i := 0; i < EqMaxBands; i++ {
+		if !named[i] {
+			zeroed[3+i*7+6] = 0
+		}
+	}
+	if !match(zeroed) {
+		t.Fatal("echo with zero type bytes in the empty positions refused")
+	}
+	if !EqMatch(zeroed, EqOp{})(next) {
+		t.Fatal("marker echo of a zero-tail write refused")
+	}
+	// but a band that differs, or a position that is not empty, still fails
+	bad := append([]byte(nil), next...)
+	bad[3+12*7+2]++
+	if match(bad) {
+		t.Fatal("changed band confirmed")
+	}
+	junk := append([]byte(nil), next...)
+	junk[3+15*7+4] = 7 // q of an empty position
+	if match(junk) {
+		t.Fatal("junk in an empty position confirmed")
+	}
+
+	// the same bands to any other slot still need the flag
+	for _, slot := range []int{0, 3, 8, 254} {
+		_, err := ApplyEq(cur, EqOp{Slot: intp(slot), Bands: wide, MasterCenti: &m})
+		if !errors.Is(err, ErrFullLengthRequired) {
+			t.Errorf("slot %d without the flag: %v", slot, err)
+		}
+	}
+	next0, err := ApplyEq(cur, EqOp{Slot: intp(0), Bands: wide, MasterCenti: &m, AllowFullLength: true})
+	if err != nil || len(next0) != EqReadLen {
+		t.Fatalf("slot 0 with the flag: len %d %v", len(next0), err)
+	}
+	if !bytes.Equal(next0[3+13*7:], make([]byte, EqReadLen-3-13*7)) {
+		t.Fatalf("non-255 tail changed: %x", next0[3+13*7:])
+	}
+
+	// 255 with ten positions or fewer is the proven 73-byte format
+	short, err := ApplyEq(cur, EqOp{Slot: intp(SlotCustomApp), Bands: bands3(), MasterCenti: &m})
+	if err != nil || len(short) != EqLen {
+		t.Fatalf("255 with positions 0-9: len %d %v", len(short), err)
+	}
+
+	// patch mode: explicit 255 over a payload with a populated tail
+	custom := mustHex(t, realCustom11)
+	mm := -100
+	if _, err := ApplyEq(custom, EqOp{Slot: intp(SlotCustomApp), MasterCenti: &mm}); err != nil {
+		t.Fatalf("patch to explicit 255 over a tail: %v", err)
+	}
+	if _, err := ApplyEq(custom, EqOp{MasterCenti: &mm}); !errors.Is(err, ErrFullLengthRequired) {
+		t.Fatalf("patch of the active slot 11, no slot given: %v", err)
+	}
+	// an ACTIVE slot 255 does not make a slot-less patch implicit
+	active255 := append([]byte(nil), custom...)
+	active255[0] = 0xff
+	if _, err := ApplyEq(active255, EqOp{MasterCenti: &mm}); !errors.Is(err, ErrFullLengthRequired) {
+		t.Fatalf("slot-less patch of active 255: %v", err)
+	}
+}
+
+// A 73-byte write whose empty positions are zero is confirmed by the 143-byte
+// echo the device gives, where those positions carry the 0xFF type marker.
+func TestEqMatchEmptyPositionTypeByte(t *testing.T) {
+	m := -1200
+	sent, err := ApplyEq(fixture(8, 0), EqOp{Slot: intp(SlotCustomApp), Bands: bands3(), MasterCenti: &m})
+	if err != nil || len(sent) != EqLen {
+		t.Fatalf("%v len %d", err, len(sent))
+	}
+	echo := append(append([]byte(nil), sent...), make([]byte, EqReadLen-EqLen)...)
+	for i := 0; i < EqMaxBands; i++ {
+		o := 3 + i*7
+		if i >= EqBands || (echo[o] == 0 && echo[o+1] == 0) {
+			echo[o+6] = 0xff
+		}
+	}
+	if !EqMatch(sent, EqOp{})(echo) {
+		t.Fatalf("marker echo refused: %x", echo)
+	}
+	echo[3+2*7+6] = 3 // type byte of an empty position that is neither 0 nor 0xFF
+	if EqMatch(sent, EqOp{})(echo) {
+		t.Fatal("stray type byte in an empty position confirmed")
 	}
 }
