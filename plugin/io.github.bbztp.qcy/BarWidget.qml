@@ -199,7 +199,7 @@ Panel {
 
   function submitSave(n) {
     if (!nameValid(n)) return
-    Qcy.libraryCreate(String(n).trim(), root.editGainsCsv(), root.shownMaster(), function (ok) {
+    Qcy.libraryCreate(String(n).trim(), root.shownGainsCsv(), root.shownMaster(), function (ok) {
       if (ok) root.closeSave()
     })
   }
@@ -223,6 +223,49 @@ Panel {
     return root.editGains.map(function (g) {
       return (Math.round(root.clampGain(g) * 100) / 100 + 0).toFixed(2)
     }).join(",")
+  }
+
+  // The base effect seen through the ten bars: each band of the effect is a
+  // bell (gain / (1 + Q^2 (f/f0 - f0/f)^2), Q stored x100) summed at the ten
+  // bar frequencies. An approximation to show and to edit from; the effect
+  // itself is still written whole and the bars add on top of it.
+  readonly property var baseGains: {
+    var out = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    var l = Qcy.library
+    var e = null
+    for (var k = 0; k < l.length; k++) if (l[k].id === root.composeBase) { e = l[k]; break }
+    if (!e || !e.bands) return out
+    for (var i = 0; i < 10; i++) {
+      var f = root.editorFreqs[i]
+      var sum = 0
+      for (var j = 0; j < e.bands.length; j++) {
+        var b = e.bands[j]
+        if (!b.freq || !b.gain) continue
+        var q = (b.q > 0 ? b.q : 100) / 100
+        var d = f / b.freq - b.freq / f
+        sum += b.gain / (1 + q * q * d * d)
+      }
+      out[i] = Math.round(Math.max(-root.editorMaxDb, Math.min(root.editorMaxDb, sum)) * 2) / 2 + 0
+    }
+    return out
+  }
+
+  // What the bars show: the effect's curve plus what the user moved.
+  readonly property var shownGains: root.editGains.map(function (g, i) {
+    return Math.max(-root.editorMaxDb, Math.min(root.editorMaxDb, Number(root.baseGains[i]) + Number(g)))
+  })
+
+  function shownGainsCsv() {
+    return root.shownGains.map(function (g) {
+      return (Math.round(g * 100) / 100 + 0).toFixed(2)
+    }).join(",")
+  }
+
+  // A bar was dragged to the value v on screen: the difference to the effect's
+  // own curve is what gets composed on top of it.
+  function editSetShown(i, v) {
+    var target = Math.round(root.clampGain(v) * 2) / 2
+    root.editSetGain(i, target - Number(root.baseGains[i]))
   }
 
   function editSetGain(i, v) {
@@ -1186,15 +1229,15 @@ Panel {
 
                 BarEditor {
                   width: parent.width
-                  gains: root.editGains
+                  gains: root.shownGains
                   editable: root.canApplyLibrary
-                  onEdited: function (i, v) { root.editSetGain(i, v) }
+                  onEdited: function (i, v) { root.editSetShown(i, v) }
                   onCommitted: root.scheduleEq()
                 }
 
                 Text {
                   width: parent.width
-                  text: "Arraste as barras (±12 dB). Toque duas vezes para zerar uma barra. O som muda ao soltar."
+                  text: "As barras mostram o efeito escolhido. Arraste (±12 dB) e solte: o som muda na hora. Toque duas vezes para zerar uma barra. \"Salvar como…\" guarda o que você vê."
                   color: Qt.darker(root.foreground, 1.5)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -1243,7 +1286,7 @@ Panel {
 
                   Chip {
                     opacity: root.canApplyLibrary ? 1.0 : 0.5
-                    label: "Zerar"
+                    label: root.composeBase === "none" ? "Zerar" : "Restaurar"
                     onClicked: root.eqZero()
                   }
                   Chip {
