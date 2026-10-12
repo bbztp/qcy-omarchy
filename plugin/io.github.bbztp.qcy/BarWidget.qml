@@ -676,21 +676,23 @@ Panel {
   // 000D. Ids follow Quicky's KeyID/FuncID vocabulary; an id outside it is shown
   // as-is rather than guessed at.
   readonly property var funcNames: ({
-    0x00: "Disabled", 0x01: "Play / pause", 0x02: "Previous", 0x03: "Next",
-    0x04: "Voice assistant", 0x05: "Volume up", 0x06: "Volume down",
-    0x07: "Game mode", 0x08: "Answer call", 0x09: "Reject call",
-    0x0a: "Hold call", 0x0b: "Redial"
+    0x00: "Desativado", 0x01: "Tocar/pausar", 0x02: "Anterior", 0x03: "Próxima",
+    0x04: "Assistente de voz", 0x05: "Volume +", 0x06: "Volume −",
+    0x07: "Modo jogo", 0x08: "Atender", 0x09: "Rejeitar",
+    0x0a: "Reter chamada", 0x0b: "Rediscar"
   })
 
   readonly property var keyNames: ({
-    0x01: "L tap", 0x02: "R tap", 0x03: "L double", 0x04: "R double",
-    0x05: "L triple", 0x06: "R triple", 0x07: "L quad", 0x08: "R quad",
-    0x09: "L hold", 0x0a: "R hold",
-    0x15: "L tap (call)", 0x16: "R tap (call)", 0x17: "L double (call)",
-    0x18: "R double (call)", 0x19: "L triple (call)", 0x1a: "R triple (call)",
-    0x1b: "L quad (call)", 0x1c: "R quad (call)", 0x1d: "L hold (call)",
-    0x1e: "R hold (call)"
+    0x01: "Esq. toque", 0x02: "Dir. toque", 0x03: "Esq. duplo", 0x04: "Dir. duplo",
+    0x05: "Esq. triplo", 0x06: "Dir. triplo", 0x07: "Esq. quádruplo", 0x08: "Dir. quádruplo",
+    0x09: "Esq. segurar", 0x0a: "Dir. segurar",
+    0x15: "Esq. toque (chamada)", 0x16: "Dir. toque (chamada)", 0x17: "Esq. duplo (chamada)",
+    0x18: "Dir. duplo (chamada)", 0x19: "Esq. triplo (chamada)", 0x1a: "Dir. triplo (chamada)",
+    0x1b: "Esq. quádruplo (chamada)", 0x1c: "Dir. quádruplo (chamada)",
+    0x1d: "Esq. segurar (chamada)", 0x1e: "Dir. segurar (chamada)"
   })
+
+  readonly property var gestureNames: ["Toque", "Duplo", "Triplo", "Quádruplo", "Segurar"]
 
   // Same identity-stable caching as the EQ bands: `rep` is replaced on every
   // status read, so the decoded rows are rebuilt only when the raw pair list
@@ -704,16 +706,31 @@ Panel {
     var sig = pairs.join(",")
     if (sig === root._touchSig) return
     root._touchSig = sig
+    // One row per gesture (and per call/normal context), Left | Right. A key
+    // id outside the known ranges keeps its own row, named as before.
     var rows = []
+    var byKey = {}
     for (var i = 0; i < pairs.length; i++) {
       var bits = String(pairs[i]).split(":")
       var kid = parseInt(bits[0], 16)
       var fid = parseInt(bits[1], 16)
-      rows.push({
-        slot: root.keyNames[kid] || ("0x" + bits[0]),
-        action: root.funcNames[fid] || ("0x" + bits[1])
-      })
+      var action = root.funcNames[fid] || ("0x" + bits[1])
+      var call = kid >= 0x15
+      var n = kid - (call ? 0x15 : 0x01)
+      if (!(n >= 0 && n < 10)) {
+        rows.push({ gesture: root.keyNames[kid] || ("0x" + bits[0]), left: action, right: "" })
+        continue
+      }
+      var gi = Math.floor(n / 2)
+      var key = (call ? "c" : "n") + gi
+      if (!byKey[key]) {
+        byKey[key] = { gesture: root.gestureNames[gi] + (call ? " (chamada)" : ""),
+                       left: "—", right: "—", order: (call ? 10 : 0) + gi }
+        rows.push(byKey[key])
+      }
+      byKey[key][n % 2 === 0 ? "left" : "right"] = action
     }
+    rows.sort(function (a, b) { return (a.order === undefined ? 99 : a.order) - (b.order === undefined ? 99 : b.order) })
     root.touchRowModel = rows
   }
 
@@ -1083,7 +1100,7 @@ Panel {
 
               Item {
                 width: parent.width
-                implicitHeight: liveTitle.implicitHeight
+                implicitHeight: liveTitle.implicitHeight + Style.space(6)
 
                 Text {
                   id: liveTitle
@@ -1151,29 +1168,152 @@ Panel {
               wrapMode: Text.WordWrap
             }
 
-            // ---- Protected slot warning ----
-            Card {
+            // ---- Protected slot warning: one quiet strip, not repeated per curve ----
+            BorderSurface {
               width: parent.width
               visible: root.slotProtected
+              implicitHeight: warnRow.implicitHeight + Style.space(20)
+              radius: Style.cornerRadius
+              color: "transparent"
+              borderSpec: Border.controlSpec("selected", root.foreground, root.accent)
+
+              Row {
+                id: warnRow
+                x: Style.space(12)
+                y: Style.space(10)
+                width: parent.width - Style.space(24)
+                spacing: Style.space(10)
+
+                Text {
+                  id: warnIcon
+                  text: String.fromCodePoint(0xF033E)
+                  color: root.accent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.title
+                }
+                Text {
+                  width: parent.width - warnIcon.implicitWidth - Style.space(10)
+                  text: "Slot " + root.activeSlot + " protegido (efeito de fábrica ou seu custom). "
+                    + "Para não sobrescrevê-lo, a biblioteca não aplica curvas enquanto o slot 6 ou 11 estiver ativo."
+                  color: Qt.darker(root.foreground, 1.15)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  wrapMode: Text.WordWrap
+                }
+              }
+            }
+
+            // ---- Library ----
+            Column {
+              width: parent.width
+              spacing: Style.space(8)
+
+              PanelSectionHeader {
+                text: "BIBLIOTECA"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
 
               Text {
                 width: parent.width
-                text: "Efeito de fábrica ou seu custom está ativo (slot " + root.activeSlot
-                  + "). Para não sobrescrever, a biblioteca não aplica enquanto o slot 6 ou 11 estiver ativo."
+                visible: Qcy.libraryError !== ""
+                text: Qcy.libraryError
                 color: Color.urgent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
                 wrapMode: Text.WordWrap
               }
+
+              Text {
+                width: parent.width
+                visible: Qcy.libraryError === "" && Qcy.library.length === 0
+                text: Qcy.libraryLoading || !Qcy.libraryLoaded
+                  ? "Carregando a biblioteca…"
+                  : "A biblioteca está vazia. Salve a curva atual abaixo."
+                color: Qt.darker(root.foreground, 1.5)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WordWrap
+              }
+
+              Column {
+                id: libList
+                width: parent.width
+                spacing: Style.space(8)
+
+                Repeater {
+                  model: Qcy.library
+                  CurveCard {
+                    required property var modelData
+                    entry: modelData
+                    cardWidth: libList.width
+                    slotProtected: root.slotProtected
+                    canApply: root.canApplyLibrary
+                    live: root.entryIsLive(modelData)
+                    phase: Qcy.libraryOp.kind === "apply" && Qcy.libraryOp.id === modelData.id
+                      ? Qcy.libraryOp.phase : "idle"
+                    confirmingDelete: root.pendingDeleteId === modelData.id
+                    deleteBlocked: Qcy.libraryOp.phase === "running"
+                    onApplyRequested: {
+                      root.pendingDeleteId = ""
+                      Qcy.libraryApply(modelData.id)
+                    }
+                    onEditRequested: {
+                      root.pendingDeleteId = ""
+                      root.openEditorFromEntry(modelData)
+                    }
+                    onDeleteAsked: root.pendingDeleteId = modelData.id
+                    onDeleteCancelled: root.pendingDeleteId = ""
+                    onDeleteConfirmed: {
+                      root.pendingDeleteId = ""
+                      Qcy.libraryDelete(modelData.id)
+                    }
+                  }
+                }
+              }
+
+              // Result of the last library operation, with the backup path
+              // when the write was sent but not confirmed.
+              Text {
+                width: parent.width
+                visible: root.opText() !== "" && !root.editorShowsOp()
+                text: root.opText()
+                color: Qcy.libraryOp.phase === "error" ? Color.urgent : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WrapAnywhere
+              }
+            }
+
+            // ---- Edit / save, side by side ----
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+
+              Chip {
+                width: (parent.width - Style.space(8)) / 2
+                label: "Editar / Nova curva"
+                active: root.editorOpen
+                onClicked: {
+                  if (root.editorOpen) root.closeEditor()
+                  else root.openEditorLive()
+                }
+              }
+              Chip {
+                width: (parent.width - Style.space(8)) / 2
+                opacity: root.canSaveCurrent ? 1.0 : 0.5
+                label: "Salvar curva atual"
+                active: root.saveOpen
+                onClicked: {
+                  if (!root.canSaveCurrent) return
+                  if (root.saveOpen) { root.closeSave(); return }
+                  root.saveOpen = true
+                  nameField.forceActiveFocus()
+                }
+              }
             }
 
             // ---- Curve editor ----
-            Chip {
-              visible: !root.editorOpen
-              label: "Editar / Nova curva"
-              onClicked: root.openEditorLive()
-            }
-
             Card {
               width: parent.width
               visible: root.editorOpen
@@ -1351,104 +1491,10 @@ Panel {
               }
             }
 
-            // ---- Library ----
-            Column {
-              width: parent.width
-              spacing: Style.space(8)
-
-              PanelSectionHeader {
-                text: "BIBLIOTECA"
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-              }
-
-              Text {
-                width: parent.width
-                visible: Qcy.libraryError !== ""
-                text: Qcy.libraryError
-                color: Color.urgent
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                wrapMode: Text.WordWrap
-              }
-
-              Text {
-                width: parent.width
-                visible: Qcy.libraryError === "" && Qcy.library.length === 0
-                text: Qcy.libraryLoading || !Qcy.libraryLoaded
-                  ? "Carregando a biblioteca…"
-                  : "A biblioteca está vazia. Salve a curva atual abaixo."
-                color: Qt.darker(root.foreground, 1.5)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                wrapMode: Text.WordWrap
-              }
-
-              Grid {
-                id: libGrid
-                width: parent.width
-                columns: 2
-                columnSpacing: Style.space(8)
-                rowSpacing: Style.space(8)
-
-                Repeater {
-                  model: Qcy.library
-                  CurveCard {
-                    required property var modelData
-                    entry: modelData
-                    cardWidth: (libGrid.width - Style.space(8)) / 2
-                    canApply: root.canApplyLibrary
-                    live: root.entryIsLive(modelData)
-                    phase: Qcy.libraryOp.kind === "apply" && Qcy.libraryOp.id === modelData.id
-                      ? Qcy.libraryOp.phase : "idle"
-                    confirmingDelete: root.pendingDeleteId === modelData.id
-                    deleteBlocked: Qcy.libraryOp.phase === "running"
-                    onApplyRequested: {
-                      root.pendingDeleteId = ""
-                      Qcy.libraryApply(modelData.id)
-                    }
-                    onEditRequested: {
-                      root.pendingDeleteId = ""
-                      root.openEditorFromEntry(modelData)
-                    }
-                    onDeleteAsked: root.pendingDeleteId = modelData.id
-                    onDeleteCancelled: root.pendingDeleteId = ""
-                    onDeleteConfirmed: {
-                      root.pendingDeleteId = ""
-                      Qcy.libraryDelete(modelData.id)
-                    }
-                  }
-                }
-              }
-
-              // Result of the last library operation, with the backup path
-              // when the write was sent but not confirmed.
-              Text {
-                width: parent.width
-                visible: root.opText() !== "" && !root.editorShowsOp()
-                text: root.opText()
-                color: Qcy.libraryOp.phase === "error" ? Color.urgent : root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                wrapMode: Text.WrapAnywhere
-              }
-            }
-
             // ---- Save current curve ----
             Column {
               width: parent.width
               spacing: Style.space(8)
-
-              Chip {
-                visible: !root.saveOpen
-                opacity: root.canSaveCurrent ? 1.0 : 0.5
-                label: "Salvar curva atual na biblioteca"
-                onClicked: {
-                  if (!root.canSaveCurrent) return
-                  root.saveOpen = true
-                  nameField.forceActiveFocus()
-                }
-              }
 
               Column {
                 width: parent.width
@@ -1646,21 +1692,22 @@ Panel {
                 fontFamily: root.fontFamily
               }
 
-              Grid {
-                id: touchGrid
+              TouchCell {
                 width: parent.width
-                columns: 2
-                columnSpacing: Style.space(20)
-                rowSpacing: Style.space(7)
+                header: true
+                gesture: ""
+                leftText: "ESQUERDO"
+                rightText: "DIREITO"
+              }
 
-                Repeater {
-                  model: root.touchRows()
-                  TouchCell {
-                    required property var modelData
-                    slot: modelData.slot
-                    action: modelData.action
-                    cellWidth: (touchGrid.width - Style.space(20)) / 2
-                  }
+              Repeater {
+                model: root.touchRows()
+                TouchCell {
+                  required property var modelData
+                  width: parent.width
+                  gesture: modelData.gesture
+                  leftText: modelData.left
+                  rightText: modelData.right
                 }
               }
             }
@@ -1905,7 +1952,7 @@ Panel {
     // The plot stops short of the bottom so the band labels have room INSIDE
     // this item. They used to be anchored to the delegate's bottom edge, which
     // put them ~2px past `height` and on top of whatever followed.
-    readonly property real plotHeight: Style.spacing.controlHeight * (curve.compact ? 0.9 : 1.6)
+    readonly property real plotHeight: Style.spacing.controlHeight * (curve.compact ? 1.1 : 1.6)
     readonly property int labelHeight: curve.compact ? 0 : Math.ceil(Style.font.caption * 0.85) + Style.space(2)
     implicitHeight: plotHeight + labelHeight
 
@@ -1996,7 +2043,7 @@ Panel {
     Text {
       id: srowValue
       text: (srow.integer ? Math.round(srow.value) : srow.value.toFixed(2)) + srow.suffix
-      color: root.foreground
+      color: root.accent
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
       font.bold: true
@@ -2023,31 +2070,46 @@ Panel {
     }
   }
 
-  // One row of the remap table. The width comes from the grid rather than being
-  // hard-coded, so the action text gets whatever room the panel has and elides
-  // instead of colliding with its neighbour.
+  // One gesture of the remap table: the gesture on the left, then the action
+  // for the Left and Right earbud. Each side elides instead of colliding with
+  // its neighbour. `header` renders the column titles instead.
   component TouchCell: Row {
     id: cell
-    required property string slot
-    required property string action
-    property real cellWidth: 150
-    width: cell.cellWidth
+    required property string gesture
+    required property string leftText
+    required property string rightText
+    property bool header: false
+    readonly property real gestureW: Style.space(84)
+    readonly property real sideW: Math.max(0, (cell.width - cell.gestureW - Style.space(16)) / 2)
     spacing: Style.space(8)
+
     Text {
-      text: cell.slot
+      width: cell.gestureW
+      text: cell.gesture
       color: Qt.darker(root.foreground, 1.4)
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
       font.bold: true
-      font.letterSpacing: 0.4
-      width: Style.space(56)
+      elide: Text.ElideRight
     }
     Text {
-      text: cell.action
-      color: root.foreground
+      width: cell.sideW
+      text: cell.leftText
+      color: cell.header ? Qt.darker(root.foreground, 1.35) : root.foreground
       font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
-      width: Math.max(0, parent.width - Style.space(64))
+      font.pixelSize: cell.header ? Style.font.caption : Style.font.bodySmall
+      font.bold: cell.header
+      font.letterSpacing: cell.header ? 1.1 : 0
+      elide: Text.ElideRight
+    }
+    Text {
+      width: cell.sideW
+      text: cell.rightText
+      color: cell.header ? Qt.darker(root.foreground, 1.35) : root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: cell.header ? Style.font.caption : Style.font.bodySmall
+      font.bold: cell.header
+      font.letterSpacing: cell.header ? 1.1 : 0
       elide: Text.ElideRight
     }
   }
@@ -2216,13 +2278,16 @@ Panel {
     }
   }
 
-  // One library curve. Clicking applies it; it is disabled (with the reason in
-  // a small line) when it cannot be written or the active slot is protected.
+  // One library curve, one wide row: name and a small info line on the left, a
+  // mini curve and a compact "Editar" on the right. Clicking the row applies it;
+  // it is dimmed (and says why, in a small line) when it cannot be written.
+  // The protected-slot warning lives in one strip above the list, not here.
   component CurveCard: BorderSurface {
     id: cc
     required property var entry
     property real cardWidth: 0
     property bool canApply: false
+    property bool slotProtected: false
     property bool live: false
     // idle | running | ok | unconfirmed | error — this card's own apply state.
     property string phase: "idle"
@@ -2238,9 +2303,10 @@ Panel {
     readonly property bool usable: cc.canApply && cc.entryApplyable
     readonly property bool isUser: cc.entry.source === "user"
     readonly property real master: Number(cc.entry.masterGain) || 0
+    readonly property real sideWidth: Style.space(110)
 
     width: cc.cardWidth
-    implicitHeight: ccBody.implicitHeight + Style.space(24)
+    implicitHeight: Math.max(textCol.implicitHeight, sideCol.implicitHeight) + Style.space(24)
     radius: Style.cornerRadius
     opacity: (cc.usable || cc.phase !== "idle" || cc.live) ? 1.0 : 0.55
     color: (cc.live || cc.phase === "ok")
@@ -2260,11 +2326,11 @@ Panel {
     }
 
     Column {
-      id: ccBody
+      id: textCol
       x: Style.space(12)
       y: Style.space(12)
-      width: cc.width - Style.space(24)
-      spacing: Style.space(6)
+      width: cc.width - Style.space(24) - cc.sideWidth - Style.space(10)
+      spacing: Style.space(4)
 
       Text {
         width: parent.width
@@ -2273,6 +2339,8 @@ Panel {
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
         font.bold: true
+        wrapMode: Text.WordWrap
+        maximumLineCount: 2
         elide: Text.ElideRight
       }
 
@@ -2285,12 +2353,6 @@ Panel {
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         elide: Text.ElideRight
-      }
-
-      EqCurve {
-        width: parent.width
-        bands: cc.entry.bands
-        compact: true
       }
 
       Text {
@@ -2312,14 +2374,9 @@ Panel {
       }
 
       Row {
-        visible: cc.phase !== "running"
+        visible: cc.phase !== "running" && (cc.isUser || cc.confirmingDelete)
         spacing: Style.space(6)
 
-        Chip {
-          visible: !cc.confirmingDelete
-          label: "Editar"
-          onClicked: cc.editRequested()
-        }
         Chip {
           visible: cc.isUser && !cc.confirmingDelete
           opacity: cc.deleteBlocked ? 0.5 : 1.0
@@ -2344,6 +2401,27 @@ Panel {
           label: "Não"
           onClicked: cc.deleteCancelled()
         }
+      }
+    }
+
+    Column {
+      id: sideCol
+      x: cc.width - Style.space(12) - cc.sideWidth
+      y: Style.space(12)
+      width: cc.sideWidth
+      spacing: Style.space(6)
+
+      EqCurve {
+        width: parent.width
+        bands: cc.entry.bands
+        compact: true
+      }
+
+      Chip {
+        visible: cc.phase !== "running"
+        width: parent.width
+        label: "Editar"
+        onClicked: cc.editRequested()
       }
     }
   }
