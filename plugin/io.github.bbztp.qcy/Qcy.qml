@@ -542,22 +542,35 @@ Singleton {
   // --allow-protected nor --full-length: the backend refuses what is unsafe.
   function libraryApply(id) {
     if (libraryOp.phase === "running") return
+    _applyRun(id, null)
+  }
+
+  // `after` (optional) runs once on every terminal path, before any queued
+  // draft is started. The caller has already checked libraryOp.phase.
+  function _applyRun(id, after) {
     _setOp("apply", "running", id, "", "")
+    function finish() {
+      try { if (after) after() } catch (e) { console.warn("qcy: callback failed:", e) }
+      root._draftKick()
+    }
     set("Aplicar curva", ["library", "apply", id, "--yes", "--json"], function (code, out, err) {
       var j = root._parseJson(out)
       if (code === 0 && j && j.confirmed === true) {
         root._setOp("apply", "ok", id, "", j.backup || "")
         root.refresh()
+        finish()
         return
       }
       if (code === -1) {
         root._setOp("apply", "error", id, "Cancelado: outra ação foi enviada ou os fones saíram de alcance.", "")
+        finish()
         return
       }
       var backup = j && j.backup ? j.backup : ""
       if (j && j.code === "unconfirmed") {
         root._setOp("apply", "unconfirmed", id, j.error || "", backup)
         root.refresh()
+        finish()
         return
       }
       var msg
@@ -572,7 +585,83 @@ Singleton {
       else
         msg = (j && j.error) ? j.error : (root._lastLine(err) || ("O comando falhou (código " + code + ")"))
       root._setOp("apply", "error", id, msg, backup)
+      finish()
     })
+  }
+
+  // ---- curve editor ----
+  //
+  // gains is the "g1,...,g10" string (dB), master a dB number; both come
+  // already clamped and rounded by the editor, the backend validates again.
+
+  readonly property string draftId: "rascunho"
+  property bool draftBusy: false
+  property var _draftNext: null       // latest queued request; last one wins
+
+  function _hasCurve(id) {
+    for (var i = 0; i < library.length; i++) if (library[i].id === id) return true
+    return false
+  }
+
+  // Saves the draft curve ("rascunho", created or replaced) and applies it.
+  // Never more than one in flight: a request made meanwhile replaces the
+  // queued one and runs when the current one is done.
+  function libraryDraftApply(gains, master) {
+    _draftNext = { gains: String(gains), master: Number(master) }
+    _draftKick()
+  }
+
+  function _draftKick() {
+    if (draftBusy || _draftNext === null) return
+    if (libraryOp.phase === "running") return   // _applyRun's finish() kicks again
+    var req = _draftNext
+    _draftNext = null
+    draftBusy = true
+    _setOp("apply", "running", draftId, "", "")
+    _draftSave(req, _hasCurve(draftId), true)
+  }
+
+  function _draftSave(req, replace, mayRetry) {
+    var args = ["library", "save", draftId, "--gains=" + req.gains, "--master=" + req.master.toFixed(1),
+                "--note=Rascunho do editor", "--json"]
+    if (replace) args.push("--replace")
+    runOffline(args, function (code, out, err) {
+      if (code === 0) {
+        root.libraryReload()
+        root._applyRun(root.draftId, function () { root.draftBusy = false })
+        return
+      }
+      // The list may have been stale: flip create/replace once.
+      if (mayRetry && !replace && /already exists/i.test(err)) { root._draftSave(req, true, false); return }
+      if (mayRetry && replace && /no such file|not exist/i.test(err)) { root._draftSave(req, false, false); return }
+      root.draftBusy = false
+      root._setOp("apply", "error", root.draftId, "Não foi possível salvar o rascunho: "
+        + (root._lastLine(err) || ("código " + code)), "")
+      root._draftKick()
+    })
+  }
+
+  // Saves the editor's bars under a new name; never replaces.
+  function libraryCreate(name, gains, master, done) {
+    if (libraryOp.phase === "running") return
+    _setOp("save", "running", "", "", "")
+    runOffline(["library", "save", name, "--gains=" + gains, "--master=" + Number(master).toFixed(1), "--json"],
+      function (code, out, err) {
+        var j = root._parseJson(out)
+        if (code === 0 && j && j.id) {
+          root._setOp("save", "ok", j.id, "", "")
+          root.libraryReload()
+          if (done) done(true)
+          root._draftKick()
+          return
+        }
+        var msg = /already exists/i.test(err)
+          ? "Já existe uma curva com esse nome. Escolha outro nome."
+          : (root._lastLine(err) || ("O comando falhou (código " + code + ")"))
+        root._setOp("save", "error", "", msg, "")
+        if (done) done(false)
+        root._draftKick()
+      })
   }
 
   // Saves the EQ the earbuds are using now as a new library curve.
@@ -584,12 +673,14 @@ Singleton {
       if (code === 0 && j && j.id) {
         root._setOp("save", "ok", j.id, "", "")
         root.libraryReload()
+        root._draftKick()
         return
       }
       var msg = code === -1
         ? "Cancelado: outra ação foi enviada ou os fones saíram de alcance."
         : (root._isBusyText(err) ? root.busyMessage : (root._lastLine(err) || ("O comando falhou (código " + code + ")")))
       root._setOp("save", "error", "", msg, "")
+      root._draftKick()
     })
   }
 
