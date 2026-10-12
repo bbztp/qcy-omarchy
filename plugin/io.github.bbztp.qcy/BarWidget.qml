@@ -161,8 +161,14 @@ Panel {
   function submitSave(n) {
     if (!nameValid(n) || !canSaveCurrent) return
     Qcy.libraryImportDevice(String(n).trim())
+    root.closeSave()
+  }
+
+  // Closing the name field hands the keyboard back to the panel's key catcher.
+  function closeSave() {
     root.saveOpen = false
     nameField.text = ""
+    Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
 
   function opText() {
@@ -465,6 +471,8 @@ Panel {
   function sliderValue(key, fallback) {
     if (optimistic[key] !== undefined) return optimistic[key]
     var v = rep && rep[key] !== undefined && rep[key] !== null ? rep[key] : fallback
+    // Some report fields are {value, max} objects (promptVolume).
+    if (v !== null && typeof v === "object") return v.value !== undefined && v.value !== null ? v.value : fallback
     return v
   }
 
@@ -1123,7 +1131,7 @@ Panel {
                   foreground: root.foreground
                   accent: root.accent
                   onAccepted: root.submitSave(text)
-                  Keys.onEscapePressed: root.saveOpen = false
+                  Keys.onEscapePressed: root.closeSave()
                 }
 
                 Row {
@@ -1135,7 +1143,7 @@ Panel {
                   }
                   Chip {
                     label: "Cancelar"
-                    onClicked: root.saveOpen = false
+                    onClicked: root.closeSave()
                   }
                 }
               }

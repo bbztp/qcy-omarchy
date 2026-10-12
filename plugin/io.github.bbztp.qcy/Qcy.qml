@@ -124,6 +124,9 @@ Singleton {
     _pendingSet = null
     if (p && p.done) {
       try { p.done(-1, "", why) } catch (e) { console.warn("qcy: callback failed:", e) }
+    } else if (p) {
+      // A plain setter dropped before it ran: let the optimistic UI revert.
+      root.setFailed()
     }
   }
 
@@ -136,6 +139,19 @@ Singleton {
     _run = done ? { done: done, exit: -1, out: "", err: "", haveExit: false, haveOut: false, haveErr: false } : null
     setProc.command = [root.binary].concat(args, [String(root.scanSeconds)])
     setProc.running = true
+    if (done) setWatchdog.restart()
+  }
+
+  // A setter with a callback that never exits would pin _run, settling and the
+  // library phase; kill it and deliver whatever arrived.
+  Timer {
+    id: setWatchdog
+    interval: 60000
+    repeat: false
+    onTriggered: {
+      if (setProc.running) setProc.signal(9)
+      root._joinRun(true)
+    }
   }
 
   // --------------------------------------------------------- battery (light)
@@ -295,25 +311,14 @@ Singleton {
       if (!running) root.busyAction = ""
     }
     onExited: function (exitCode) {
-      if (exitCode !== 0) {
-        var wasBusy = root._isBusyText(setErr.text)
-        if (wasBusy) {
-          root.busy = true
-          root.error = root.busyMessage
-        } else {
-          // A caller with a callback explains the failure itself.
-          if (root._run === null) root.error = "O comando falhou (c\u00f3digo " + exitCode + ")"
-        }
-        root.setFailed()
-        // No immediate re-read when the earbuds are held elsewhere: that would
-        // clear the message and only contest the link again.
-        if (!wasBusy) root.refresh()
-      }
       if (root._run !== null) {
+        // Failure handling waits for the join, so it reads the complete stderr.
         root._run.exit = exitCode
         root._run.haveExit = true
         joinTimer.restart()
         root._joinRun()
+      } else {
+        root._setFinished(exitCode, setErr.text, false)
       }
       root._drain()
     }
@@ -340,6 +345,24 @@ Singleton {
     }
   }
 
+  // Failure bookkeeping for a finished setter. `errText` is the complete stderr
+  // (r.err for a run with a callback).
+  function _setFinished(exitCode, errText, hasCallback) {
+    if (exitCode === 0) return
+    var wasBusy = _isBusyText(errText)
+    if (wasBusy) {
+      busy = true
+      error = busyMessage
+    } else if (!hasCallback) {
+      // A caller with a callback explains the failure itself.
+      error = "O comando falhou (c\u00f3digo " + exitCode + ")"
+    }
+    setFailed()
+    // No immediate re-read when the earbuds are held elsewhere: that would
+    // clear the message and only contest the link again.
+    if (!wasBusy) refresh()
+  }
+
   // Delivers a setter's result once exit and both streams have all arrived;
   // whichever of the three comes last triggers it. The timer is a safety net
   // for a stream that never reports its end.
@@ -348,7 +371,9 @@ Singleton {
     if (r === null) return
     if (!force && !(r.haveExit && r.haveOut && r.haveErr)) return
     joinTimer.stop()
+    setWatchdog.stop()
     _run = null
+    _setFinished(r.exit, r.err, true)
     try { r.done(r.exit, r.out, r.err) } catch (e) { console.warn("qcy: callback failed:", e) }
     _drain()
   }
@@ -446,6 +471,10 @@ Singleton {
         root._offRun.exit = exitCode
         root._offRun.haveExit = true
         root._offJoin()
+      } else {
+        // The timeout already joined this run; the queue was stuck behind
+        // the still-running process.
+        root._offNext()
       }
     }
     stdout: StdioCollector {

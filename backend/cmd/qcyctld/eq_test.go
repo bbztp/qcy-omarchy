@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -319,5 +321,42 @@ func TestDaemonEqApplyRejectsRawPayload(t *testing.T) {
 	}
 	if sess.writeCount() != 0 {
 		t.Fatalf("raw request wrote %d frames", sess.writeCount())
+	}
+}
+
+// The wire response of a failed eqApply carries code and, for unconfirmed,
+// sent/deviceReported/backup (what qcyctl rebuilds the typed error from).
+func TestHandleConnEqFailureResponseFields(t *testing.T) {
+	d, sess, _ := eqTestDaemon(t, mustHexBytes(t, realCustom11), nil)
+	ask := func(args map[string]interface{}) map[string]interface{} {
+		c, s := net.Pipe()
+		go handleConn(s, d)
+		defer c.Close()
+		req, _ := json.Marshal(map[string]interface{}{"cmd": "eqApply", "args": args})
+		if _, err := c.Write(append(req, '\n')); err != nil {
+			t.Fatal(err)
+		}
+		var resp map[string]interface{}
+		if err := json.NewDecoder(c).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	resp := ask(map[string]interface{}{"slot": float64(0), "masterGain": float64(0)})
+	if resp["ok"] != false || resp["code"] != "protected_slot" || resp["sent"] != nil {
+		t.Fatalf("protected: %v", resp)
+	}
+	resp = ask(map[string]interface{}{
+		"slot": float64(0), "masterGain": float64(0), "allowProtected": true,
+		"bands": []interface{}{bandArgs(0, 100, 1, 100, 2)},
+	})
+	if resp["code"] != "unconfirmed" || sess.writeCount() != 1 {
+		t.Fatalf("unconfirmed: %v", resp)
+	}
+	if resp["sent"] != hex.EncodeToString(sess.writes[0]) || resp["deviceReported"] == "" || resp["deviceReported"] == nil {
+		t.Fatalf("sent/deviceReported: %v", resp)
+	}
+	if b, _ := resp["backup"].(string); b == "" {
+		t.Fatalf("backup missing: %v", resp)
 	}
 }

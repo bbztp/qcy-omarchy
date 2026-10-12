@@ -394,6 +394,15 @@ to `busy` and `not_found`):
 | `unconfirmed` | the write was sent, the device keeps reporting another slot | sent, unknown |
 | none | validation error, backup failure or readback mismatch | see message |
 
+An `unconfirmed` response also carries three string fields next to `error` and
+`code`: `sent` (hex of the payload written), `deviceReported` (hex of the last
+payload the device reported) and `backup` (path of the pre-write payload).
+`qcyctl` rebuilds a typed `*qcycore.EqError` from `code` and these fields, so
+`errors.Is(err, qcycore.ErrUnconfirmed / ErrProtectedSlot /
+ErrFullLengthRequired)` and `library apply --json` (`code`, `sent`,
+`deviceReported`, `backup`) behave the same through the daemon as in direct
+mode.
+
 ## Characteristic layout (service `a001`)
 
 Enumerated with `QCYCTL_PROBE=1`:

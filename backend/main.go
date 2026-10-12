@@ -125,6 +125,19 @@ func (dc *daemonClient) request(cmd string, args map[string]interface{}) (interf
 	}
 	if ok, _ := resp["ok"].(bool); !ok {
 		msg, _ := resp["error"].(string)
+		if code, _ := resp["code"].(string); isEqCode(code) {
+			// Keep the daemon's classification: callers match it with
+			// errors.Is(err, qcycore.Err*) / errors.As(*qcycore.EqError).
+			ee := &qcycore.EqError{Code: code, Msg: msg}
+			ee.Backup, _ = resp["backup"].(string)
+			if h, _ := resp["sent"].(string); h != "" {
+				ee.Sent, _ = hex.DecodeString(h)
+			}
+			if h, _ := resp["deviceReported"].(string); h != "" {
+				ee.Got, _ = hex.DecodeString(h)
+			}
+			return nil, ee
+		}
 		switch {
 		case strings.HasPrefix(msg, "unknown command"):
 			msg += " (the running qcyctld is older than this qcyctl; restart it)"
@@ -134,6 +147,16 @@ func (dc *daemonClient) request(cmd string, args map[string]interface{}) (interf
 		return nil, errors.New(msg)
 	}
 	return resp["data"], nil
+}
+
+// isEqCode reports whether code is one of the EQ write classes the daemon
+// sends (qcycore.Code*).
+func isEqCode(code string) bool {
+	switch code {
+	case qcycore.CodeProtectedSlot, qcycore.CodeFullLengthRequired, qcycore.CodeUnconfirmed:
+		return true
+	}
+	return false
 }
 
 func (dc *daemonClient) status() (map[string]interface{}, error) {

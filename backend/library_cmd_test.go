@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -419,6 +421,78 @@ func TestLibraryUsageErrors(t *testing.T) {
 	for _, args := range [][]string{nil, {"nope"}, {"show"}, {"list", "extra"}, {"export", "a"}, {"import"}} {
 		if err := cmdLibrary(args); err == nil {
 			t.Errorf("%v accepted", args)
+		}
+	}
+}
+
+// useWireDaemon makes libraryRunner hand out a real *daemonClient whose peer
+// answers every request with reply (one JSON line, the shape qcyctld sends).
+func useWireDaemon(t *testing.T, reply string) {
+	t.Helper()
+	old := libraryRunner
+	libraryRunner = func(_ int, fn func(daemonAPI) error) error {
+		c, s := net.Pipe()
+		go func() {
+			defer s.Close()
+			r := bufio.NewReader(s)
+			for {
+				if _, err := r.ReadString('\n'); err != nil {
+					return
+				}
+				if _, err := s.Write([]byte(reply + "\n")); err != nil {
+					return
+				}
+			}
+		}()
+		dc := &daemonClient{conn: c, enc: json.NewEncoder(c), dec: json.NewDecoder(c)}
+		defer dc.Close()
+		return fn(dc)
+	}
+	t.Cleanup(func() { libraryRunner = old })
+}
+
+// Through the daemon the typed EqError survives: code, sent, deviceReported
+// and backup reach errors.Is/As and the --json output.
+func TestLibraryApplyViaDaemonUnconfirmedKeepsTypedError(t *testing.T) {
+	libEnv(t)
+	mustSave(t, "Ten", "--gains", tenFlat)
+	useWireDaemon(t, `{"ok":false,"error":"eq: written but unconfirmed: x","code":"unconfirmed","sent":"00c800","deviceReported":"0b50","backup":"/b/history.hex"}`)
+	var err error
+	out := captureStdout(t, func() { err = cmdLibrary([]string{"apply", "ten", "--yes", "--json"}) })
+	var ee *qcycore.EqError
+	if !errors.Is(err, qcycore.ErrUnconfirmed) || !errors.As(err, &ee) {
+		t.Fatalf("err = %v", err)
+	}
+	if hex.EncodeToString(ee.Sent) != "00c800" || hex.EncodeToString(ee.Got) != "0b50" || ee.Backup != "/b/history.hex" {
+		t.Fatalf("fields lost: %+v", ee)
+	}
+	var got map[string]interface{}
+	if jerr := json.Unmarshal([]byte(out), &got); jerr != nil {
+		t.Fatalf("output %q: %v", out, jerr)
+	}
+	if got["code"] != "unconfirmed" || got["sent"] != "00c800" || got["deviceReported"] != "0b50" || got["backup"] != "/b/history.hex" {
+		t.Fatalf("json = %v", got)
+	}
+}
+
+func TestDaemonClientRequestKeepsEqCodes(t *testing.T) {
+	cases := map[string]error{
+		"protected_slot":       qcycore.ErrProtectedSlot,
+		"full_length_required": qcycore.ErrFullLengthRequired,
+	}
+	for code, want := range cases {
+		c, s := net.Pipe()
+		go func() {
+			r := bufio.NewReader(s)
+			_, _ = r.ReadString('\n')
+			_, _ = s.Write([]byte(`{"ok":false,"error":"refused","code":"` + code + `"}` + "\n"))
+		}()
+		dc := &daemonClient{conn: c, enc: json.NewEncoder(c), dec: json.NewDecoder(c)}
+		_, err := dc.request("eqApply", nil)
+		dc.Close()
+		s.Close()
+		if !errors.Is(err, want) || err.Error() != "refused" {
+			t.Errorf("%s: err = %v", code, err)
 		}
 	}
 }

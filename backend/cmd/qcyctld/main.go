@@ -106,6 +106,25 @@ type response struct {
 	// Code is a stable machine-readable error class ("busy"); empty for
 	// ordinary errors, which clients tell apart by Error alone.
 	Code string `json:"code,omitempty"`
+	// Sent, DeviceReported and Backup accompany code "unconfirmed": the payload
+	// written and the one the device reported (hex), and the path of the
+	// pre-write payload backup.
+	Sent           string `json:"sent,omitempty"`
+	DeviceReported string `json:"deviceReported,omitempty"`
+	Backup         string `json:"backup,omitempty"`
+}
+
+// errorResponse builds the failure response for err, carrying the machine
+// code and, for an unconfirmed EQ write, the extra fields.
+func errorResponse(err error) response {
+	r := response{OK: false, Error: err.Error(), Code: responseCode(err)}
+	var ee *qcycore.EqError
+	if errors.As(err, &ee) && ee.Code == qcycore.CodeUnconfirmed {
+		r.Sent = hex.EncodeToString(ee.Sent)
+		r.DeviceReported = hex.EncodeToString(ee.Got)
+		r.Backup = ee.Backup
+	}
+	return r
 }
 
 func mustUUID(s string) bluetooth.UUID {
@@ -1483,7 +1502,7 @@ func handleConn(conn net.Conn, d *daemon) {
 		}
 		data, err := d.handleRequest(req)
 		if err != nil {
-			_ = enc.Encode(response{OK: false, Error: err.Error(), Code: responseCode(err)})
+			_ = enc.Encode(errorResponse(err))
 		} else {
 			_ = enc.Encode(response{OK: true, Data: data})
 		}
