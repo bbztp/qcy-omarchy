@@ -105,5 +105,8 @@ inside bar.layout (for example the "right" array):
 
   { "id": "${plugin_id}" }
 
-shell.json hot-reloads on save; otherwise run: omarchy restart shell
+shell.json hot-reloads on save.
+
+After updating the plugin, run: omarchy restart shell
+(the shell's hot-reload can keep serving the previous BarWidget.qml.)
 MSG

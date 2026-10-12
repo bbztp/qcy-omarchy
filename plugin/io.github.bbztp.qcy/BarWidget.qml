@@ -14,7 +14,7 @@ import qs.Ui
 // is open; battery is read on open and every 20s while open.
 //
 // Bar button — left click: panel · right click: re-read
-// Panel — Esc: close · r: refresh
+// Panel — Esc: close · r: refresh · 1/2/3: tabs
 Panel {
   id: root
   moduleName: "io.github.bbztp.qcy"
@@ -883,6 +883,9 @@ Panel {
       onCloseRequested: root.close()
       onTextKey: function (t) {
         if (t === "r" || t === "R") Qcy.refresh()
+        else if (t === "1") root.tab = 0
+        else if (t === "2") root.tab = 1
+        else if (t === "3") root.tab = 2
       }
 
       // The card clamps its height to the space between the bar and the
