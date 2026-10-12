@@ -10,19 +10,30 @@ import (
 	"time"
 )
 
-// BackupDir returns the directory EQ backups live in. It is under the data
-// directory, never the cache: a cache cleaner must not be able to eat the only
-// copy of a hearing-test curve.
-func BackupDir() (string, error) {
+// DataDir returns the per-user data directory (XDG_DATA_HOME or
+// ~/.local/share, plus qcy-omarchy). Everything that must survive a cache
+// cleaner (backups, the curve library) lives under it.
+func DataDir() (string, error) {
 	base := os.Getenv("XDG_DATA_HOME")
 	if base == "" || !filepath.IsAbs(base) {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", fmt.Errorf("backup dir: %w", err)
+			return "", fmt.Errorf("data dir: %w", err)
 		}
 		base = filepath.Join(home, ".local", "share")
 	}
-	return filepath.Join(base, "qcy-omarchy", "backups"), nil
+	return filepath.Join(base, "qcy-omarchy"), nil
+}
+
+// BackupDir returns the directory EQ backups live in. It is under the data
+// directory, never the cache: a cache cleaner must not be able to eat the only
+// copy of a hearing-test curve.
+func BackupDir() (string, error) {
+	d, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "backups"), nil
 }
 
 // BackupFiles are the paths one backup call produced.
