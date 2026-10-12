@@ -627,6 +627,31 @@ func TestProtectedSlots(t *testing.T) {
 	}
 }
 
+// Slot 255 (the app's "Personalizado" buffer) is the one target allowed while a
+// protected effect is active; every other target keeps the refusal.
+func TestSlotCustomAppAllowedWithProtectedActive(t *testing.T) {
+	m := 0
+	for name, cur := range map[string][]byte{"6": mustHex(t, realClassico6), "11": mustHex(t, realCustom11)} {
+		out, err := ApplyEq(cur, EqOp{Slot: intp(SlotCustomApp), Bands: bands3(), MasterCenti: &m})
+		if err != nil {
+			t.Fatalf("active %s -> 255: %v", name, err)
+		}
+		if len(out) != EqLen || out[0] != 0xFF {
+			t.Fatalf("active %s: len %d byte0 %#x", name, len(out), out[0])
+		}
+	}
+	custom := mustHex(t, realCustom11)
+	if _, err := ApplyEq(custom, EqOp{Slot: intp(0), Bands: bands3(), MasterCenti: &m}); !errors.Is(err, ErrProtectedSlot) {
+		t.Fatalf("active 11 -> 0 = %v", err)
+	}
+	if _, err := ApplyEq(custom, EqOp{Slot: intp(254), Bands: bands3(), MasterCenti: &m}); !errors.Is(err, ErrProtectedSlot) {
+		t.Fatalf("active 11 -> 254 = %v", err)
+	}
+	if _, err := ApplyEq(custom, EqOp{Bands: bands3(), MasterCenti: &m}); !errors.Is(err, ErrProtectedSlot) {
+		t.Fatalf("active 11 bands in place = %v", err)
+	}
+}
+
 // A 73-byte write is confirmed only if what the device reports beyond it is
 // blank: a populated tail means the curve on the device is not the one sent.
 func TestEqMatchRejectsDirtyTail(t *testing.T) {

@@ -94,7 +94,7 @@ func TestEqSetValidation(t *testing.T) {
 	cases := map[string][]string{
 		"no --yes":           {ten},
 		"short list":         {"1,2,3", "--yes"},
-		"gain out of range":  {"0,0,0,0,0,0,0,0,0,9", "--yes"},
+		"gain out of range":  {"0,0,0,0,0,0,0,0,0,13", "--yes"},
 		"NaN gain":           {"0,0,0,0,0,0,0,0,0,NaN", "--yes"},
 		"bad master":         {ten, "--yes", "--master-gain", "13"},
 		"NaN master":         {ten, "--yes", "--master-gain=NaN"},

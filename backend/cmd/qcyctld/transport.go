@@ -48,7 +48,16 @@ type bleDialer struct {
 	gate        dialGate
 }
 
+// hardwareAllowed is the structural guard against tests reaching the real
+// earbuds: TestMain sets it to false and the real dialer refuses first.
+var hardwareAllowed = true
+
+var errHardwareDisabled = errors.New("hardware access disabled in tests")
+
 func (b *bleDialer) Dial(onNotify func([]byte)) (session, string, error) {
+	if !hardwareAllowed {
+		return nil, "", errHardwareDisabled
+	}
 	adapter := bluetooth.DefaultAdapter
 	if err := adapter.Enable(); err != nil {
 		return nil, "", fmt.Errorf("enable adapter: %w", err)

@@ -85,7 +85,24 @@ type daemonClient struct {
 // generous; its job is only to stop a wedged daemon hanging the CLI forever.
 const daemonRequestTimeout = 90 * time.Second
 
+// hardwareAllowed is the structural guard against tests reaching the real
+// earbuds: TestMain sets it to false, and every path that opens the daemon
+// socket or the BLE adapter refuses first (refuseHardware).
+var hardwareAllowed = true
+
+var errHardwareDisabled = errors.New("hardware access disabled in tests")
+
+func refuseHardware() error {
+	if !hardwareAllowed {
+		return errHardwareDisabled
+	}
+	return nil
+}
+
 func dialDaemon(timeout time.Duration) (*daemonClient, error) {
+	if err := refuseHardware(); err != nil {
+		return nil, err
+	}
 	sock, err := daemonSocketPath()
 	if err != nil {
 		return nil, err
@@ -454,6 +471,9 @@ type daemonAPI interface {
 
 // runViaDaemon tries the daemon first; on failure falls back to direct mode.
 func runViaDaemon(scanSeconds int, fn func(daemonAPI) error) error {
+	if err := refuseHardware(); err != nil {
+		return err
+	}
 	dc, err := dialDaemon(500 * time.Millisecond)
 	if err != nil {
 		// Daemon not reachable → direct mode
@@ -893,6 +913,9 @@ func cmdScan(args []string) error {
 		return err
 	}
 
+	if err := refuseHardware(); err != nil {
+		return err
+	}
 	if err := bluetooth.DefaultAdapter.Enable(); err != nil {
 		return fmt.Errorf("enable adapter: %w", err)
 	}
@@ -971,6 +994,9 @@ func (q *qcy) Close() {
 // (up to scanSeconds), so the last address that worked is cached and tried
 // first with a short deadline; only if that fails do we fall back to a scan.
 func connectQCY(scanSeconds int) (*qcy, error) {
+	if err := refuseHardware(); err != nil {
+		return nil, err
+	}
 	adapter := bluetooth.DefaultAdapter
 	if err := adapter.Enable(); err != nil {
 		return nil, fmt.Errorf("enable adapter: %w", err)
