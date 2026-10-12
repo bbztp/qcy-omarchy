@@ -271,8 +271,8 @@ func cmdLibraryShow(args []string) error {
 // ---------- save / delete / export / import ----------
 
 func cmdLibrarySave(args []string) error {
-	const usage = "usage: qcyctl library save <name> --gains g1,...,g10 [--master dB] [--note text] [--replace] [--json]"
-	a, err := parseLibArgs(args, []string{"--json", "--replace"}, []string{"--gains", "--master", "--note"})
+	const usage = "usage: qcyctl library save <name> --gains g1,...,g10 [--master dB] [--base <id>] [--note text] [--replace] [--json]"
+	a, err := parseLibArgs(args, []string{"--json", "--replace"}, []string{"--gains", "--master", "--note", "--base"})
 	if err != nil {
 		return fmt.Errorf("library save: %w\n%s", err, usage)
 	}
@@ -298,6 +298,23 @@ func cmdLibrarySave(args []string) error {
 	bands := make([]qcycore.EqBand, qcycore.EqBands)
 	for i, g := range gains {
 		bands[i] = qcycore.EqBand{Index: i, Freq: defaultBandTable[i], Gain: float64(g) / 100, Q: defaultBandQ, Type: savedBandType}
+	}
+	// With --base the gains are bars ON TOP of that curve, saved the way
+	// `compose` writes them (the bars that are not zero, then the base's own
+	// bands), so applying the saved curve plays exactly what compose played.
+	if baseID, ok := a.vals["--base"]; ok && baseID != "none" {
+		base, err := qcycore.LoadCurve(baseID)
+		if err != nil {
+			return fmt.Errorf("library save: %w", err)
+		}
+		specs, err := composeBands(&base, gains)
+		if err != nil {
+			return err
+		}
+		bands = bands[:0]
+		for _, b := range specs {
+			bands = append(bands, qcycore.EqBand{Index: b.Index, Freq: b.Freq, Gain: b.Gain, Q: b.Q, Type: b.Type})
+		}
 	}
 	c := qcycore.Curve{
 		Version:    qcycore.CurveVersion,

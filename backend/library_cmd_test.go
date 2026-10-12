@@ -1008,3 +1008,31 @@ func TestLibraryComposeOverTenBandsWrites143(t *testing.T) {
 		t.Fatal("compose accepted --slot")
 	}
 }
+
+// save --base stores the bars on top of the base the way compose writes them:
+// the non-zero bars first (type 255), then the base's own bands, so applying
+// the saved curve plays what compose played.
+func TestLibrarySaveWithBaseKeepsBaseBands(t *testing.T) {
+	libEnv(t)
+	if _, err := qcycore.SeedFromPayload(qcycore.SourceDeviceImport, 0, "Base", slot0Flat); err != nil {
+		t.Fatal(err)
+	}
+	base, err := qcycore.LoadCurve("base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustSave(t, "Ajustado", "--base", "base", "--gains", "0,0,0,0,0,0,0,3,0,0", "--master", "-6")
+	c, err := qcycore.LoadCurve("ajustado")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Bands) != 1+len(base.Bands) || c.MasterGain != -6 {
+		t.Fatalf("%d bands (base %d), master %v", len(c.Bands), len(base.Bands), c.MasterGain)
+	}
+	if b := c.Bands[0]; b.Freq != 4000 || b.Gain != 3 || b.Type != composeUserBandType {
+		t.Fatalf("bar band: %+v", b)
+	}
+	if c.Bands[1].Freq != base.Bands[0].Freq {
+		t.Fatalf("base band lost: %+v", c.Bands[1])
+	}
+}

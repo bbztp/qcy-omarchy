@@ -172,12 +172,17 @@ Panel {
   function effectName() {
     if (!rep || !rep.eq) return "—"
     var id = root.activeEntryId
-    if (root.activeSlot === 255) return id !== "" ? root.curveName(id) : "Personalizado"
+    var sfx = root.adjusted && id === root.baseId ? " (ajustado)" : ""
+    if (root.activeSlot === 255) return id !== "" ? root.curveName(id) + sfx : "Personalizado"
     var eff = rep.eq.effect
     if (eff !== undefined && eff !== null && String(eff) !== "") return String(eff)
     if (id !== "") return root.curveName(id)
     return root.activeSlot >= 0 ? "Personalizado" : "—"
   }
+
+  // The bars or the overall gain were moved on top of the effect in use.
+  readonly property bool adjusted: root.baseId !== "" && root.baseId !== "none"
+    && (root.masterTouched || root.editGains.some(function (g) { return Number(g) !== 0 }))
 
   function baseLabel() {
     return root.composeBase === "none" ? "sem efeito" : root.curveName(root.composeBase)
@@ -204,8 +209,18 @@ Panel {
 
   function submitSave(n) {
     if (!nameValid(n)) return
-    Qcy.libraryCreate(String(n).trim(), root.shownGainsCsv(), root.shownMaster(), function (ok) {
-      if (ok) root.closeSave()
+    // What is playing is saved whole: the base's own bands plus the bars. The
+    // new effect then becomes the one in use, with nothing adjusted on top.
+    Qcy.libraryCreate(String(n).trim(), root.editGainsCsv(), root.shownMaster(), root.composeBase, function (ok) {
+      if (!ok) return
+      var id = Qcy.libraryOp.id
+      eqTimer.stop()
+      root.editGains = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      root.editMaster = 0
+      root.masterTouched = false
+      root.eqNote = ""
+      root.baseId = id
+      root.closeSave()
     })
   }
 
@@ -1200,6 +1215,7 @@ Panel {
                     cardWidth: (fxGrid.width - fxGrid.spacing * 2) / 3
                     canApply: root.canApplyLibrary
                     live: root.activeEntryId === modelData.id
+                    adjusted: root.adjusted
                     phase: Qcy.libraryOp.kind === "apply" && Qcy.libraryOp.id === modelData.id
                       ? Qcy.libraryOp.phase : "idle"
                     menuOpen: root.menuId === modelData.id
@@ -1317,6 +1333,11 @@ Panel {
                       if (root.saveOpen) { root.closeSave(); return }
                       root.saveOpen = true
                       nameField.forceActiveFocus()
+                      // The name field sits at the bottom, often below the
+                      // visible part of the panel.
+                      Qt.callLater(function () {
+                        scroller.contentY = Math.max(0, scroller.contentHeight - scroller.height)
+                      })
                     }
                   }
                 }
@@ -2104,6 +2125,8 @@ Panel {
     property real cardWidth: 0
     property bool canApply: false
     property bool live: false
+    // The effect in use has bars moved on top of it.
+    property bool adjusted: false
     // idle | running | ok | unconfirmed | error — this card's own apply state.
     property string phase: "idle"
     property bool menuOpen: false
@@ -2161,7 +2184,7 @@ Panel {
         width: parent.width - (cc.isUser ? Style.space(20) : 0)
         // Two lines reserved, so the cards of a row line up.
         height: Math.ceil(nameMetrics.height) * 2
-        text: cc.entry.name
+        text: cc.entry.name + (cc.live && cc.adjusted ? " (ajustado)" : "")
         color: root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall

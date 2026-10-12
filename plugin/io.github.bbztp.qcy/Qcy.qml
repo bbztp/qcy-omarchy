@@ -630,9 +630,13 @@ Singleton {
 
   // Saves the equalizer's bars under a new name; never replaces. `done` (optional)
   // gets (ok, message).
-  function libraryCreate(name, gains, master, done) {
+  // gains are bars on top of `base` when a base is given ("" or "none": the
+  // bars are the whole curve).
+  function libraryCreate(name, gains, master, base, done) {
     _setOp("save", "running", "", "", "")
-    runOffline(["library", "save", name, "--gains=" + gains, "--master=" + Number(master).toFixed(1), "--json"],
+    var args = ["library", "save", name, "--gains=" + gains, "--master=" + Number(master).toFixed(1), "--json"]
+    if (base && base !== "none") args.push("--base=" + base)
+    runOffline(args,
       function (code, out, err) {
         var j = root._parseJson(out)
         if (code === 0 && j && j.id) {
