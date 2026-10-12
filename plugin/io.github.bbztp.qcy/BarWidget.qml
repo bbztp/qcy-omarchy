@@ -76,48 +76,36 @@ Panel {
     { key: "multipoint", label: "Multiponto", hint: "Reinicia os fones; é esperado, não é falha" }
   ]
 
-  // ---- library UI state ----
+  // ---- Som tab state ----
   // A fill that is only a hint lighter than the panel, from the shell's
   // foreground so it follows the theme.
   readonly property color cardFill: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.06)
   property bool saveOpen: false
+  // The user effect whose small menu is open, and the one asked to be deleted.
+  property string menuId: ""
   property string pendingDeleteId: ""
 
-  // ---- curve editor state ----
+  // ---- equalizer state ----
   // Ten bars at the standard 10-band layout (the same table `library save` writes).
   readonly property var editorFreqs: [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
   readonly property real editorMaxDb: 12
-  property bool editorOpen: false
   property var editGains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   property real editMaster: 0
-  property string editorSource: ""
-  // Non-empty: the bars are shown but nothing can be edited, saved or applied.
-  property string editorBlocked: ""
-  property string editorNote: ""
-  // "Ouvir enquanto edita": each release applies the draft to the earbuds.
-  property bool listenLive: false
+  // The overall gain is only sent once the user has touched it, so an untouched
+  // equalizer leaves the effect's own level alone.
+  property bool masterTouched: false
+  // Why the last "apply" did nothing, when it is not an error (empty bars, no base).
+  property string eqNote: ""
+  // The effect the bars sit on top of. Set by clicking an effect card and kept
+  // once the equalizer applies; empty means "the effect in use".
+  property string baseId: ""
 
   readonly property bool isStale: !!(rep && rep.stale === true)
   readonly property int activeSlot: rep && rep.eq && rep.eq.preset !== null && rep.eq.preset !== undefined
     ? Number(rep.eq.preset) : -1
-  // Slots 6 (factory) and 11 (hearing test) are never overwritten: applying a
-  // library curve writes the custom slot 255, so this only drives the info note
-  // and the master-gain write rule, never the Ouvir/Aplicar enablement.
-  readonly property bool slotProtected: activeSlot === 6 || activeSlot === 11
-  // A tail band (position 10+) means the device reports a populated 143-byte
-  // payload; master-gain then needs the unproven full-length write.
-  readonly property bool masterGainLocked: {
-    var b = root.eqBandModel
-    if (!b) return false
-    if (b.length > 10) return true
-    for (var i = 0; i < b.length; i++) {
-      if (Number(b[i].index) >= 10) return true
-    }
-    return false
-  }
-  readonly property bool canApplyLibrary: Qcy.connected && !!rep && activeSlot >= 0
-    && Qcy.libraryOp.phase !== "running"
-  readonly property bool canSaveCurrent: Qcy.connected && !!rep && Qcy.libraryOp.phase !== "running"
+  // Everything is clickable while the earbuds are connected and read; nothing
+  // is blocked by the active slot, the band count or the payload size.
+  readonly property bool canApplyLibrary: Qcy.connected && !!rep
 
   function ancGroup() {
     var s = currentAnc()
@@ -132,10 +120,41 @@ Panel {
     return e.bands.map(function (x) { return x.freq + "/" + x.gain }).join(",")
   }
 
-  // The library curve whose bands equal the live ones, if any.
-  function entryIsLive(e) {
-    return root._eqSig !== "" && root.activeSlot === 255 && entrySig(e) === root._eqSig
+  // Leftover of the old editor's working copy: kept on disk, never shown.
+  function hiddenEntry(e) {
+    return !!e && e.id === "rascunho"
   }
+
+  // The list entry the earbuds are playing now, or "". Matched by its bands
+  // first (the only test for Personalizado, slot 255), then by the slot the
+  // entry came from, then by the effect name the earbuds report.
+  readonly property string activeEntryId: {
+    var l = Qcy.library
+    var slot = root.activeSlot
+    var sig = root._eqSig
+    var i
+    if (sig !== "") {
+      for (i = 0; i < l.length; i++) {
+        if (!root.hiddenEntry(l[i]) && root.entrySig(l[i]) === sig) return l[i].id
+      }
+    }
+    if (slot >= 0 && slot !== 255) {
+      for (i = 0; i < l.length; i++) {
+        if (!root.hiddenEntry(l[i]) && l[i].source !== "user" && Number(l[i].slot) === slot) return l[i].id
+      }
+      var eff = rep && rep.eq && rep.eq.effect ? String(rep.eq.effect) : ""
+      if (eff !== "") {
+        for (i = 0; i < l.length; i++) {
+          if (!root.hiddenEntry(l[i]) && l[i].name === eff) return l[i].id
+        }
+      }
+    }
+    return ""
+  }
+
+  // What the equalizer composes on: the pinned base, else the effect in use.
+  readonly property string composeBase: root.baseId !== ""
+    ? root.baseId : (root.activeEntryId !== "" ? root.activeEntryId : "none")
 
   function curveName(id) {
     var l = Qcy.library
@@ -143,65 +162,46 @@ Panel {
     return id
   }
 
-  function activeCurveName() {
-    var l = Qcy.library
-    for (var i = 0; i < l.length; i++) {
-      if (entryIsLive(l[i])) return l[i].name
-    }
-    return eqLabel()
+  // Header name: the earbuds' own effect name; in Personalizado (255) the name
+  // of the list entry with the same bands, else "Personalizado".
+  function effectName() {
+    if (!rep || !rep.eq) return "—"
+    var id = root.activeEntryId
+    if (root.activeSlot === 255) return id !== "" ? root.curveName(id) : "Personalizado"
+    var eff = rep.eq.effect
+    if (eff !== undefined && eff !== null && String(eff) !== "") return String(eff)
+    if (id !== "") return root.curveName(id)
+    return root.activeSlot >= 0 ? "Personalizado" : "—"
   }
 
-  function sourceLabel(s) {
-    if (s === "user") return "SUA"
-    if (s === "device-import") return "DO APARELHO"
-    if (s === "factory-snapshot") return "DE FÁBRICA"
-    return String(s).toUpperCase()
+  function baseLabel() {
+    return root.composeBase === "none" ? "sem efeito" : root.curveName(root.composeBase)
   }
 
-  function reasonText(r) {
-    var t = String(r || "")
-    if (t.indexOf("positions 10-19") !== -1 || t.indexOf("addressable") !== -1)
-      return "Usa bandas nas posições 10–19: a gravação de 143 bytes ainda não foi validada em hardware."
-    if (t.indexOf("type") !== -1) return "Tem uma banda de tipo não suportado."
-    return t !== "" ? t : "Não pode ser aplicada."
+  // The overall gain on screen: the user's value once touched, else the one the
+  // earbuds report (the base effect's own).
+  function shownMaster() {
+    return root.masterTouched ? root.editMaster : root.masterGainDb()
   }
 
-  // Same rule as the backend Slug (qcycore/presets.go): the draft owns this id.
-  function nameSlug(n) {
-    var fold = { "á": "a", "à": "a", "â": "a", "ã": "a", "ä": "a",
-                 "é": "e", "è": "e", "ê": "e", "ë": "e",
-                 "í": "i", "ì": "i", "î": "i", "ï": "i",
-                 "ó": "o", "ò": "o", "ô": "o", "õ": "o", "ö": "o",
-                 "ú": "u", "ù": "u", "û": "u", "ü": "u", "ç": "c", "ñ": "n" }
-    var s = String(n || "").trim().toLowerCase()
-    var out = ""
-    var dash = true
-    for (var i = 0; i < s.length; i++) {
-      var c = fold[s.charAt(i)] || s.charAt(i)
-      if ((c >= "a" && c <= "z") || (c >= "0" && c <= "9")) {
-        out += c
-        dash = false
-      } else if (!dash) {
-        out += "-"
-        dash = true
-      }
-    }
-    return out.slice(0, 40).replace(/^-+|-+$/g, "")
+  // "+3,5", "-2,0", "0" — pt-BR decimal comma.
+  function fmtDb(v) {
+    var n = Number(v) || 0
+    if (n === 0) return "0"
+    return (n > 0 ? "+" : "") + n.toFixed(1).replace(".", ",")
   }
 
-  function nameReserved(n) {
-    return nameSlug(n) === Qcy.draftId
-  }
-
+  // Names the user types for a saved effect. Same length rule as the backend.
   function nameValid(n) {
     var t = String(n || "").trim()
-    return t.length > 0 && t.length <= 40 && t.charAt(0) !== "-" && !nameReserved(t)
+    return t.length > 0 && t.length <= 40 && t.charAt(0) !== "-"
   }
 
   function submitSave(n) {
-    if (!nameValid(n) || !canSaveCurrent) return
-    Qcy.libraryImportDevice(String(n).trim())
-    root.closeSave()
+    if (!nameValid(n)) return
+    Qcy.libraryCreate(String(n).trim(), root.editGainsCsv(), root.shownMaster(), function (ok) {
+      if (ok) root.closeSave()
+    })
   }
 
   // Closing the name field hands the keyboard back to the panel's key catcher.
@@ -211,7 +211,7 @@ Panel {
     Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
 
-  // ---- curve editor ----
+  // ---- equalizer ----
 
   function clampGain(v) {
     var n = Number(v)
@@ -225,80 +225,7 @@ Panel {
     }).join(",")
   }
 
-  // Needs the earbuds, a known active slot and an editable curve (a
-  // protected factory slot does not block: the write goes to slot 255). Deliberately does not look at libraryOp.phase: the draft request is
-  // queued by Qcy (last one wins), so a release during an apply is not lost.
-  readonly property bool editorHwOk: Qcy.connected && !!rep && activeSlot >= 0
-    && editorBlocked === ""
-  readonly property bool editorCanSave: editorBlocked === "" && Qcy.libraryOp.phase !== "running"
-
-  // bands: array of {index?, freq, gain, q?, type?}; isCard says it came from a
-  // library entry (an empty list then means a raw payload with no bands).
-  function openEditor(bands, master, label, isCard) {
-    var g = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    var blocked = ""
-    var substituted = false
-    var list = bands ? bands : []
-    if (list.length > 10) blocked = "Esta curva usa bandas nas posições 10–19; o editor só trabalha com as 10 primeiras e a gravação de 143 bytes não foi validada em hardware."
-    if (isCard && list.length === 0) blocked = "Esta curva não tem bandas editáveis."
-    for (var i = 0; i < list.length && blocked === ""; i++) {
-      var b = list[i]
-      var idx = (b.index !== undefined && b.index !== null) ? Number(b.index) : i
-      if (idx >= 10) {
-        blocked = "Esta curva usa bandas nas posições 10–19; o editor só trabalha com as 10 primeiras e a gravação de 143 bytes não foi validada em hardware."
-        break
-      }
-      if (idx < 0) continue
-      g[idx] = root.clampGain(b.gain)
-      if (b.freq !== undefined && Number(b.freq) !== root.editorFreqs[idx]) substituted = true
-      if (b.q !== undefined && b.q !== null && Number(b.q) !== 100) substituted = true
-      if (b.type !== undefined && b.type !== null && Number(b.type) !== 0) substituted = true
-    }
-    var m = Number(master)
-    if (isNaN(m)) m = 0
-    listenTimer.stop()
-    root.listenLive = false
-    root.editGains = g
-    root.editMaster = Math.max(root.masterGainMin, Math.min(root.masterGainMax, m))
-    root.editorSource = label
-    root.editorBlocked = blocked
-    root.editorNote = substituted
-      ? "As frequências e o Q da curva de origem serão trocados pela tabela padrão (31 Hz a 16 kHz) ao salvar ou aplicar."
-      : ""
-    root.editorOpen = true
-  }
-
-  function openEditorLive() {
-    var b = root.eqBands()
-    if (!root.rep || !b || b.length === 0) {
-      root.openEditor([], 0, "Nova curva", false)
-      return
-    }
-    root.openEditor(b, root.masterGainDb(), root.activeCurveName(), false)
-  }
-
-  function openEditorFromEntry(e) {
-    root.openEditor(e.bands, Number(e.masterGain) || 0, e.name, true)
-  }
-
-  function closeEditor() {
-    listenTimer.stop()
-    root.listenLive = false
-    root.editorOpen = false
-    editNameField.text = ""
-    Qt.callLater(function () { keyCatcher.forceActiveFocus() })
-  }
-
-  // Stops "listen" mode and any pending debounce (tab change, panel close).
-  function stopListening() {
-    // A release is still pending: send the last value instead of dropping it.
-    if (listenTimer.running && root.editorHwOk) root.applyDraft()
-    listenTimer.stop()
-    root.listenLive = false
-  }
-
   function editSetGain(i, v) {
-    if (root.editorBlocked !== "") return
     var nv = Math.round(root.clampGain(v) * 2) / 2 + 0
     if (Number(root.editGains[i]) === nv) return
     var g = root.editGains.slice()
@@ -307,87 +234,146 @@ Panel {
   }
 
   function editSetMaster(v) {
-    if (root.editorBlocked !== "") return
     var n = Number(v)
     if (isNaN(n)) return
     root.editMaster = Math.round(Math.max(root.masterGainMin, Math.min(root.masterGainMax, n)) * 2) / 2 + 0
+    root.masterTouched = true
   }
 
-  function editZeroAll() {
-    if (root.editorBlocked !== "") return
+  // Back to the state the app starts in: bars at zero, the effect in use as base.
+  function resetEq() {
+    eqTimer.stop()
     root.editGains = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     root.editMaster = 0
-    root.scheduleListen()
+    root.masterTouched = false
+    root.eqNote = ""
+    root.baseId = ""
   }
 
-  // Called when a bar or the master slider is released.
-  function scheduleListen() {
-    if (root.listenLive && root.editorHwOk) listenTimer.restart()
+  // A pinned base only means something in Personalizado (255). When a read
+  // shows the earbuds on another effect (changed from outside), forget it so
+  // the next release composes on what is really playing.
+  function syncBase() {
+    if (root.baseId !== "" && !Qcy.writeBusy && root.activeSlot >= 0 && root.activeSlot !== 255)
+      root.baseId = ""
   }
 
-  // One draft write+apply, now (the "Aplicar" button and the debounce).
-  function applyDraft() {
-    listenTimer.stop()
-    if (!root.editorHwOk) return
-    Qcy.libraryDraftApply(root.editGainsCsv(), root.editMaster)
+  // One write now: the bars on top of the base effect. Pinning the base keeps
+  // it stable when the result happens to look like another effect.
+  function applyEq() {
+    eqTimer.stop()
+    if (!root.canApplyLibrary) return
+    // Without a base effect the bars alone are the whole curve: all at zero
+    // there is nothing to write.
+    var flat = root.editGains.every(function (g) { return Number(g) === 0 })
+    if (root.composeBase === "none" && flat) {
+      root.eqNote = "Sem efeito base e com todas as barras em zero não há o que aplicar. Escolha um efeito ou mova uma barra."
+      return
+    }
+    root.eqNote = ""
+    root.baseId = root.composeBase
+    Qcy.libraryCompose(root.baseId, root.editGainsCsv(), root.masterTouched ? root.editMaster : null)
   }
 
-  function submitEditorSave(n) {
-    if (!nameValid(n) || !root.editorCanSave) return
-    Qcy.libraryCreate(String(n).trim(), root.editGainsCsv(), root.editMaster, function (ok) {
-      if (ok) editNameField.text = ""
-    })
-    Qt.callLater(function () { keyCatcher.forceActiveFocus() })
+  // Called when a bar or the overall gain is released: apply after a short
+  // pause, the last value wins.
+  function scheduleEq() {
+    if (root.canApplyLibrary) eqTimer.restart()
   }
 
-  // The editor shows the result of its own operations (draft apply, save).
-  function editorShowsOp() {
-    var op = Qcy.libraryOp
-    return root.editorOpen && op.phase !== "idle"
-      && (op.id === Qcy.draftId || op.kind === "save")
+  // A release is still pending (tab change, panel close): send it, do not drop it.
+  function flushEq() {
+    if (eqTimer.running) root.applyEq()
+  }
+
+  // "Zerar": bars and overall gain to zero, applied now on the same base.
+  function eqZero() {
+    root.editGains = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    root.editMaster = 0
+    root.masterTouched = false
+    root.applyEq()
+  }
+
+  // Click on an effect card: apply it now, bars go back to zero on top of it.
+  function chooseEffect(id) {
+    if (!root.canApplyLibrary) return
+    eqTimer.stop()
+    root.menuId = ""
+    root.pendingDeleteId = ""
+    root.editGains = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    root.editMaster = 0
+    root.masterTouched = false
+    root.eqNote = ""
+    root.baseId = id
+    Qcy.libraryApply(id)
+  }
+
+  function deleteEffect(id) {
+    root.menuId = ""
+    root.pendingDeleteId = ""
+    if (root.baseId === id) root.resetEq()
+    Qcy.libraryDelete(id)
   }
 
   Timer {
-    id: listenTimer
-    interval: 400
+    id: eqTimer
+    interval: 350
     repeat: false
-    onTriggered: root.applyDraft()
+    onTriggered: root.applyEq()
   }
 
-  onEditorHwOkChanged: if (!root.editorHwOk) listenTimer.stop()
+  onCanApplyLibraryChanged: if (!root.canApplyLibrary) eqTimer.stop()
 
   function opText() {
     var op = Qcy.libraryOp
     if (op.phase === "idle") return ""
-    var extra = ""
-    if (op.backup !== "" && String(op.message).indexOf(op.backup) === -1)
-      extra = "\nBackup: " + op.backup
     if (op.kind === "apply") {
       var nm = curveName(op.id)
-      if (op.phase === "running") return "Aplicando \u201c" + nm + "\u201d…"
-      if (op.phase === "ok") return "Aplicado e confirmado pelo aparelho: " + nm + "." + extra
+      if (op.phase === "running") return "Aplicando “" + nm + "”…"
+      if (op.phase === "ok") return "“" + nm + "” aplicado ✓"
       if (op.phase === "unconfirmed")
-        return "Gravado, mas o aparelho não confirmou." + (op.message !== "" ? "\n" + op.message : "") + extra
-      return "Não foi possível aplicar: " + op.message + extra
+        return "Enviado, mas os fones não confirmaram." + (op.message !== "" ? "\n" + op.message : "")
+      return "Não foi possível aplicar: " + op.message
+    }
+    if (op.kind === "compose") {
+      if (op.phase === "running") return "Aplicando…"
+      if (op.phase === "ok") return "Aplicado ✓"
+      if (op.phase === "unconfirmed")
+        return "Enviado, mas os fones não confirmaram." + (op.message !== "" ? "\n" + op.message : "")
+      return "Não foi possível aplicar: " + op.message
     }
     if (op.kind === "save") {
-      if (op.phase === "running") return "Salvando a curva…"
-      if (op.phase === "ok") return "Curva salva na biblioteca."
+      if (op.phase === "running") return "Salvando…"
+      if (op.phase === "ok") return "Efeito salvo ✓"
       return "Não foi possível salvar: " + op.message
     }
     if (op.kind === "delete") {
       if (op.phase === "running") return "Excluindo…"
-      if (op.phase === "ok") return "Curva excluída (movida para a lixeira da biblioteca)."
+      if (op.phase === "ok") return "Efeito excluído."
       return "Não foi possível excluir: " + op.message
     }
     return ""
   }
 
-  // Opening the Sound tab reads the library from disk (offline, no daemon).
+  // The equalizer card reports its own writes (apply, save); the line under
+  // the effect grid reports clicks on a card and deletions.
+  function eqOpText() {
+    if (root.eqNote !== "") return root.eqNote
+    var k = Qcy.libraryOp.kind
+    return (k === "compose" || k === "save") ? root.opText() : ""
+  }
+
+  function gridOpText() {
+    var k = Qcy.libraryOp.kind
+    return (k === "apply" || k === "delete") ? root.opText() : ""
+  }
+
+  // Opening the Sound tab reads the list from disk (offline, no daemon).
   onTabChanged: {
+    root.flushEq()
     root.saveOpen = false
+    root.menuId = ""
     root.pendingDeleteId = ""
-    root.stopListening()
     if (root.tab === 1) {
       Qcy.libraryClearOp()
       Qcy.libraryReload()
@@ -519,32 +505,13 @@ Panel {
     return root._masterGainDb
   }
 
-  // The daemon reports every band with a non-zero frequency (1..20); the
-  // backend patches the full payload it read, so any non-empty report is
-  // writable. An empty list means the read failed or returned no EQ data.
-  function eqWritable() {
-    var b = rep && rep.eq ? rep.eq.bands : null
-    return !!b && b.length >= 1 && b.length <= 20
-  }
-
-  function eqSetMasterGain(v) {
-    if (!root.eqWritable()) return
-    var db = Math.max(root.masterGainMin, Math.min(root.masterGainMax, Number(v)))
-    if (isNaN(db)) return
-    db = Math.round(db * 10) / 10
-    Qcy.set("Ganho geral", ["master-gain", db.toFixed(1)])
-    // Optimistic: the next full read reconciles.
-    root._masterGainDb = db
-    root._masterGainSig = String(db)
-  }
-
   function eqBands() {
     return root.eqBandModel
   }
 
   // Each updater runs on its own: a throw in one must not skip the rest.
   function updateAll() {
-    var steps = [updateEqBands, updateEqPreset, updateMasterGain, updateTouchRows]
+    var steps = [updateEqBands, updateEqPreset, updateMasterGain, updateTouchRows, syncBase]
     for (var i = 0; i < steps.length; i++) {
       try { steps[i]() } catch (e) { console.warn("qcy: update step failed:", e) }
     }
@@ -577,20 +544,6 @@ Panel {
     id: fitTimer
     interval: 9000
     onTriggered: root.fitRunning = false
-  }
-
-  function eqLabel() {
-    if (!rep || !rep.eq || rep.eq.preset === null || rep.eq.preset === undefined) return "—"
-    return slotLabel()
-  }
-
-  // "Efeito (slot N)" when the backend names the slot (eq.effect), else "Slot N".
-  function slotLabel() {
-    if (!rep || !rep.eq || rep.eq.preset === null || rep.eq.preset === undefined) return "—"
-    var p = rep.eq.preset
-    var eff = rep.eq.effect
-    if (eff !== undefined && eff !== null && eff !== "") return eff + " (slot " + p + ")"
-    return "Slot " + p
   }
 
   function updatedLabel() {
@@ -773,7 +726,7 @@ Panel {
   // Opening the panel is the display trigger: read battery lightly now and keep
   // it fresh while open; full status re-runs only occasionally.
   onOpenedChanged: {
-    if (!opened) root.stopListening()
+    if (!opened) root.flushEq()
     if (opened) {
       if (Qcy.connected) Qcy.pollBattery()
       batteryTimer.running = opened
@@ -816,7 +769,10 @@ Panel {
     }
     function onConnectedChanged() {
       root.optimistic = ({})
-      if (!Qcy.connected) root.close()
+      if (!Qcy.connected) {
+        root.resetEq()
+        root.close()
+      }
     }
   }
 
@@ -1099,100 +1055,45 @@ Panel {
             width: parent.width
             spacing: Style.space(14)
 
-            // ---- Live curve ----
-            Card {
+            // ---- In use ----
+            Column {
               width: parent.width
-              visible: !!root.rep
+              spacing: Style.space(4)
 
-              Item {
-                width: parent.width
-                implicitHeight: liveTitle.implicitHeight + Style.space(6)
-
-                Text {
-                  id: liveTitle
-                  text: "CURVA ATUAL"
-                  color: Qt.darker(root.foreground, 1.35)
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                  font.letterSpacing: 1.1
-                  anchors.left: parent.left
-                  anchors.verticalCenter: parent.verticalCenter
-                }
-                Text {
-                  text: root.activeCurveName()
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  font.bold: true
-                  anchors.left: liveTitle.right
-                  anchors.leftMargin: Style.space(10)
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  elide: Text.ElideLeft
-                  horizontalAlignment: Text.AlignRight
-                }
-              }
-
-              EqCurve {
-                width: parent.width
-                bands: root.eqBands()
-              }
-
-              SliderRow {
-                width: parent.width
-                enabled: !root.masterGainLocked
-                opacity: root.masterGainLocked ? 0.5 : 1.0
-                label: "Ganho geral"
-                minimum: root.masterGainMin
-                maximum: root.masterGainMax
-                step: 0.5
-                integer: false
-                value: root.masterGainDb()
-                suffix: " dB"
-                onReleased: function (v) { root.eqSetMasterGain(v) }
+              PanelSectionHeader {
+                text: "EM USO"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
               }
 
               Text {
                 width: parent.width
-                visible: root.masterGainLocked
-                text: "Ajuste de ganho geral desativado: a gravação completa de 143 bytes ainda não foi validada em hardware."
+                text: root.effectName()
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+                font.bold: true
+                elide: Text.ElideRight
+              }
+
+              Text {
+                width: parent.width
+                visible: !root.rep
+                text: Qcy.loading ? "Lendo os fones…" : "Conecte os fones para escolher um efeito."
                 color: Qt.darker(root.foreground, 1.5)
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
+                font.pixelSize: Style.font.bodySmall
                 wrapMode: Text.WordWrap
               }
             }
 
-            Text {
-              width: parent.width
-              visible: !root.rep
-              text: Qcy.loading ? "Lendo os fones…" : "Abra o painel com os fones conectados para ver a curva atual."
-              color: Qt.darker(root.foreground, 1.5)
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
-            }
-
-            // ---- Info note: applying writes Personalizado, factory effect untouched ----
-            Text {
-              width: parent.width
-              visible: root.slotProtected
-              text: "Aplicar grava em Personalizado, como o app do celular; este efeito ("
-                + root.slotLabel() + ") não é alterado."
-              color: Qt.darker(root.foreground, 1.5)
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
-            // ---- Library ----
+            // ---- Effects: click one to apply it ----
             Column {
               width: parent.width
               spacing: Style.space(8)
 
               PanelSectionHeader {
-                text: "BIBLIOTECA"
+                text: "EFEITOS"
                 foreground: root.foreground
                 fontFamily: root.fontFamily
               }
@@ -1211,55 +1112,50 @@ Panel {
                 width: parent.width
                 visible: Qcy.libraryError === "" && Qcy.library.length === 0
                 text: Qcy.libraryLoading || !Qcy.libraryLoaded
-                  ? "Carregando a biblioteca…"
-                  : "A biblioteca está vazia. Salve a curva atual abaixo."
+                  ? "Carregando os efeitos…"
+                  : "Nenhum efeito encontrado. Toque em Atualizar."
                 color: Qt.darker(root.foreground, 1.5)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
                 wrapMode: Text.WordWrap
               }
 
-              Column {
-                id: libList
+              Grid {
+                id: fxGrid
                 width: parent.width
+                columns: 3
                 spacing: Style.space(8)
 
                 Repeater {
                   model: Qcy.library
                   CurveCard {
                     required property var modelData
+                    visible: !root.hiddenEntry(modelData)
                     entry: modelData
-                    cardWidth: libList.width
+                    cardWidth: (fxGrid.width - fxGrid.spacing * 2) / 3
                     canApply: root.canApplyLibrary
-                    live: root.entryIsLive(modelData)
+                    live: root.activeEntryId === modelData.id
                     phase: Qcy.libraryOp.kind === "apply" && Qcy.libraryOp.id === modelData.id
                       ? Qcy.libraryOp.phase : "idle"
+                    menuOpen: root.menuId === modelData.id
                     confirmingDelete: root.pendingDeleteId === modelData.id
-                    deleteBlocked: Qcy.libraryOp.phase === "running"
-                    onApplyRequested: {
+                    onApplyRequested: root.chooseEffect(modelData.id)
+                    onMenuToggled: {
                       root.pendingDeleteId = ""
-                      Qcy.libraryApply(modelData.id)
-                    }
-                    onEditRequested: {
-                      root.pendingDeleteId = ""
-                      root.openEditorFromEntry(modelData)
+                      root.menuId = root.menuId === modelData.id ? "" : modelData.id
                     }
                     onDeleteAsked: root.pendingDeleteId = modelData.id
                     onDeleteCancelled: root.pendingDeleteId = ""
-                    onDeleteConfirmed: {
-                      root.pendingDeleteId = ""
-                      Qcy.libraryDelete(modelData.id)
-                    }
+                    onDeleteConfirmed: root.deleteEffect(modelData.id)
                   }
                 }
               }
 
-              // Result of the last library operation, with the backup path
-              // when the write was sent but not confirmed.
+              // Result of the last click on a card (or deletion), one line.
               Text {
                 width: parent.width
-                visible: root.opText() !== "" && !root.editorShowsOp()
-                text: root.opText()
+                visible: root.gridOpText() !== ""
+                text: root.gridOpText()
                 color: Qcy.libraryOp.phase === "error" ? Color.urgent : root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -1267,243 +1163,120 @@ Panel {
               }
             }
 
-            // ---- Edit / save, side by side ----
-            Row {
-              width: parent.width
-              spacing: Style.space(8)
-
-              Chip {
-                width: (parent.width - Style.space(8)) / 2
-                label: "Editar / Nova curva"
-                active: root.editorOpen
-                onClicked: {
-                  if (root.editorOpen) root.closeEditor()
-                  else root.openEditorLive()
-                }
-              }
-              Chip {
-                width: (parent.width - Style.space(8)) / 2
-                opacity: root.canSaveCurrent ? 1.0 : 0.5
-                label: "Salvar curva atual"
-                active: root.saveOpen
-                onClicked: {
-                  if (!root.canSaveCurrent) return
-                  if (root.saveOpen) { root.closeSave(); return }
-                  root.saveOpen = true
-                  nameField.forceActiveFocus()
-                }
-              }
-            }
-
-            // ---- Curve editor ----
-            Card {
-              width: parent.width
-              visible: root.editorOpen
-
-              Item {
-                width: parent.width
-                implicitHeight: edTitle.implicitHeight
-
-                Text {
-                  id: edTitle
-                  text: "EDITOR DE CURVA"
-                  color: Qt.darker(root.foreground, 1.35)
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                  font.letterSpacing: 1.1
-                  anchors.left: parent.left
-                  anchors.verticalCenter: parent.verticalCenter
-                }
-                Text {
-                  text: root.editorSource
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  font.bold: true
-                  anchors.left: edTitle.right
-                  anchors.leftMargin: Style.space(10)
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  elide: Text.ElideRight
-                  horizontalAlignment: Text.AlignRight
-                }
-              }
-
-              Text {
-                width: parent.width
-                visible: root.editorBlocked !== ""
-                text: root.editorBlocked
-                color: Color.urgent
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                wrapMode: Text.WordWrap
-              }
-
-              Text {
-                width: parent.width
-                visible: root.editorNote !== ""
-                text: root.editorNote
-                color: Qt.darker(root.foreground, 1.5)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
-              }
-
-              BarEditor {
-                width: parent.width
-                gains: root.editGains
-                editable: root.editorBlocked === ""
-                onEdited: function (i, v) { root.editSetGain(i, v) }
-                onCommitted: root.scheduleListen()
-              }
-
-              Text {
-                width: parent.width
-                text: "Arraste uma barra (±12 dB, passos de 0,5 dB). Duplo clique zera a barra."
-                color: Qt.darker(root.foreground, 1.5)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
-              }
-
-              SliderRow {
-                width: parent.width
-                enabled: root.editorBlocked === ""
-                opacity: root.editorBlocked === "" ? 1.0 : 0.5
-                label: "Ganho geral"
-                minimum: root.masterGainMin
-                maximum: root.masterGainMax
-                step: 0.5
-                integer: false
-                value: root.editMaster
-                suffix: " dB"
-                onMoved: function (v) { root.editSetMaster(v) }
-                onReleased: function (v) {
-                  root.editSetMaster(v)
-                  root.scheduleListen()
-                }
-              }
-
-              ToggleRow {
-                width: parent.width
-                opacity: root.editorHwOk ? 1.0 : 0.5
-                label: "Ouvir enquanto edita"
-                hint: "Ao soltar uma barra, aplica o rascunho nos fones (grava em Personalizado)"
-                checked: root.listenLive
-                onToggled: {
-                  if (root.listenLive) root.stopListening()
-                  else if (root.editorHwOk) root.listenLive = true
-                }
-              }
-
-              Flow {
-                width: parent.width
-                spacing: Style.space(8)
-
-                Chip {
-                  visible: !root.listenLive
-                  opacity: root.editorHwOk && Qcy.libraryOp.phase !== "running" ? 1.0 : 0.5
-                  label: "Aplicar"
-                  onClicked: {
-                    if (root.editorHwOk && Qcy.libraryOp.phase !== "running") root.applyDraft()
-                  }
-                }
-                Chip {
-                  opacity: root.editorBlocked === "" ? 1.0 : 0.5
-                  label: "Zerar tudo"
-                  onClicked: root.editZeroAll()
-                }
-                Chip {
-                  label: "Fechar"
-                  onClicked: root.closeEditor()
-                }
-              }
-
-              Text {
-                width: parent.width
-                visible: root.editorShowsOp()
-                text: root.opText()
-                color: Qcy.libraryOp.phase === "error" ? Color.urgent : root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                wrapMode: Text.WrapAnywhere
-              }
-
-              TextField {
-                id: editNameField
-                width: parent.width
-                enabled: root.editorBlocked === ""
-                placeholderText: "Nome da nova curva"
-                maximumLength: 40
-                foreground: root.foreground
-                accent: root.accent
-                onAccepted: root.submitEditorSave(text)
-                Keys.onEscapePressed: {
-                  text = ""
-                  keyCatcher.forceActiveFocus()
-                }
-              }
-
-              Text {
-                width: parent.width
-                visible: root.nameReserved(editNameField.text)
-                text: "Nome reservado para o rascunho"
-                color: Color.urgent
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                wrapMode: Text.WordWrap
-              }
-
-              Chip {
-                label: "Salvar na biblioteca"
-                active: root.nameValid(editNameField.text) && root.editorCanSave
-                opacity: root.editorCanSave ? 1.0 : 0.5
-                onClicked: root.submitEditorSave(editNameField.text)
-              }
-            }
-
-            // ---- Save current curve ----
+            // ---- Equalizer: applies when a bar is released ----
             Column {
               width: parent.width
               spacing: Style.space(8)
 
-              Column {
-                width: parent.width
-                spacing: Style.space(8)
-                visible: root.saveOpen
+              PanelSectionHeader {
+                text: "EQUALIZADOR"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
 
-                TextField {
-                  id: nameField
+              Card {
+                width: parent.width
+
+                BarEditor {
                   width: parent.width
-                  placeholderText: "Nome da curva"
-                  maximumLength: 40
-                  foreground: root.foreground
-                  accent: root.accent
-                  onAccepted: root.submitSave(text)
-                  Keys.onEscapePressed: root.closeSave()
+                  gains: root.editGains
+                  editable: root.canApplyLibrary
+                  onEdited: function (i, v) { root.editSetGain(i, v) }
+                  onCommitted: root.scheduleEq()
                 }
 
                 Text {
                   width: parent.width
-                  visible: root.nameReserved(nameField.text)
-                  text: "Nome reservado para o rascunho"
-                  color: Color.urgent
+                  text: "Arraste as barras (±12 dB). Toque duas vezes para zerar uma barra. O som muda ao soltar."
+                  color: Qt.darker(root.foreground, 1.5)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
+                SliderRow {
+                  width: parent.width
+                  enabled: root.canApplyLibrary
+                  opacity: root.canApplyLibrary ? 1.0 : 0.5
+                  label: "Ganho geral"
+                  minimum: root.masterGainMin
+                  maximum: root.masterGainMax
+                  step: 0.5
+                  integer: false
+                  value: root.shownMaster()
+                  suffix: " dB"
+                  onMoved: function (v) { root.editSetMaster(v) }
+                  onReleased: function (v) {
+                    root.editSetMaster(v)
+                    root.scheduleEq()
+                  }
+                }
+
+                Text {
+                  width: parent.width
+                  text: "base: " + root.baseLabel()
+                  color: Qt.darker(root.foreground, 1.5)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                }
+
+                Text {
+                  width: parent.width
+                  visible: root.eqOpText() !== ""
+                  text: root.eqOpText()
+                  color: (root.eqNote !== "" || Qcy.libraryOp.phase === "error") ? Color.urgent : root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
-                  wrapMode: Text.WordWrap
+                  wrapMode: Text.WrapAnywhere
                 }
 
                 Row {
                   spacing: Style.space(8)
+
                   Chip {
-                    label: "Salvar"
-                    active: root.nameValid(nameField.text)
-                    onClicked: root.submitSave(nameField.text)
+                    opacity: root.canApplyLibrary ? 1.0 : 0.5
+                    label: "Zerar"
+                    onClicked: root.eqZero()
                   }
                   Chip {
-                    label: "Cancelar"
-                    onClicked: root.closeSave()
+                    label: "Salvar como…"
+                    active: root.saveOpen
+                    onClicked: {
+                      if (root.saveOpen) { root.closeSave(); return }
+                      root.saveOpen = true
+                      nameField.forceActiveFocus()
+                    }
+                  }
+                }
+
+                Column {
+                  width: parent.width
+                  spacing: Style.space(8)
+                  visible: root.saveOpen
+
+                  TextField {
+                    id: nameField
+                    width: parent.width
+                    placeholderText: "Nome do efeito"
+                    maximumLength: 40
+                    foreground: root.foreground
+                    accent: root.accent
+                    onAccepted: root.submitSave(text)
+                    Keys.onEscapePressed: root.closeSave()
+                  }
+
+                  Row {
+                    spacing: Style.space(8)
+                    Chip {
+                      label: "Salvar"
+                      active: root.nameValid(nameField.text)
+                      onClicked: root.submitSave(nameField.text)
+                    }
+                    Chip {
+                      label: "Cancelar"
+                      onClicked: root.closeSave()
+                    }
                   }
                 }
               }
@@ -1920,7 +1693,7 @@ Panel {
     // Mini version for library cards: no frequency labels, shorter plot.
     property bool compact: false
 
-    readonly property real maxGain: 10
+    readonly property real maxGain: 12
     // The plot stops short of the bottom so the band labels have room INSIDE
     // this item. They used to be anchored to the delegate's bottom edge, which
     // put them ~2px past `height` and on top of whatever followed.
@@ -2250,10 +2023,10 @@ Panel {
     }
   }
 
-  // One library curve, one wide row: name and a small info line on the left, a
-  // mini curve and a compact "Editar" on the right. Clicking the row applies it;
-  // it is dimmed (and says why, in a small line) when it cannot be written.
-  // The factory-effect note lives once above the list, not here.
+  // One effect as a card of the three-column grid: name, a mini curve and a
+  // small status line. Clicking it applies it at once; the card itself shows
+  // "Aplicando…", the check mark or a short error. Only the effect in use is
+  // highlighted. User effects have a small "···" menu with "Excluir".
   component CurveCard: BorderSurface {
     id: cc
     required property var entry
@@ -2262,144 +2035,163 @@ Panel {
     property bool live: false
     // idle | running | ok | unconfirmed | error — this card's own apply state.
     property string phase: "idle"
+    property bool menuOpen: false
     property bool confirmingDelete: false
-    property bool deleteBlocked: false
     signal applyRequested()
-    signal editRequested()
+    signal menuToggled()
     signal deleteAsked()
     signal deleteCancelled()
     signal deleteConfirmed()
 
-    readonly property bool entryApplyable: cc.entry.applyable === true
-    readonly property bool usable: cc.canApply && cc.entryApplyable
     readonly property bool isUser: cc.entry.source === "user"
-    readonly property real master: Number(cc.entry.masterGain) || 0
-    readonly property real sideWidth: Style.space(110)
+    readonly property real pad: Style.space(8)
+    readonly property bool highlighted: cc.live || cc.phase === "ok"
+
+    FontMetrics {
+      id: nameMetrics
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      font.bold: true
+    }
+    FontMetrics {
+      id: noteMetrics
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
 
     width: cc.cardWidth
-    implicitHeight: Math.max(textCol.implicitHeight, sideCol.implicitHeight) + Style.space(24)
+    implicitHeight: cardCol.implicitHeight + cc.pad * 2
     radius: Style.cornerRadius
-    opacity: (cc.usable || cc.phase !== "idle" || cc.live) ? 1.0 : 0.55
-    color: (cc.live || cc.phase === "ok")
+    opacity: cc.canApply ? 1.0 : 0.55
+    color: cc.highlighted
       ? Style.selectedFillFor(root.foreground, root.accent)
-      : ((ccMouse.containsMouse && cc.usable) ? Style.hoverFillFor(root.foreground, root.accent) : root.cardFill)
-    borderSpec: Border.controlSpec((cc.live || cc.phase === "ok") ? "selected" : "normal", root.foreground, root.accent)
+      : ((ccMouse.containsMouse && cc.canApply) ? Style.hoverFillFor(root.foreground, root.accent) : root.cardFill)
+    borderSpec: Border.controlSpec(cc.highlighted ? "selected" : "normal", root.foreground, root.accent)
     Behavior on color { ColorAnimation { duration: 120 } }
     Behavior on opacity { NumberAnimation { duration: 120 } }
 
     MouseArea {
       id: ccMouse
       anchors.fill: parent
-      enabled: cc.usable
+      enabled: cc.canApply
       hoverEnabled: true
-      cursorShape: cc.usable ? Qt.PointingHandCursor : Qt.ArrowCursor
+      cursorShape: cc.canApply ? Qt.PointingHandCursor : Qt.ArrowCursor
       onClicked: cc.applyRequested()
     }
 
     Column {
-      id: textCol
-      x: Style.space(12)
-      y: Style.space(12)
-      width: cc.width - Style.space(24) - cc.sideWidth - Style.space(10)
+      id: cardCol
+      x: cc.pad
+      y: cc.pad
+      width: cc.width - cc.pad * 2
       spacing: Style.space(4)
 
       Text {
-        width: parent.width
+        width: parent.width - (cc.isUser ? Style.space(20) : 0)
+        // Two lines reserved, so the cards of a row line up.
+        height: Math.ceil(nameMetrics.height) * 2
         text: cc.entry.name
         color: root.foreground
         font.family: root.fontFamily
-        font.pixelSize: Style.font.body
+        font.pixelSize: Style.font.bodySmall
         font.bold: true
         wrapMode: Text.WordWrap
         maximumLineCount: 2
         elide: Text.ElideRight
       }
 
-      Text {
+      EqCurve {
         width: parent.width
-        text: (cc.entry.id === "rascunho" ? "RASCUNHO · " : "")
-          + root.sourceLabel(cc.entry.source) + " · " + cc.entry.nBands + " bandas · "
-          + (cc.master >= 0 ? "+" : "") + cc.master.toFixed(1) + " dB"
-        color: Qt.darker(root.foreground, 1.5)
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        elide: Text.ElideRight
+        visible: !cc.menuOpen
+        bands: cc.entry.bands ? cc.entry.bands : []
+        compact: true
       }
 
       Text {
         width: parent.width
-        visible: text !== ""
+        height: Math.ceil(noteMetrics.height)
+        visible: !cc.menuOpen
         text: {
           if (cc.phase === "running") return "Aplicando…"
-          if (cc.phase === "ok") return "Aplicado (confirmado)"
-          if (cc.phase === "unconfirmed") return "Gravado, mas o aparelho não confirmou"
-          if (cc.phase === "error") return "Falhou"
-          if (!cc.entryApplyable) return root.reasonText(cc.entry.applyableReason)
+          if (cc.phase === "ok") return "Aplicado ✓"
+          if (cc.phase === "unconfirmed") return "Não confirmou"
+          if (cc.phase === "error") return "Erro ao aplicar"
           if (cc.live) return "Em uso"
           return ""
         }
-        color: (cc.phase === "error" || cc.phase === "unconfirmed") ? Color.urgent : Qt.darker(root.foreground, 1.3)
+        color: (cc.phase === "error" || cc.phase === "unconfirmed")
+          ? Color.urgent
+          : ((cc.live || cc.phase === "ok") ? root.accent : Qt.darker(root.foreground, 1.3))
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
-        wrapMode: Text.WordWrap
+        font.bold: cc.live
+        elide: Text.ElideRight
       }
 
-      Row {
-        visible: cc.phase !== "running" && (cc.isUser || cc.confirmingDelete)
+      // Small menu, in place of the curve while open.
+      Column {
+        width: parent.width
+        visible: cc.menuOpen
         spacing: Style.space(6)
 
         Chip {
-          visible: cc.isUser && !cc.confirmingDelete
-          opacity: cc.deleteBlocked ? 0.5 : 1.0
+          visible: !cc.confirmingDelete
           label: "Excluir"
-          onClicked: if (!cc.deleteBlocked) cc.deleteAsked()
+          onClicked: cc.deleteAsked()
         }
         Text {
           visible: cc.confirmingDelete
-          anchors.verticalCenter: parent.verticalCenter
-          text: "Excluir?"
+          text: "Excluir este efeito?"
           color: root.foreground
           font.family: root.fontFamily
-          font.pixelSize: Style.font.bodySmall
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+          width: parent.width
         }
-        Chip {
+        Row {
           visible: cc.confirmingDelete
-          label: "Sim"
-          onClicked: cc.deleteConfirmed()
-        }
-        Chip {
-          visible: cc.confirmingDelete
-          label: "Não"
-          onClicked: cc.deleteCancelled()
+          spacing: Style.space(6)
+          Chip {
+            label: "Sim"
+            onClicked: cc.deleteConfirmed()
+          }
+          Chip {
+            label: "Não"
+            onClicked: cc.deleteCancelled()
+          }
         }
       }
     }
 
-    Column {
-      id: sideCol
-      x: cc.width - Style.space(12) - cc.sideWidth
-      y: Style.space(12)
-      width: cc.sideWidth
-      spacing: Style.space(6)
+    // The "···" button of user effects.
+    Item {
+      visible: cc.isUser
+      x: cc.width - cc.pad - width
+      y: cc.pad
+      width: Style.space(20)
+      height: Style.space(20)
 
-      EqCurve {
-        width: parent.width
-        bands: cc.entry.bands
-        compact: true
+      Text {
+        anchors.centerIn: parent
+        text: "···"
+        color: cc.menuOpen ? root.accent : Qt.darker(root.foreground, 1.2)
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        font.bold: true
       }
 
-      Chip {
-        visible: cc.phase !== "running"
-        width: parent.width
-        label: "Editar"
-        onClicked: cc.editRequested()
+      MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        onClicked: cc.menuToggled()
       }
     }
   }
 
-  // Ten draggable vertical bars (positions 0..9, standard frequency table). The
-  // gain is above each bar, the frequency below. It owns no state: it reports
-  // edited(index, dB) while dragging and committed() on release.
+  // Ten tall vertical sliders (positions 0..9, standard frequency table, +-12
+  // dB in 0.5 steps). The value in dB is above each one, the frequency below,
+  // a line marks zero. It owns no state: it reports edited(index, dB) while
+  // dragging and committed() on release; a double click zeroes one bar.
   component BarEditor: Item {
     id: be
     required property var gains
@@ -2407,10 +2199,11 @@ Panel {
     signal edited(int index, real value)
     signal committed()
 
-    readonly property real plotHeight: Style.spacing.controlHeight * 3
-    readonly property real valueHeight: Math.ceil(Style.font.caption) + Style.space(4)
-    readonly property real labelHeight: Math.ceil(Style.font.caption) + Style.space(4)
+    readonly property real plotHeight: Style.space(150)
+    readonly property real valueHeight: Math.ceil(Style.font.caption) + Style.space(6)
+    readonly property real labelHeight: Math.ceil(Style.font.caption) + Style.space(6)
     readonly property real slotWidth: be.width / 10
+    readonly property real knobSize: Style.space(12)
 
     implicitHeight: be.valueHeight + be.plotHeight + be.labelHeight
     opacity: be.editable ? 1.0 : 0.5
@@ -2422,6 +2215,9 @@ Panel {
         required property int index
         readonly property real gainDb: Number(be.gains[slot.index]) || 0
         readonly property int hz: root.editorFreqs[slot.index]
+        // Vertical travel of the knob's centre, from the plot's middle.
+        readonly property real half: plot.height / 2 - be.knobSize / 2
+        readonly property real knobY: plot.height / 2 - slot.gainDb / root.editorMaxDb * slot.half
 
         x: slot.index * be.slotWidth
         width: be.slotWidth
@@ -2430,10 +2226,11 @@ Panel {
         Text {
           width: parent.width
           height: be.valueHeight
-          text: (slot.gainDb > 0 ? "+" : "") + slot.gainDb.toFixed(1)
+          text: root.fmtDb(slot.gainDb)
           color: slot.gainDb === 0 ? Qt.darker(root.foreground, 1.6) : root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption * 0.85
+          font.bold: slot.gainDb !== 0
           horizontalAlignment: Text.AlignHCenter
           verticalAlignment: Text.AlignVCenter
         }
@@ -2441,28 +2238,51 @@ Panel {
         Rectangle {
           id: plot
           y: be.valueHeight
-          width: parent.width - Style.space(4)
+          width: parent.width - Style.space(3)
           anchors.horizontalCenter: parent.horizontalCenter
           height: be.plotHeight
-          radius: 2
-          color: root.cardFill
+          radius: Style.space(3)
+          color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
 
+          // The rail.
+          Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: be.knobSize / 2
+            width: Style.space(4)
+            height: parent.height - be.knobSize
+            radius: width / 2
+            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.22)
+          }
+
+          // The zero line.
           Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             height: 1
-            color: Qt.darker(root.foreground, 1.9)
+            color: Qt.darker(root.foreground, 1.25)
           }
 
+          // The fill, from zero to the knob.
           Rectangle {
-            readonly property real barHeight: Math.abs(slot.gainDb) / root.editorMaxDb * (plot.height / 2)
             anchors.horizontalCenter: parent.horizontalCenter
-            width: Math.max(2, parent.width - Style.space(8))
-            height: Math.max(1, barHeight)
-            y: slot.gainDb >= 0 ? plot.height / 2 - height : plot.height / 2
-            radius: 2
-            color: slot.gainDb >= 0 ? root.accent : Qt.darker(root.foreground, 1.5)
+            width: Style.space(4)
+            y: Math.min(slot.knobY, plot.height / 2)
+            height: Math.abs(slot.knobY - plot.height / 2)
+            radius: width / 2
+            color: slot.gainDb >= 0 ? root.accent : Qt.darker(root.foreground, 1.4)
+          }
+
+          // The knob.
+          Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: slot.knobY - be.knobSize / 2
+            width: be.knobSize
+            height: be.knobSize
+            radius: width / 2
+            color: slot.gainDb === 0 ? root.foreground : root.accent
+            border.width: 1
+            border.color: Qt.darker(root.foreground, 1.6)
           }
 
           MouseArea {
@@ -2472,8 +2292,9 @@ Panel {
             preventStealing: true
             cursorShape: be.editable ? Qt.SizeVerCursor : Qt.ArrowCursor
 
+            // y is relative to the rail's box, clamped to its ends.
             function setFrom(y) {
-              var v = (plot.height / 2 - y) / (plot.height / 2) * root.editorMaxDb
+              var v = (plot.height / 2 - y) / slot.half * root.editorMaxDb
               be.edited(slot.index, Math.max(-root.editorMaxDb, Math.min(root.editorMaxDb, Math.round(v * 2) / 2)))
             }
             onPressed: function (mouse) { dragArea.setFrom(mouse.y) }
@@ -2489,11 +2310,11 @@ Panel {
 
         Text {
           width: parent.width
-          y: be.valueHeight + be.plotHeight + Style.space(2)
+          y: be.valueHeight + be.plotHeight + Style.space(3)
           text: slot.hz >= 1000
             ? ((slot.hz % 1000 === 0 ? (slot.hz / 1000) : (slot.hz / 1000).toFixed(1)) + "k")
             : String(slot.hz)
-          color: Qt.darker(root.foreground, 1.75)
+          color: Qt.darker(root.foreground, 1.45)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption * 0.85
           horizontalAlignment: Text.AlignHCenter
