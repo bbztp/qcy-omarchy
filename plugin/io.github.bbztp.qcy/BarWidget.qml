@@ -302,7 +302,7 @@ Panel {
   // shows the earbuds on another effect (changed from outside), forget it so
   // the next release composes on what is really playing.
   function syncBase() {
-    if (root.baseId !== "" && !Qcy.writeBusy && root.activeSlot >= 0 && root.activeSlot !== 255)
+    if (root.baseId !== "" && root.baseId !== "none" && !Qcy.writeBusy && root.activeSlot >= 0 && root.activeSlot !== 255)
       root.baseId = ""
   }
 
@@ -332,6 +332,16 @@ Panel {
   // A release is still pending (tab change, panel close): send it, do not drop it.
   function flushEq() {
     if (eqTimer.running) root.applyEq()
+  }
+
+  // "Começar do zero": the bars keep what they show but the effect underneath
+  // is dropped, so the ten bars are the whole curve. Nothing is written until
+  // a bar is moved; the earbuds keep playing the exact effect until then.
+  function detachBase() {
+    eqTimer.stop()
+    root.editGains = root.shownGains.slice()
+    root.baseId = "none"
+    root.eqNote = ""
   }
 
   // "Zerar": bars and overall gain to zero, applied now on the same base.
@@ -1293,6 +1303,12 @@ Panel {
                     opacity: root.canApplyLibrary ? 1.0 : 0.5
                     label: root.composeBase === "none" ? "Zerar" : "Restaurar"
                     onClicked: root.eqZero()
+                  }
+                  Chip {
+                    visible: root.composeBase !== "none"
+                    opacity: root.canApplyLibrary ? 1.0 : 0.5
+                    label: "Começar do zero"
+                    onClicked: root.detachBase()
                   }
                   Chip {
                     label: "Salvar como…"
