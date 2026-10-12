@@ -579,11 +579,15 @@ Panel {
 
   function eqLabel() {
     if (!rep || !rep.eq || rep.eq.preset === null || rep.eq.preset === undefined) return "—"
+    return slotLabel()
+  }
+
+  // "Efeito (slot N)" when the backend names the slot (eq.effect), else "Slot N".
+  function slotLabel() {
+    if (!rep || !rep.eq || rep.eq.preset === null || rep.eq.preset === undefined) return "—"
     var p = rep.eq.preset
-    // Slot 11 is the profile this user created with the app's hearing test.
-    if (p === 11) return "Personalizado (teste auditivo)"
-    if (p === 6) return "Clássico de fábrica (slot 6)"
-    // Slot 0 holds whatever was last written there; its name is unknown.
+    var eff = rep.eq.effect
+    if (eff !== undefined && eff !== null && eff !== "") return eff + " (slot " + p + ")"
     return "Slot " + p
   }
 
@@ -1193,7 +1197,7 @@ Panel {
                 }
                 Text {
                   width: parent.width - warnIcon.implicitWidth - Style.space(10)
-                  text: "Slot " + root.activeSlot + " protegido (efeito de fábrica ou seu custom). "
+                  text: "Efeito de fábrica ativo: " + root.slotLabel() + ". "
                     + "Para não sobrescrevê-lo, a biblioteca não aplica curvas enquanto o slot 6 ou 11 estiver ativo."
                   color: Qt.darker(root.foreground, 1.15)
                   font.family: root.fontFamily
@@ -1361,7 +1365,7 @@ Panel {
               Text {
                 width: parent.width
                 visible: root.slotProtected
-                text: "O slot " + root.activeSlot + " (protegido) está ativo: você pode editar e salvar, mas não ouvir nem aplicar."
+                text: root.slotLabel() + " (protegido) está ativo: você pode editar e salvar, mas não ouvir nem aplicar."
                 color: Color.urgent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall

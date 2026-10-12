@@ -1436,11 +1436,13 @@ type eqBandReport struct {
 // eqReport is the EQ section of `status --json`.
 //
 //	preset        active slot (byte 0 of the raw 0x22 payload)
+//	effect        effect name of that slot (qcycore.EffectName), omitted when unknown
 //	masterGain    master gain in dB (int16 centi-dB / 100), -12..+12
 //	bands[]       every band position with freq != 0 (up to 20), in order:
 //	              index (0-19), freq in Hz as stored on the device, gain in dB, q, type
 type eqReport struct {
 	Preset     int            `json:"preset"`
+	Effect     string         `json:"effect,omitempty"` // measured effect name of the slot, when known
 	MasterGain float64        `json:"masterGain"`
 	Bands      []eqBandReport `json:"bands"`
 }
@@ -1451,7 +1453,7 @@ func eqReportFrom(p []byte) (*eqReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	eq := &eqReport{Preset: s.Slot, MasterGain: s.MasterGain}
+	eq := &eqReport{Preset: s.Slot, Effect: s.Effect, MasterGain: s.MasterGain}
 	for _, b := range s.Bands {
 		eq.Bands = append(eq.Bands, eqBandReport{Index: b.Index, Freq: b.Freq, Gain: b.Gain, Q: b.Q, Type: b.Type})
 	}

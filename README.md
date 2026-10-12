@@ -67,8 +67,23 @@ The full state is read on connect and when the panel opens; the panel shows
 
 The panel has three tabs: **Status** (battery, connection state, noise mode),
 **Som** (live EQ curve and the curve library: clicking a card runs
-`qcyctl library apply <id> --yes`; it is disabled while slot 6 or 11 is active)
+`qcyctl library apply <id> --yes`; it is disabled while slot 6 or 11 is active; the panel names the active
+effect, e.g. `Experiência auditiva (slot 11)`)
 and **Ajustes** (noise scenes, toggles, balance, touch controls, device info).
+
+EQ slot -> effect map (MeloBuds N70, read from the device; the phone app's own
+curves are always slot 255):
+
+| Slot | Effect | Status |
+|---|---|---|
+| 1 / 2 / 3 / 4 / 5 / 6 | Predefinido / Popular / Bass pesados / Rock / Suave / Clássico | medido |
+| 10 | Som espacial (same payload as slot 1) | medido |
+| 11 | Experiência auditiva (your hearing-test profile) | medido |
+| 14 | Agudos suaves | medido |
+| 255 | Personalizado (any custom curve made in the app) | medido |
+| 7, 8, 9, 12, 13 | ? | não observado |
+
+Slot 0 is the old test curve of this tool. Details in `backend/PROTOCOL.md`.
 
 ## Settings
 

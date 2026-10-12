@@ -698,3 +698,26 @@ func TestEqWriteFailureClassifiesOtherSlot(t *testing.T) {
 		t.Fatalf("no echo: %v", err)
 	}
 }
+
+func TestEffectName(t *testing.T) {
+	for slot, want := range map[int]string{1: "Predefinido", 6: "Clássico", 10: "Som espacial", 11: "Experiência auditiva", 255: "Personalizado"} {
+		got, ok := EffectName(slot)
+		if !ok || got != want {
+			t.Errorf("slot %d: %q %v", slot, got, ok)
+		}
+	}
+	for _, slot := range []int{0, 7, 8, 9, 12, 13, 15, 254, -1} {
+		if n, ok := EffectName(slot); ok || n != "" {
+			t.Errorf("slot %d should be unknown: %q", slot, n)
+		}
+	}
+	s, err := DecodeEq(make([]byte, 73))
+	if err != nil || s.Effect != "" {
+		t.Fatalf("slot 0: %+v %v", s, err)
+	}
+	p := make([]byte, 73)
+	p[0] = 11
+	if s, _ := DecodeEq(p); s.Effect != "Experiência auditiva" {
+		t.Fatalf("%+v", s)
+	}
+}

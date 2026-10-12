@@ -115,9 +115,37 @@ type EqBand struct {
 // EqSnapshot is a decoded 0x22 payload. MasterGain and band gains are in dB.
 type EqSnapshot struct {
 	Slot       int      `json:"slot"`
+	Effect     string   `json:"effect,omitempty"` // EffectName(Slot), omitted when the slot has no measured name
 	MasterGain float64  `json:"masterGain"`
 	Bands      []EqBand `json:"bands"`
 	Payload    string   `json:"payload"` // raw payload, lowercase hex
+}
+
+// SlotCustomApp is the slot the phone app writes any curve of its own to; the
+// name the user gave it is kept only on the phone.
+const SlotCustomApp = 255
+
+// effectNames is the slot -> effect map measured on a MeloBuds N70 by reading
+// 0x22. Slots 7, 8, 9, 12 and 13 have not been observed. Slot 0 is the old
+// test curve of this tool and has no effect name.
+var effectNames = map[int]string{
+	1:   "Predefinido",
+	2:   "Popular",
+	3:   "Bass pesados",
+	4:   "Rock",
+	5:   "Suave",
+	6:   "Clássico",
+	10:  "Som espacial", // payload identical to slot 1
+	11:  "Experiência auditiva",
+	14:  "Agudos suaves",
+	255: "Personalizado",
+}
+
+// EffectName returns the factory/app effect name measured for slot, or false
+// when the slot is unknown or was not observed.
+func EffectName(slot int) (string, bool) {
+	n, ok := effectNames[slot]
+	return n, ok
 }
 
 // EqResult is what a write returns: the state read back after the write plus
@@ -227,6 +255,9 @@ func DecodeEq(p []byte) (EqSnapshot, error) {
 		MasterGain: float64(masterCenti(p)) / 100,
 		Payload:    hex.EncodeToString(p),
 		Bands:      []EqBand{},
+	}
+	if name, ok := EffectName(s.Slot); ok {
+		s.Effect = name
 	}
 	n := (len(p) - eqHeader) / eqBandSize
 	if n > EqMaxBands {

@@ -270,12 +270,34 @@ func TestLibrarySeedIdempotent(t *testing.T) {
 	if err != nil || c.Source != qcycore.SourceFactorySnapshot || c.Slot != 6 || c.Name != "Clássico (slot 6)" {
 		t.Fatalf("%+v %v", c, err)
 	}
-	c, err = qcycore.LoadCurve("slot-11-primeira-leitura")
-	if err != nil || c.Source != qcycore.SourceDeviceImport || c.Slot != 11 {
+	c, err = qcycore.LoadCurve("experiencia-auditiva-slot-11")
+	if err != nil || c.Name != "Experiência auditiva (slot 11)" || c.Source != qcycore.SourceDeviceImport || c.Slot != 11 {
 		t.Fatalf("%+v %v", c, err)
 	}
 	if ok, _ := c.Applyable(); ok {
 		t.Fatal("slot 11 has a tail and must not be applyable")
+	}
+}
+
+// A library seeded by an older version keeps its old id and gets no duplicate.
+func TestLibrarySeedKeepsLegacyID(t *testing.T) {
+	data := libEnv(t)
+	bk := filepath.Join(data, "qcy-omarchy", "backups")
+	if err := os.MkdirAll(bk, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bk, "eq-slot11-first.hex"), []byte(realCustom11), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := qcycore.SeedFromPayload(qcycore.SourceDeviceImport, 11, "Slot 11 (primeira leitura)", realCustom11); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := seedLibrary()
+	if err != nil || len(rep.Created) != 0 || len(rep.Skipped) != 1 {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	if _, err := qcycore.LoadCurve("slot-11-primeira-leitura"); err != nil {
+		t.Fatal(err)
 	}
 }
 

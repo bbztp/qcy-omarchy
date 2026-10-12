@@ -154,10 +154,29 @@ stays allowed when it is the 73-byte write (Classico), and otherwise needs
 `--full-length` (custom slot 11 carries bands in positions 10-12, so its
 master-gain slider now needs `allowFull`).
 
-- **Slot** (byte 0): the active preset slot. Slot 11 is the manufacturer's
-  hearing-test profile; the plugin maps slots 0-4 to Pop, Rock, Classical, Jazz
-  and Bass Booster (names not independently verified). The device only reports the *active* slot; an inactive
-  slot cannot be read back.
+- **Slot** (byte 0): the active preset slot. The device only reports the
+  *active* slot; an inactive slot cannot be read back. `qcycore.EffectName`
+  names the slots measured on a MeloBuds N70 (reads of 0x22):
+
+  | Slot | Effect | Status |
+  |---|---|---|
+  | 0 | (none: the old test curve of this tool) | n/a |
+  | 1 | Predefinido | medido |
+  | 2 | Popular | medido |
+  | 3 | Bass pesados | medido |
+  | 4 | Rock | medido |
+  | 5 | Suave | medido |
+  | 6 | Clássico | medido |
+  | 7, 8, 9 | ? | não observado |
+  | 10 | Som espacial (payload identical to slot 1) | medido |
+  | 11 | Experiência auditiva (the user's hearing-test profile) | medido |
+  | 12, 13 | ? | não observado |
+  | 14 | Agudos suaves | medido |
+  | 255 | Personalizado | medido |
+
+  Rule: any curve of its own made in the phone app is written to **slot 255**;
+  the name given there stays on the phone only, so 255 is always reported as
+  "Personalizado". Unknown slots have no effect name.
 - **Master gain** (bytes 1-2): signed int16 in centi-dB, so `0x0096` is
   +1.50 dB. The client accepts -12..+12 dB (-1200..+1200) and rejects NaN, Inf
   and anything outside that range before converting to an integer. Band gains
@@ -170,7 +189,9 @@ master-gain slider now needs `allowFull`).
 
 ### Units in `status --json`
 
-`eq.preset` is the active slot (byte 0), `eq.masterGain` is the master gain in
+`eq.preset` is the active slot (byte 0), `eq.effect` its effect name (string,
+omitted when the slot is not in the table above; additive, same field in
+`qcyctl eq get --json`, the daemon `eq` reply and write results), `eq.masterGain` is the master gain in
 **dB** (float, int16 / 100). `eq.bands[]` lists every position with `freq` != 0
 (up to 20), in order, each `{index, freq, gain, q, type}`: `index` is the
 position (0-19), `freq` in Hz as stored on the device, `gain` in dB. `qcyctl eq
@@ -276,7 +297,13 @@ replaces unless `--replace`, and then only a source=user curve),
 `delete <id> --yes` (moved to `.trash`), `export <id> <file>`, `import <file>`,
 `seed` (idempotent; creates only the missing ones from
 `<backups>/eq-slotN-first.hex` and the `payload` field of
-`<backups>/preset-map/v3-*-slot6.json`).
+`<backups>/preset-map/v3-*-slot6.json`). New seeds are named
+`<effect> (slot N)` (e.g. `Experiência auditiva (slot 11)`, id
+`experiencia-auditiva-slot-11`) for slots known to `EffectName`, else
+`Slot N (primeira leitura)`; slot 6 stays `Clássico (slot 6)`. Existing curves
+are never renamed: when the legacy id (e.g. `slot-11-primeira-leitura`) is
+already in the library the seed skips it instead of adding a duplicate, and
+that id stays valid for `show`/`apply`/`delete`.
 
 With the earbuds: `import-device <name> [seconds]` saves the active EQ
 (lossless payload, source device-import) and `apply <id> --yes [--full-length]
@@ -372,7 +399,7 @@ If the scan finds nothing and no cached address answers, the daemon replies `{"o
 | `battery` | none | battery object |
 | `capabilities` | none | model capabilities |
 | `set` | `action`, `params`, optional `expect` | confirmed payload bytes or null; `action: "eq"` is refused |
-| `eq` | none | `{slot, masterGain (dB), bands[{freq,gain,q,type}], payload (hex)}` |
+| `eq` | none | `{slot, effect (when known), masterGain (dB), bands[{freq,gain,q,type}], payload (hex)}` |
 | `eqApply` | optional `gains` (10 ints, centi-dB), `masterGain` (int, centi-dB), `slot` (int), `bands` (array of `{index, freq, gain (dB, number), q, type}`, exclusive with `gains`), `allowProtected` (bool), `allowFull` (bool). Nothing else: unknown keys and raw payloads (`payload`, `raw`, `hex`, ...) are rejected | the `eq` object plus `previous`, `fullLength`, `backupFirst`, `backupHistory` |
 | `eqMasterGain` | `masterGain` (int, centi-dB), required; optional `allowProtected`, `allowFull` | same as `eqApply` |
 | `wear` | `state`: 1 on / 2 off | confirmed `0x2C` payload (byte array) |

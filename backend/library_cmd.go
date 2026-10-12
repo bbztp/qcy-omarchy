@@ -371,8 +371,17 @@ func seedLibrary() (seedReport, error) {
 	if err != nil {
 		return rep, err
 	}
-	add := func(source string, slot int, name, payload string) {
+	add := func(source string, slot int, name, legacy, payload string) {
 		id := qcycore.Slug(name)
+		// Curves seeded by older versions keep their old id; do not duplicate
+		// them under the readable name.
+		if legacy != "" {
+			lid := qcycore.Slug(legacy)
+			if _, err := qcycore.LoadCurve(lid); err == nil {
+				rep.Skipped = append(rep.Skipped, seedItem{ID: lid, Reason: "already in the library"})
+				return
+			}
+		}
 		c, err := qcycore.SeedFromPayload(source, slot, name, payload)
 		switch {
 		case err == nil:
@@ -405,7 +414,13 @@ func seedLibrary() (seedReport, error) {
 			rep.Errors = append(rep.Errors, err.Error())
 			continue
 		}
-		add(qcycore.SourceDeviceImport, h.slot, fmt.Sprintf("Slot %d (primeira leitura)", h.slot), string(data))
+		legacy := fmt.Sprintf("Slot %d (primeira leitura)", h.slot)
+		name, lg := legacy, ""
+		// Slot 6 keeps the legacy name: "Clássico (slot 6)" is the factory snapshot's.
+		if eff, ok := qcycore.EffectName(h.slot); ok && h.slot != 6 {
+			name, lg = fmt.Sprintf("%s (slot %d)", eff, h.slot), legacy
+		}
+		add(qcycore.SourceDeviceImport, h.slot, name, lg, string(data))
 	}
 
 	jsons, _ := filepath.Glob(filepath.Join(dir, "preset-map", "v3-*-slot6.json"))
@@ -423,7 +438,7 @@ func seedLibrary() (seedReport, error) {
 			rep.Errors = append(rep.Errors, fmt.Sprintf("%s: no usable payload field", p))
 			continue
 		}
-		add(qcycore.SourceFactorySnapshot, 6, "Clássico (slot 6)", f.Payload)
+		add(qcycore.SourceFactorySnapshot, 6, "Clássico (slot 6)", "", f.Payload)
 	}
 	return rep, nil
 }
