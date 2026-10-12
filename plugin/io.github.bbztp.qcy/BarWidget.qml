@@ -44,9 +44,6 @@ Panel {
   readonly property var noise: rep ? rep.noise : null
   readonly property var togglesReport: rep && rep.toggles ? rep.toggles : ({})
 
-  // Material Design Icons battery glyphs (Nerd Font), as used by omarchy.power.
-  readonly property var _levelGlyphs: ["󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"]
-
 
   // Detailed noise scenes (Ajustes). The three headline modes on the Status
   // tab are noiseButtons below.
@@ -406,11 +403,6 @@ Panel {
       if (batt.casePresent) parts.push("estojo " + batt.case + "%")
       return name + " — " + parts.join(" · ")
     }
-
-  function levelGlyph(pct) {
-    var idx = Math.max(0, Math.min(9, Math.floor((pct / 100) * 10)))
-    return _levelGlyphs[idx]
-  }
 
   function heroStatus() {
     if (!Qcy.connected) return "Desconectado"
@@ -967,44 +959,32 @@ Panel {
             width: parent.width
             spacing: Style.space(14)
 
-            // Earbuds in the middle with their charge either side.
-            Item {
+            // Three charge rings: left, right, case.
+            Row {
+              id: ringRow
               width: parent.width
-              implicitHeight: Math.max(
-                Math.max(heroArt.height, heroPillLeft.height),
-                heroPillRight.height)
+              spacing: Style.space(8)
 
-              Image {
-                id: heroArt
-                anchors.centerIn: parent
-                width: 176
-                height: 112
-                source: "assets/earbuds.svg"
-                sourceSize: Qt.size(176, 112)
-                fillMode: Image.PreserveAspectFit
-                opacity: Qcy.connected ? 1.0 : 0.4
-              }
-
-              ChargePill {
-                id: heroPillLeft
-                anchors.right: heroArt.left
-                anchors.rightMargin: Style.space(10)
-                anchors.verticalCenter: heroArt.verticalCenter
-                visible: root.batt !== null
-                glyph: root.batt ? root.levelGlyph(root.batt.left) : ""
+              BatteryRing {
+                width: (ringRow.width - Style.space(8) * 2) / 3
+                label: "Esq."
+                valid: Qcy.connected && !!root.batt
                 level: root.batt ? root.batt.left : 0
                 charging: root.batt ? root.batt.leftCharging : false
               }
-
-              ChargePill {
-                id: heroPillRight
-                anchors.left: heroArt.right
-                anchors.leftMargin: Style.space(10)
-                anchors.verticalCenter: heroArt.verticalCenter
-                visible: root.batt !== null
-                glyph: root.batt ? root.levelGlyph(root.batt.right) : ""
+              BatteryRing {
+                width: (ringRow.width - Style.space(8) * 2) / 3
+                label: "Dir."
+                valid: Qcy.connected && !!root.batt
                 level: root.batt ? root.batt.right : 0
                 charging: root.batt ? root.batt.rightCharging : false
+              }
+              BatteryRing {
+                width: (ringRow.width - Style.space(8) * 2) / 3
+                label: "Estojo"
+                valid: Qcy.connected && !!(root.batt && root.batt.casePresent)
+                level: root.batt ? root.batt.case : 0
+                charging: root.batt ? root.batt.caseCharging : false
               }
             }
 
@@ -1048,33 +1028,6 @@ Panel {
                     font.pixelSize: Style.font.bodySmall
                   }
                 }
-              }
-            }
-
-            // Battery card: the case is the one people forget; left and right
-            // are repeated as gauges so the three read the same way.
-            Card {
-              width: parent.width
-              visible: !!root.batt
-
-              BatteryGauge {
-                width: parent.width
-                label: "Esq."
-                level: root.batt ? root.batt.left : 0
-                charging: root.batt ? root.batt.leftCharging : false
-              }
-              BatteryGauge {
-                width: parent.width
-                label: "Dir."
-                level: root.batt ? root.batt.right : 0
-                charging: root.batt ? root.batt.rightCharging : false
-              }
-              BatteryGauge {
-                width: parent.width
-                present: !!(root.batt && root.batt.casePresent)
-                label: "Estojo"
-                level: root.batt ? root.batt.case : 0
-                charging: root.batt ? root.batt.caseCharging : false
               }
             }
 
@@ -1839,91 +1792,100 @@ Panel {
     }
   }
 
-  // A horizontal charge gauge: label, a proportional bar, the percentage and a
-  // charging glyph. Reads at a glance the way the earbud's own LEDs do, which
-  // plain "Left 100%" rows do not.
-  component BatteryGauge: Item {
-    id: gauge
+  // One circular charge indicator: a faint track, an arc for the level, the
+  // percentage in the middle and a label underneath. No reading (offline, not
+  // reported yet) leaves the track empty with a dash.
+  component BatteryRing: Item {
+    id: ring
     required property string label
-    required property int level
+    property int level: 0
+    property bool valid: false
     property bool charging: false
-    property bool present: true
 
-    readonly property color fillColor: gauge.level <= 15
-      ? Color.urgent
-      : (gauge.level <= 30 ? root.accent : root.foreground)
+    readonly property real diameter: Style.space(64)
+    readonly property real stroke: Style.space(5)
+    readonly property real shown: ring.valid ? Math.max(0, Math.min(100, ring.level)) : 0
+    readonly property color arcColor: ring.valid && ring.level <= 20 ? Color.urgent : root.accent
+    readonly property color trackColor: Qt.rgba(
+      root.foreground.r, root.foreground.g, root.foreground.b, 0.18)
 
-    // Sized by its text, not by the track. `implicitHeight: gaugeTrack.height`
-    // left the whole row 6px tall while the label and percentage are ~13px, so
-    // both spilled above and below into the neighbouring sections.
-    implicitHeight: Math.max(gaugeTrack.height, gaugeLabel.implicitHeight, gaugePct.implicitHeight)
-    visible: gauge.present
+    implicitWidth: ring.diameter
+    implicitHeight: ringDisc.height + Style.space(6) + ringLabel.implicitHeight
 
-    Text {
-      id: gaugeLabel
-      text: gauge.label
-      color: Qt.darker(root.foreground, 1.3)
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
-      width: Style.space(52)
-      anchors.left: parent.left
-      anchors.verticalCenter: parent.verticalCenter
-    }
+    Item {
+      id: ringDisc
+      width: ring.diameter
+      height: ring.diameter
+      anchors.horizontalCenter: parent.horizontalCenter
 
-    Rectangle {
-      id: gaugeTrack
-      anchors.left: gaugeLabel.right
-      anchors.leftMargin: Style.space(10)
-      anchors.right: gaugePct.left
-      anchors.rightMargin: Style.space(10)
-      anchors.verticalCenter: parent.verticalCenter
-      height: Math.max(6, Math.round(Style.spacing.controlHeight * 0.22))
-      radius: height / 2
-      color: Qt.darker(root.foreground, 2.2)
+      // Animated copy of the level; the canvas repaints as it moves.
+      property real progress: ring.shown
+      Behavior on progress { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
 
-      Rectangle {
-        anchors.left: parent.left
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        anchors.leftMargin: 1
-        anchors.topMargin: 1
-        anchors.bottomMargin: 1
-        width: Math.max(1, (parent.width - 2) * Math.max(0, Math.min(100, gauge.level)) / 100)
-        radius: parent.radius
-        color: gauge.fillColor
+      Canvas {
+        id: ringCanvas
+        anchors.fill: parent
+        antialiasing: true
+        onPaint: {
+          var ctx = getContext("2d")
+          ctx.reset()
+          var c = width / 2
+          var r = c - ring.stroke / 2
+          ctx.lineWidth = ring.stroke
+          ctx.lineCap = "round"
+          ctx.strokeStyle = ring.trackColor
+          ctx.beginPath()
+          ctx.arc(c, c, r, 0, Math.PI * 2)
+          ctx.stroke()
+          if (ringDisc.progress > 0.5) {
+            var start = -Math.PI / 2
+            ctx.strokeStyle = ring.arcColor
+            ctx.beginPath()
+            ctx.arc(c, c, r, start, start + Math.PI * 2 * ringDisc.progress / 100)
+            ctx.stroke()
+          }
+        }
+      }
+      Connections {
+        target: ringDisc
+        function onProgressChanged() { ringCanvas.requestPaint() }
+      }
+      Connections {
+        target: ring
+        function onArcColorChanged() { ringCanvas.requestPaint() }
+        function onTrackColorChanged() { ringCanvas.requestPaint() }
+      }
 
-        // A breathing highlight while charging, so the state reads without
-        // having to read the glyph.
-        SequentialAnimation on opacity {
-          running: gauge.charging
-          loops: Animation.Infinite
-          NumberAnimation { from: 0.55; to: 1.0; duration: 900; easing.type: Easing.InOutQuad }
-          NumberAnimation { from: 1.0; to: 0.55; duration: 900; easing.type: Easing.InOutQuad }
+      Column {
+        anchors.centerIn: parent
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          text: ring.valid ? ring.level + "%" : "—"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          font.bold: true
+        }
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          text: "󰂄"
+          color: root.accent
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          visible: ring.valid && ring.charging
         }
       }
     }
 
     Text {
-      id: gaugePct
-      text: gauge.level + "%"
-      color: root.foreground
+      id: ringLabel
+      anchors.top: ringDisc.bottom
+      anchors.topMargin: Style.space(6)
+      anchors.horizontalCenter: parent.horizontalCenter
+      text: ring.label
+      color: Qt.darker(root.foreground, 1.3)
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
-      font.bold: true
-      anchors.right: gaugeCharge.left
-      anchors.rightMargin: gauge.charging ? Style.space(4) : 0
-      anchors.verticalCenter: parent.verticalCenter
-    }
-
-    Text {
-      id: gaugeCharge
-      text: "󰂄"
-      color: root.accent
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
-      visible: gauge.charging
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
     }
   }
 
@@ -2055,39 +2017,6 @@ Panel {
       trackColor: Qt.darker(root.foreground, 1.6)
       onMoved: function (v) { srow.moved(v) }
       onReleased: function (v) { srow.released(v) }
-    }
-  }
-
-  component ChargePill: BorderSurface {
-    id: pill
-    required property string glyph
-    required property int level
-    property bool charging: false
-    readonly property color pillColor: pill.level <= 15
-      ? Color.urgent
-      : (pill.level <= 30 ? root.accent : root.foreground)
-    implicitWidth: pillRow.implicitWidth + Style.space(20)
-    implicitHeight: pillRow.implicitHeight + Style.space(10)
-    radius: Style.cornerRadius
-    color: "transparent"
-    borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
-    Row {
-      id: pillRow
-      anchors.centerIn: parent
-      spacing: Style.space(6)
-      Text {
-        text: pill.glyph
-        color: pill.pillColor
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-      }
-      Text {
-        text: pill.level + "%"
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-        font.bold: true
-      }
     }
   }
 
