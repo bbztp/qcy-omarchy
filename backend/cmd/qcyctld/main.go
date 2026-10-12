@@ -61,6 +61,10 @@ type daemon struct {
 	frames     chan frame
 	connected  bool
 	deviceName string
+	// vendorID is the manufacturer-data vendorId of the connected unit, when
+	// the dialer could learn it (scan or cache). It decides the model.
+	vendorID   uint16
+	haveVendor bool
 
 	// Model detection & routing
 	caps   map[string]bool
@@ -181,6 +185,11 @@ type Capabilities struct {
 	Features     []FeatureFlag `json:"features"`     // supported features
 	Actions      []ActionSpec  `json:"actions"`      // settable actions
 	BatteryChars []string      `json:"batteryChars"` // "left", "right", "case"
+	// Verified is true only for models this tool was exercised against (the
+	// N70). Anything else runs on the shared, conservative command set.
+	Verified     bool   `json:"verified"`
+	VendorID     int    `json:"vendorId,omitempty"`     // manufacturer-data vendorId, when known
+	ProductTitle string `json:"productTitle,omitempty"` // product name from the Quicky database
 }
 
 // ModelHandler defines the interface each model implements.
@@ -319,28 +328,26 @@ func (meloBudsN70Handler) Capabilities() Capabilities {
 			{ID: "promptVolume", Label: "Prompt Volume", Type: "slider", Min: 0, Max: 15, Step: 1, Opcode: 0x1D, ReadOpcode: 0x1D},
 		},
 		BatteryChars: []string{"left", "right", "case"},
+		Verified:     true,
 	}
 }
 
-func (meloBudsN70Handler) HandleSet(d *daemon, actionID string, params, expect []byte) ([]byte, error) {
-	// Map handler action IDs to daemon action IDs
-	daemonAction := map[string]string{
+// daemonActionID maps a handler action id onto the daemon's opcode-table key.
+func daemonActionID(actionID string) string {
+	if a, ok := map[string]string{
 		"gameMode":     "game",
 		"sleepMode":    "sleep",
 		"windNoise":    "wind",
 		"wearDetect":   "wear",
-		"autoOff":      "autoOff",
 		"promptVolume": "promptVol",
-		"balance":      "balance",
-		"anc":          "anc",
-		"ldac":         "ldac",
-		"multipoint":   "multipoint",
-		"find":         "find",
-	}[actionID]
-	if daemonAction == "" {
-		daemonAction = actionID
+	}[actionID]; ok {
+		return a
 	}
-	return d.setAction(daemonAction, params, expect)
+	return actionID
+}
+
+func (meloBudsN70Handler) HandleSet(d *daemon, actionID string, params, expect []byte) ([]byte, error) {
+	return d.setAction(daemonActionID(actionID), params, expect)
 }
 
 func (meloBudsN70Handler) HandleRead(d *daemon, actionID string) (interface{}, error) {
@@ -366,6 +373,13 @@ func GetHandler(modelID string) ModelHandler {
 	if h, ok := modelRegistry[modelID]; ok {
 		return h
 	}
+	// "qcy-<vendorId>" ids are resolved against the product database on demand
+	// rather than registered one by one.
+	if v, ok := vendorFromModelID(modelID); ok {
+		if h, ok := newProfileHandler(v); ok {
+			return h
+		}
+	}
 	return GenericHandler{}
 }
 
@@ -378,19 +392,76 @@ func cacheFilePath() string {
 	return filepath.Join(dir, "qcyctl", "le-address")
 }
 
-func loadCachedAddr() (bluetooth.Address, bool) {
-	p := cacheFilePath()
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return bluetooth.Address{}, false
-	}
-	fields := strings.Fields(string(b))
+// cacheEntry is one line of the le-address cache:
+//
+//	<addr> <random 0|1> [<name with _ for spaces>|-] [<vendorId decimal>]
+//
+// Older files stop after the address, or after the name; both still parse. The
+// vendorId is last because the fast path never scans and so never sees the
+// advertisement that carries it.
+type cacheEntry struct {
+	Addr       string
+	Random     bool
+	Name       string
+	VendorID   uint16
+	HaveVendor bool
+}
+
+func parseCacheEntry(content string) (cacheEntry, bool) {
+	fields := strings.Fields(content)
 	if len(fields) == 0 {
+		return cacheEntry{}, false
+	}
+	e := cacheEntry{Addr: fields[0]}
+	if len(fields) > 1 && fields[1] == "1" {
+		e.Random = true
+	}
+	if len(fields) > 2 && fields[2] != "-" {
+		e.Name = strings.ReplaceAll(fields[2], "_", " ")
+	}
+	if len(fields) > 3 {
+		if n, err := strconv.ParseUint(fields[3], 10, 16); err == nil {
+			e.VendorID, e.HaveVendor = uint16(n), true
+		}
+	}
+	return e, true
+}
+
+func formatCacheEntry(e cacheEntry) string {
+	random := "0"
+	if e.Random {
+		random = "1"
+	}
+	line := e.Addr + " " + random
+	name := strings.ReplaceAll(strings.Join(strings.Fields(e.Name), " "), " ", "_")
+	if name != "" || e.HaveVendor {
+		if name == "" {
+			name = "-"
+		}
+		line += " " + name
+	}
+	if e.HaveVendor {
+		line += " " + strconv.FormatUint(uint64(e.VendorID), 10)
+	}
+	return line + "\n"
+}
+
+func loadCacheEntry() (cacheEntry, bool) {
+	b, err := os.ReadFile(cacheFilePath())
+	if err != nil {
+		return cacheEntry{}, false
+	}
+	return parseCacheEntry(string(b))
+}
+
+func loadCachedAddr() (bluetooth.Address, bool) {
+	e, ok := loadCacheEntry()
+	if !ok {
 		return bluetooth.Address{}, false
 	}
 	var addr bluetooth.Address
-	addr.Set(fields[0])
-	if len(fields) > 1 && fields[1] == "1" {
+	addr.Set(e.Addr)
+	if e.Random {
 		addr.SetRandom(true)
 	}
 	if addr.MAC == (bluetooth.MAC{}) {
@@ -399,43 +470,41 @@ func loadCachedAddr() (bluetooth.Address, bool) {
 	return addr, true
 }
 
-func saveCachedAddr(addr bluetooth.Address, name string) {
+// saveCachedAddr stores the address, the advertised name and (when the scan
+// saw it) the vendorId, which is what model detection uses on the fast path.
+func saveCachedAddr(addr bluetooth.Address, name string, vendor uint16, haveVendor bool) {
 	p := cacheFilePath()
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return
 	}
-	random := "0"
-	if addr.IsRandom() {
-		random = "1"
-	}
-	// Third field is the advertised name, used for model detection on the fast
-	// path (which never scans and therefore never sees an advertisement).
-	line := addr.String() + " " + random
-	if name != "" {
-		line += " " + strings.ReplaceAll(name, " ", "_")
-	}
-	_ = os.WriteFile(p, []byte(line+"\n"), 0o644)
+	line := formatCacheEntry(cacheEntry{
+		Addr: addr.String(), Random: addr.IsRandom(), Name: name,
+		VendorID: vendor, HaveVendor: haveVendor,
+	})
+	_ = os.WriteFile(p, []byte(line), 0o644)
 }
 
 // loadCachedName returns the name stored alongside a cached address.
 func loadCachedName() string {
-	b, err := os.ReadFile(cacheFilePath())
-	if err != nil {
-		return ""
-	}
-	fields := strings.Fields(string(b))
-	if len(fields) < 3 {
-		return ""
-	}
-	return strings.ReplaceAll(fields[2], "_", " ")
+	e, _ := loadCacheEntry()
+	return e.Name
+}
+
+// loadCachedVendor returns the vendorId stored alongside a cached address.
+func loadCachedVendor() (uint16, bool) {
+	e, _ := loadCacheEntry()
+	return e.VendorID, e.HaveVendor
 }
 
 func (d *daemon) detectAndAttachModel() {
 	// The advertised name is the authoritative signal; the 0007 firmware string
 	// is only a corroborating hint (it is a bare "1.2.3" on this hardware).
-	modelID := detectModelFromName(d.deviceName)
+	d.mu.Lock()
+	name, vendor, haveVendor := d.deviceName, d.vendorID, d.haveVendor
+	d.mu.Unlock()
+	modelID := detectModel(vendor, haveVendor, name, "")
 	if modelID == "generic" {
-		modelID = detectModelFromVersion(d.readVersionString())
+		modelID = detectModel(vendor, haveVendor, name, d.readVersionString())
 	}
 	h := GetHandler(modelID)
 	d.mu.Lock()
@@ -493,6 +562,32 @@ func detectModelFromVersion(fw string) string {
 		return "melobuds-n70"
 	}
 	return "generic"
+}
+
+// n70VendorIDs are the manufacturer-data vendorIds that are a MeloBuds N70.
+// Exactly these two: the neighbouring ids are other products (23873/23878
+// AilyBuds E50, 23874/23879 MeloBuds N60, 23875 CT03) and 23876 is not in the
+// database, so a range would verify earbuds this tool was never tried on.
+var n70VendorIDs = map[uint16]bool{23872: true, 23877: true}
+
+// detectModel picks the model id. Precedence: the vendorId from the
+// advertisement (the real identifier), then the advertised name, then the
+// firmware string, then "generic". A vendorId the Quicky database knows but
+// that is not an N70 becomes "qcy-<vendorId>", driven by a profile generated
+// from the product entry, never by N70 assumptions.
+func detectModel(vendorID uint16, haveVendor bool, name, version string) string {
+	if haveVendor {
+		if n70VendorIDs[vendorID] {
+			return "melobuds-n70"
+		}
+		if _, ok := lookupProduct(vendorID); ok {
+			return "qcy-" + strconv.Itoa(int(vendorID))
+		}
+	}
+	if id := detectModelFromName(name); id != "generic" {
+		return id
+	}
+	return detectModelFromVersion(version)
 }
 
 // detectModelFromName maps the advertised Bluetooth name onto a registered model
@@ -707,6 +802,9 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 	if handler == nil {
 		handler = GenericHandler{}
 	}
+	if err := gateCommand(handler, req.Cmd); err != nil {
+		return nil, err
+	}
 
 	switch req.Cmd {
 	case "status":
@@ -854,11 +952,22 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 	if k, err := d.readKeys(); err == nil && len(k) > 0 {
 		rep["keys"] = bytesJSON(k)
 	}
+	model := d.modelReport()
+	if model != nil {
+		rep["model"] = model
+	}
 	if snap := d.capabilitiesSnapshot(); len(snap) > 0 {
 		caps := map[string]interface{}{}
 		for k, v := range snap {
 			caps[k] = v
 		}
+		if model != nil {
+			// Not a feature: tells the panel the probe results above come
+			// from a model this tool was never exercised against.
+			caps["verified"] = model["verified"]
+		}
+		// Model-dependent, derived from the handler of this connection.
+		caps["eq"] = d.handlerHasFeature(FeatureEQ)
 		rep["capabilities"] = caps
 	}
 	if p, err := d.query(0x2D, 800*time.Millisecond); err == nil && len(p) >= 1 {
@@ -1340,6 +1449,82 @@ func sanePromptVolume(p []byte) bool {
 	return max > 0 && max <= 255 && int(p[0]) <= max
 }
 
+// handlerHasFeature reports whether the current handler declares the feature.
+func (d *daemon) handlerHasFeature(f FeatureFlag) bool {
+	h := d.knownHandler()
+	if h == nil {
+		return false
+	}
+	for _, x := range h.Capabilities().Features {
+		if x == f {
+			return true
+		}
+	}
+	return false
+}
+
+// n70OnlyCmds are the daemon commands whose wire behaviour was only ever
+// established on the N70: they are refused on any model that is not verified.
+var n70OnlyCmds = map[string]bool{"eqApply": true, "eqMasterGain": true, "keysSet": true}
+
+// gateCommand is the single gate between a request and the model-specific
+// commands. A model that is not Verified gets none of the N70-only commands,
+// and "wear" only when its profile declares the wearDetect action.
+func gateCommand(h ModelHandler, cmd string) error {
+	c := h.Capabilities()
+	if c.Verified {
+		return nil
+	}
+	if n70OnlyCmds[cmd] {
+		return fmt.Errorf("%s is disabled: %s is not a verified model", cmd, c.DisplayName)
+	}
+	if cmd == "wear" && !declaresAction(c, "wearDetect") {
+		return fmt.Errorf("wear is disabled: %s does not declare it", c.DisplayName)
+	}
+	return nil
+}
+
+func declaresAction(c Capabilities, id string) bool {
+	for _, a := range c.Actions {
+		if daemonActionID(a.ID) == daemonActionID(id) {
+			return true
+		}
+	}
+	return false
+}
+
+// modelReport describes the detected model for the status report.
+func (d *daemon) modelReport() map[string]interface{} {
+	d.mu.Lock()
+	h, id, vendor, have := d.handler, d.modelID, d.vendorID, d.haveVendor
+	d.mu.Unlock()
+	if h == nil {
+		return nil
+	}
+	c := h.Capabilities()
+	actions := make([]string, 0, len(c.Actions))
+	for _, a := range c.Actions {
+		actions = append(actions, a.ID)
+	}
+	features := make([]string, 0, len(c.Features))
+	for _, f := range c.Features {
+		features = append(features, string(f))
+	}
+	m := map[string]interface{}{
+		"modelId": id, "displayName": c.DisplayName, "verified": c.Verified,
+		// What the connected model declares; the panel crosses its probe
+		// results with these so an undeclared control is never offered.
+		"actions": actions, "features": features,
+	}
+	if have {
+		m["vendorId"] = int(vendor)
+	}
+	if c.ProductTitle != "" {
+		m["productTitle"] = c.ProductTitle
+	}
+	return m
+}
+
 // capabilitiesSnapshot copies the probe results under the lock. Reading the map
 // directly raced the background probe, which writes it entry by entry while a
 // status request is walking it.
@@ -1370,7 +1555,8 @@ func (d *daemon) probeCapabilities() {
 	d.caps["multipoint"] = true
 	d.caps["balance"] = true
 	d.caps["autoOff"] = true
-	d.caps["eq"] = true
+	// "eq" is not a probe result: gatherStatus derives it from the current
+	// handler, so it cannot go stale across a change of earbuds.
 	d.caps["wind"] = true
 	d.caps["keys"] = d.sess != nil && d.sess.Has(charKeys)
 

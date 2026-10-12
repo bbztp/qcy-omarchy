@@ -253,6 +253,9 @@ func statusFromDaemon(raw map[string]interface{}) *statusReport {
 			}
 		}
 	}
+	if m, ok := raw["model"].(map[string]interface{}); ok {
+		rep.Model = m
+	}
 	if p := bytesOf(raw["spatial"]); len(p) >= 1 {
 		rep.Spatial = &spatialReport{Enabled: p[0] == 0x01}
 	}
@@ -1399,8 +1402,11 @@ type statusReport struct {
 	Spatial   *spatialReport  `json:"spatial,omitempty"`
 	// Caps lists which optional commands this unit answered, so the panel can
 	// show only what the connected earbuds actually have.
-	Caps   map[string]bool `json:"capabilities,omitempty"`
-	Errors []string        `json:"errors,omitempty"`
+	Caps map[string]bool `json:"capabilities,omitempty"`
+	// Model is the daemon's model detection: modelId, displayName, verified,
+	// and vendorId/productTitle when known.
+	Model  map[string]interface{} `json:"model,omitempty"`
+	Errors []string               `json:"errors,omitempty"`
 	// Stale is set when the daemon served its last cached snapshot because the
 	// earbuds were busy; AgeSeconds is how old that snapshot is.
 	Stale      bool `json:"stale,omitempty"`

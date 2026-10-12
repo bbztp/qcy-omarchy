@@ -17,7 +17,7 @@ lang: en          country: US          sys_: android          appversion: 4.0.7_
 modelId=23872&firmwareVersion=3.0.13
 ```
 
-- `modelId` is the **vendorId** of the earbuds (N70: 23872..23877, one per colour),
+- `modelId` is the **vendorId** of the earbuds (N70: 23872 and 23877; 23873-23875 are other products, 23876 is not in the database),
   *not* the product `modelId` 21020 of the product list: that one returns `data: null`.
 - `firmwareVersion` is the version string the earbuds report (opcode `0x07`). An empty
   value answers `0.0.0` (a generic panel).
@@ -77,3 +77,25 @@ itself (`EQItemView`: custom effects use `soundEffectId` = saveIndex + 19, or 25
   unit; the panel here allows +-12 (see PROTOCOL.md) — a deliberate difference.
 - The N70 panel lists fit detection (0x11), wear sensitivity (0x48) and beep volume (0x1D).
   The capability probe of this tool reports them as absent on this firmware; not resolved.
+
+## Detecção por vendorId
+
+The daemon identifies the model by the `vendorId` (manufacturer data bytes 0-1,
+big-endian, company id `0x521c`) instead of by the Bluetooth name:
+
+1. vendorId 23872 or 23877 (exactly these two) -> `melobuds-n70`, the only verified model; 23873-23875 are other products.
+2. vendorId present in the Quicky product database (199 products) but not an N70 ->
+   `qcy-<vendorId>`, driven by a profile generated from the product entry
+   (`Features`: ANC, channel balance, find, auto-off, settings by cmdid 9/16/35/36/42/44
+   or by name). It offers only the actions of the shared command set that the product
+   declares; EQ is never offered or written, `ldac`/`promptVol` stay read-only.
+3. otherwise the advertised name, then the firmware string, then `generic`.
+
+The vendorId is only visible in a scan, so it is stored as an extra last field of
+`~/.cache/qcyctl/le-address` (`<addr> <random> <name|-> <vendorId>`; older 2- and 3-field
+files still load) and used on the fast path, which does not scan.
+
+`capabilities` carries `verified` (true only for the N70), `vendorId` and
+`productTitle` (both omitted when unknown). `status` adds a `model` object (also `actions` and `features`, the ids the model declares; the panel hides anything undeclared on an unverified model)
+(`modelId`, `displayName`, `verified`, `vendorId`, `productTitle`) and `capabilities.verified`.
+The panel shows "Modelo não verificado" in Ajustes > Aparelho when `verified` is false.

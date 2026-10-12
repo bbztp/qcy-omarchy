@@ -240,6 +240,9 @@ func (d *daemon) connect() error {
 			if name != "" {
 				d.deviceName = name
 			}
+			if vs, ok := d.dialer.(vendorSource); ok {
+				d.vendorID, d.haveVendor = vs.VendorID()
+			}
 			d.mu.Unlock()
 			d.detectAndAttachModel()
 			return nil

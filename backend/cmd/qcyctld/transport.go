@@ -46,6 +46,32 @@ type dialer interface {
 type bleDialer struct {
 	scanSeconds int
 	gate        dialGate
+
+	// vendor is the manufacturer-data vendorId of the unit the last successful
+	// Dial reached (from the scan, or from the cache on the fast path).
+	vmu        sync.Mutex
+	vendor     uint16
+	haveVendor bool
+}
+
+func (b *bleDialer) setVendor(v uint16, ok bool) {
+	b.vmu.Lock()
+	b.vendor, b.haveVendor = v, ok
+	b.vmu.Unlock()
+}
+
+// VendorID implements vendorSource.
+func (b *bleDialer) VendorID() (uint16, bool) {
+	b.vmu.Lock()
+	defer b.vmu.Unlock()
+	return b.vendor, b.haveVendor
+}
+
+// vendorSource is the optional dialer capability the daemon uses to learn the
+// vendorId of the unit it just connected to. Dialers without it (test fakes)
+// simply leave detection to the advertised name.
+type vendorSource interface {
+	VendorID() (uint16, bool)
 }
 
 // hardwareAllowed is the structural guard against tests reaching the real
@@ -58,6 +84,7 @@ func (b *bleDialer) Dial(onNotify func([]byte)) (session, string, error) {
 	if !hardwareAllowed {
 		return nil, "", errHardwareDisabled
 	}
+	b.setVendor(0, false)
 	adapter := bluetooth.DefaultAdapter
 	if err := adapter.Enable(); err != nil {
 		return nil, "", fmt.Errorf("enable adapter: %w", err)
@@ -69,11 +96,13 @@ func (b *bleDialer) Dial(onNotify func([]byte)) (session, string, error) {
 	// burn the whole scan window.
 	if addr, ok := loadCachedAddr(); ok {
 		name := loadCachedName()
+		vendor, haveVendor := loadCachedVendor()
 		dev, err := b.dialLE(adapter, addr, 3*time.Second)
 		if err == nil {
 			s, serr := setupSession(dev, onNotify)
 			if serr == nil {
-				saveCachedAddr(addr, name)
+				saveCachedAddr(addr, name, vendor, haveVendor)
+				b.setVendor(vendor, haveVendor)
 				return s, name, nil
 			}
 			_ = dev.Disconnect()
@@ -89,8 +118,17 @@ func (b *bleDialer) Dial(onNotify func([]byte)) (session, string, error) {
 	addrCh := make(chan bluetooth.Address, 1)
 	nameCh := make(chan string, 1)
 	scanErrCh := make(chan error, 1)
+	// vendorId per advertising address: the manufacturer data is what
+	// identifies the model, and the scan is the only place it is visible.
+	var vmu sync.Mutex
+	vendors := map[string]uint16{}
 	go func() {
 		scanErrCh <- scanner.Scan(func(r quicky.ScanResult) {
+			if r.Advertisement != nil {
+				vmu.Lock()
+				vendors[r.Address.String()] = r.Advertisement.VendorID
+				vmu.Unlock()
+			}
 			select {
 			case addrCh <- r.Address:
 			default:
@@ -150,7 +188,11 @@ func (b *bleDialer) Dial(onNotify func([]byte)) (session, string, error) {
 		_ = dev.Disconnect()
 		return nil, "", err
 	}
-	saveCachedAddr(addr, name)
+	vmu.Lock()
+	vendor, haveVendor := vendors[addr.String()]
+	vmu.Unlock()
+	saveCachedAddr(addr, name, vendor, haveVendor)
+	b.setVendor(vendor, haveVendor)
 	return s, name, nil
 }
 

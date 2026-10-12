@@ -64,6 +64,12 @@ Singleton {
   // ------------------------------------------------------------- full state
 
   property var report: null        // parsed `qcyctl status --json`
+  // Model detection from the daemon (vendorId first, name as fallback). A unit
+  // outside the verified set runs on the shared controls only.
+  readonly property bool modelUnverified: !!(report && report.capabilities
+    && report.capabilities.verified === false)
+  readonly property string productTitle: (report && report.model && report.model.productTitle)
+    ? String(report.model.productTitle) : ""
   property bool loading: false
   property string error: ""
   // True when the last failure was the daemon's "busy" answer: the earbuds

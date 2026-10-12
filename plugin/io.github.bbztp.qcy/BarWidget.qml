@@ -476,8 +476,8 @@ Panel {
   // The model name BlueZ reports, trimmed of the vendor prefix so the header
   // reads "MeloBuds N70" rather than repeating "QCY".
   readonly property string modelName: {
-    var raw = ""
-    if (Qcy.device) raw = (Qcy.device.name || Qcy.device.deviceName || "")
+    var raw = Qcy.productTitle
+    if (raw === "" && Qcy.device) raw = (Qcy.device.name || Qcy.device.deviceName || "")
     var m = raw.match(/melobuds\s*(.+)/i)
     if (m) return "MeloBuds " + m[1]
     return raw || "QCY Earbuds"
@@ -596,7 +596,28 @@ Panel {
   // never empty just because capabilities are missing.
   readonly property var caps: (rep && rep.capabilities) ? rep.capabilities : null
 
+  // The daemon's detection of the connected model (rep.model). Unverified
+  // models get only what their product declares, and no EQ.
+  readonly property var unitModel: (rep && rep.model) ? rep.model : null
+  readonly property bool unverifiedModel: !!(unitModel && unitModel.verified === false)
+
+  // Probe name -> declared action id / feature flag, for the cross below.
+  readonly property var declaredAs: ({
+    anc: "anc", game: "gameMode", sleep: "sleepMode", ldac: "ldac",
+    multipoint: "multipoint", wind: "windNoise", wear: "wearDetect",
+    autoOff: "autoOff", balance: "balance", promptVol: "promptVolume"
+  })
+
+  function declared(feature) {
+    if (!unverifiedModel || !unitModel.actions) return true
+    if (feature === "find") return (unitModel.features || []).indexOf("find") !== -1
+    var id = declaredAs[feature]
+    if (id === undefined) return false   // spatial, fit, keys: never declared
+    return unitModel.actions.indexOf(id) !== -1
+  }
+
   function has(feature) {
+    if (unverifiedModel && !declared(feature)) return false
     if (caps) return caps[feature] === true
     if (feature === "spatial") return !!(rep && rep.spatial)
     if (feature === "keys") return !!(rep && rep.keys)
@@ -1167,8 +1188,19 @@ Panel {
               }
             }
 
+            Text {
+              visible: root.unverifiedModel
+              width: parent.width
+              text: "Equalizador dispon\u00edvel s\u00f3 no MeloBuds N70."
+              color: Qt.darker(root.foreground, 1.5)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
             // ---- Effects: click one to apply it ----
             Column {
+              visible: !root.unverifiedModel
               width: parent.width
               spacing: Style.space(8)
 
@@ -1246,6 +1278,7 @@ Panel {
 
             // ---- Equalizer: applies when a bar is released ----
             Column {
+              visible: !root.unverifiedModel
               width: parent.width
               spacing: Style.space(8)
 
@@ -1570,6 +1603,15 @@ Panel {
                 label: "Firmware"
                 value: root.rep && root.rep.firmware && root.rep.firmware.left
                   ? root.rep.firmware.left : "—"
+              }
+              Text {
+                visible: Qcy.modelUnverified
+                text: "Modelo n\u00e3o verificado \u2014 s\u00f3 os controles comuns foram testados em outro aparelho."
+                color: Qt.darker(root.foreground, 1.5)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+                width: parent.width
               }
             }
           }
