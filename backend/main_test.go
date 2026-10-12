@@ -89,7 +89,7 @@ func TestEqSetValidation(t *testing.T) {
 		"short list":         {"1,2,3", "--yes"},
 		"gain out of range":  {"0,0,0,0,0,0,0,0,0,9", "--yes"},
 		"NaN gain":           {"0,0,0,0,0,0,0,0,0,NaN", "--yes"},
-		"bad master":         {ten, "--yes", "--master-gain", "12"},
+		"bad master":         {ten, "--yes", "--master-gain", "13"},
 		"NaN master":         {ten, "--yes", "--master-gain=NaN"},
 		"bad preset":         {ten, "--yes", "--preset", "300"},
 		"preset needs value": {ten, "--yes", "--preset"},
