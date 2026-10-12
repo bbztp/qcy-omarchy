@@ -43,6 +43,11 @@ var defaultBandTable = [qcycore.EqBands]int{31, 62, 125, 250, 500, 1000, 2000, 4
 
 const defaultBandQ = 100
 
+// savedBandType is the type of the bars of a saved curve: 2, the bell every
+// factory effect is made of and the one confirmed audible. Type 0, which this
+// code used to write, sounded broken on the earbuds (quiet, treble gone).
+const savedBandType = 2
+
 func cmdLibrary(args []string) error {
 	if len(args) < 1 {
 		return errors.New(libraryUsage)
@@ -292,7 +297,7 @@ func cmdLibrarySave(args []string) error {
 	}
 	bands := make([]qcycore.EqBand, qcycore.EqBands)
 	for i, g := range gains {
-		bands[i] = qcycore.EqBand{Index: i, Freq: defaultBandTable[i], Gain: float64(g) / 100, Q: defaultBandQ, Type: 0}
+		bands[i] = qcycore.EqBand{Index: i, Freq: defaultBandTable[i], Gain: float64(g) / 100, Q: defaultBandQ, Type: savedBandType}
 	}
 	c := qcycore.Curve{
 		Version:    qcycore.CurveVersion,
