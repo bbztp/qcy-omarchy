@@ -690,7 +690,7 @@ func cmdLibraryApply(args []string) error {
 		return errors.New(usage)
 	}
 	if !a.bools["--yes"] {
-		return errors.New("library apply: this overwrites the EQ curve of the target slot (255 by default, or 0) and makes it active; pass --yes to confirm (the active slot's payload is backed up first)")
+		return errors.New("library apply: this overwrites the EQ curve of the target slot (255 by default, or 0) and makes it active; pass --yes to confirm (only the ACTIVE slot's payload is backed up first; the previous content of slot 255, when it is not the active one, is REPLACED with no copy, as the phone app does when you pick a curve)")
 	}
 	slot := qcycore.SlotCustomApp
 	if v, ok := a.vals["--slot"]; ok {
@@ -777,7 +777,7 @@ func cmdLibraryCompose(args []string) error {
 	}
 	dry := a.bools["--dry-run"]
 	if !dry && !a.bools["--yes"] {
-		return errors.New("library compose: this overwrites slot 255 (the phone app's \"Personalizado\") and makes it active; pass --yes to confirm (the active slot's payload is backed up first), or --dry-run to only print the payload")
+		return errors.New("library compose: this overwrites slot 255 (the phone app's \"Personalizado\") and makes it active; pass --yes to confirm (only the ACTIVE slot's payload is backed up first; the previous content of slot 255, when it is not the active one, is REPLACED with no copy, as the phone app does when you pick a curve), or --dry-run to only print the payload")
 	}
 	gains, err := qcycore.ParseGains(gainsArg)
 	if err != nil {

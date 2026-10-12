@@ -479,6 +479,8 @@ func buildEq(cur []byte, target int, op EqOp) ([]byte, error) {
 			return nil, fmt.Errorf("eq: band %d: q %d outside %d-%d", b.Index, b.Q, MinBandQ, MaxBandQ)
 		case !BandTypeSupported(b.Type):
 			return nil, fmt.Errorf("eq: band %d: type %d not allowed (the device has shown 0, 2, 3 and 255)", b.Index, b.Type)
+		case b.Type == emptyTypeMarker && target != SlotCustomApp:
+			return nil, fmt.Errorf("eq: band %d: type 255 (0xFF) is only valid when the target is slot %d; in slot %d it is the empty-position marker and the band would be lost", b.Index, SlotCustomApp, target)
 		}
 		seen[b.Index] = true
 		if b.Index >= EqBands {

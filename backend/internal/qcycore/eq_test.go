@@ -279,10 +279,10 @@ func TestEqAllFFAndShortRejected(t *testing.T) {
 	}
 }
 
-// Real payloads read from the device (slot 11 custom, 13 bands; slot 6 factory
+// Payloads shaped like the device's (slot 11 custom: SYNTHETIC values, 13 bands; slot 6 factory
 // Classico, 5 bands with 0xFF empty-type markers in every unused position).
 const (
-	realCustom11  = "0b50fb320064003c0002c80076fd3c000284039cff460002f00ac800780002401f44fd5e01023f002c014600027d000000460002fa000000460002f4010000460002e8036400460002d0076400460002a00f6400460002401f900146000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+	realCustom11  = "0b50fb28006400370002c800d4fe410002840332004b0002f00afa006e0002401f38ff2c01023f0096005000027d00ceff500002fa006400500002f4016aff500002e8033200500002d007c800500002a00f9cff500002401f2c015a000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 	realClassico6 = "0650fb3c002c01320002c8000cfe46000284039cff460002f00ac800780002401f44fd5e0102000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff"
 )
 
@@ -309,7 +309,7 @@ func TestRealCustomDecodes13Bands(t *testing.T) {
 			t.Fatalf("band %d has index %d", i, b.Index)
 		}
 	}
-	if s.Bands[12].Freq != 8000 || s.Bands[12].Gain != 4 || s.Bands[12].Q != 70 || s.Bands[1].Gain != -6.5 {
+	if s.Bands[12].Freq != 8000 || s.Bands[12].Gain != 3 || s.Bands[12].Q != 90 || s.Bands[1].Gain != -3 {
 		t.Fatalf("bands = %+v", s.Bands)
 	}
 }
@@ -757,7 +757,16 @@ func TestBandTypesAcceptedAndRefused(t *testing.T) {
 	m := 0
 	for _, typ := range []int{0, 2, 3, 255} {
 		b := []BandSpec{{Index: 0, Freq: 100, Gain: 1, Q: 100, Type: typ}}
-		next, err := ApplyEq(cur, EqOp{Bands: b, MasterCenti: &m})
+		op := EqOp{Bands: b, MasterCenti: &m}
+		if typ == 255 {
+			// 0xFF is the empty-position marker everywhere but in slot 255
+			if _, err := ApplyEq(cur, op); err == nil || !strings.Contains(err.Error(), "type 255") {
+				t.Errorf("type 255 accepted for slot 8: %v", err)
+			}
+			s := SlotCustomApp
+			op.Slot = &s
+		}
+		next, err := ApplyEq(cur, op)
 		if err != nil {
 			t.Errorf("type %d refused: %v", typ, err)
 			continue

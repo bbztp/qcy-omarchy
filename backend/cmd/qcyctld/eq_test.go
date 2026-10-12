@@ -16,9 +16,9 @@ import (
 	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore"
 )
 
-// Real 0x22 payloads read from the device (same bytes as qcycore's fixtures).
+// 0x22 payloads shaped like the device's (slot 11 is synthetic; same bytes as qcycore's fixtures).
 const (
-	realCustom11  = "0b50fb320064003c0002c80076fd3c000284039cff460002f00ac800780002401f44fd5e01023f002c014600027d000000460002fa000000460002f4010000460002e8036400460002d0076400460002a00f6400460002401f900146000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+	realCustom11  = "0b50fb28006400370002c800d4fe410002840332004b0002f00afa006e0002401f38ff2c01023f0096005000027d00ceff500002fa006400500002f4016aff500002e8033200500002d007c800500002a00f9cff500002401f2c015a000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 	realClassico6 = "0650fb3c002c01320002c8000cfe46000284039cff460002f00ac800780002401f44fd5e0102000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff000000000000ff"
 )
 
@@ -269,9 +269,15 @@ func TestDaemonEqApplySlot255ImpliesFullLength(t *testing.T) {
 	}
 	// any other target keeps the requirement
 	d2, sess2, _ := eqTestDaemon(t, mustHexBytes(t, realCustom11), applyWrite(false))
-	_, err = eqApplyReq(d2, map[string]interface{}{"slot": float64(0), "masterGain": float64(-1200), "allowProtected": true, "bands": bands})
+	_, err = eqApplyReq(d2, map[string]interface{}{"slot": float64(0), "masterGain": float64(-1200), "allowProtected": true, "bands": []interface{}{
+		bandArgs(0, 125, 3, 100, 2), bandArgs(1, 200, -9, 70, 2), bandArgs(2, 7000, -1, 120, 3), bandArgs(12, 8000, 4, 70, 2)}})
 	if responseCode(err) != "full_length_required" || sess2.writeCount() != 0 {
 		t.Fatalf("slot 0 without allowFull: %v (code %q), writes %d", err, responseCode(err), sess2.writeCount())
+	}
+	// type 255 (the empty marker elsewhere) is refused for any slot but 255
+	_, err = eqApplyReq(d2, map[string]interface{}{"slot": float64(0), "masterGain": float64(-1200), "allowProtected": true, "allowFull": true, "bands": bands})
+	if err == nil || !strings.Contains(err.Error(), "type 255") || sess2.writeCount() != 0 {
+		t.Fatalf("type 255 to slot 0: %v, writes %d", err, sess2.writeCount())
 	}
 	// type 7 is still refused
 	_, err = eqApplyReq(d2, map[string]interface{}{"slot": float64(255), "masterGain": float64(0), "bands": []interface{}{bandArgs(0, 100, 0, 100, 7)}})
@@ -312,7 +318,7 @@ func TestDaemonEqApplyUnconfirmedWhenDeviceKeepsOtherSlot(t *testing.T) {
 	if !strings.Contains(err.Error(), hex.EncodeToString(sess.writes[0])) || !strings.Contains(err.Error(), ee.Backup) {
 		t.Fatalf("message lacks what was written / the backup path: %v", err)
 	}
-	if b, rerr := os.ReadFile(ee.Backup); rerr != nil || !strings.HasPrefix(string(b), "0b50fb32") {
+	if b, rerr := os.ReadFile(ee.Backup); rerr != nil || !strings.HasPrefix(string(b), "0b50fb28") {
 		t.Fatalf("backup %s: %v", ee.Backup, rerr)
 	}
 	if backupCount(t, bdir) == 0 {

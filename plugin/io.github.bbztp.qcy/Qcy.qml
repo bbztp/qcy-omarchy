@@ -267,6 +267,7 @@ Singleton {
       busy = false
       staleAgeSeconds = -1
       _wantBattery = false
+      _writeNext = null   // a queued write must not run on the next connection
       _dropPending("disconnected")
     }
   }

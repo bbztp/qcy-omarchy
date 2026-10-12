@@ -103,7 +103,10 @@ The widget writes the EQ **master gain**. Before any EQ write, the raw EQ
 payload of the currently **active** slot, as read from the earbuds, is saved to
 `~/.local/share/qcy-omarchy/backups/`. This is not a backup of whatever the
 slot you overwrite held before: a slot's contents cannot be read while it is
-inactive. `qcyctl eq set` overwrites the target EQ slot and refuses to run
+inactive. In particular, `library apply` / `library compose` into slot 255 (the
+app's "Personalizado") back up only the active payload: if slot 255 is not the
+active one, its previous content is replaced with no copy (the phone app does
+the same when you pick a curve). `qcyctl eq set` overwrites the target EQ slot and refuses to run
 without `--yes`; it changes only band positions 0-9 and leaves positions 10+
 (custom curves may use up to 20 bands) as read. The master gain range is
 -12..+12 dB. When a curve uses positions 10+, the write sends the full

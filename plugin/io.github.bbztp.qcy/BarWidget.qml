@@ -761,6 +761,13 @@ Panel {
     function onUpdatedAtChanged() {
       if (Qcy.busyAction === "") root.optimistic = ({})
     }
+    // The base pinned by a card click is only real if that apply did not fail:
+    // otherwise the next bar would compose on an effect that is not active.
+    function onLibraryOpChanged() {
+      var op = Qcy.libraryOp
+      if (op.kind === "apply" && op.phase === "error" && op.id !== "" && op.id === root.baseId)
+        root.baseId = ""
+    }
     function onSetFailed() {
       // Drop the optimistic master gain; the refresh Qcy starts re-reads the
       // real value, which the cleared signature lets through.
@@ -2297,11 +2304,42 @@ Panel {
               var v = (plot.height / 2 - y) / slot.half * root.editorMaxDb
               be.edited(slot.index, Math.max(-root.editorMaxDb, Math.min(root.editorMaxDb, Math.round(v * 2) / 2)))
             }
-            onPressed: function (mouse) { dragArea.setFrom(mouse.y) }
-            onPositionChanged: function (mouse) { if (dragArea.pressed) dragArea.setFrom(mouse.y) }
-            onReleased: be.committed()
-            onCanceled: be.committed()
+            // A press without movement only commits when it is not the first
+            // half of a double click, which zeroes and applies once.
+            property bool moved: false
+            property bool skipRelease: false
+            Timer {
+              id: clickGate
+              interval: 250
+              onTriggered: be.committed()
+            }
+            onPressed: function (mouse) {
+              dragArea.moved = false
+              dragArea.setFrom(mouse.y)
+            }
+            onPositionChanged: function (mouse) {
+              if (dragArea.pressed) {
+                dragArea.moved = true
+                dragArea.setFrom(mouse.y)
+              }
+            }
+            onReleased: {
+              if (dragArea.skipRelease) {
+                dragArea.skipRelease = false   // release closing a double click
+              } else if (dragArea.moved) {
+                clickGate.stop()
+                be.committed()
+              } else {
+                clickGate.restart()
+              }
+            }
+            onCanceled: {
+              clickGate.stop()
+              be.committed()
+            }
             onDoubleClicked: {
+              clickGate.stop()
+              dragArea.skipRelease = true
               be.edited(slot.index, 0)
               be.committed()
             }
