@@ -133,6 +133,11 @@ Panel {
     var slot = root.activeSlot
     var sig = root._eqSig
     var i
+    // The effect the user just chose or adjusted stays marked at once; waiting
+    // for the readback made the marker drop and come back seconds later.
+    if (root.baseId !== "" && (slot === 255 || slot < 0)) {
+      for (i = 0; i < l.length; i++) if (l[i].id === root.baseId && !root.hiddenEntry(l[i])) return root.baseId
+    }
     if (sig !== "") {
       for (i = 0; i < l.length; i++) {
         if (!root.hiddenEntry(l[i]) && root.entrySig(l[i]) === sig) return l[i].id
