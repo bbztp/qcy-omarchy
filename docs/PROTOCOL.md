@@ -1,7 +1,8 @@
 # Protocol reference
 
-Notes on the QCY BLE protocol as observed on this hardware — a MeloBuds N70,
-LE address `AA:BB:CC:DD:EE:FF`.
+Notes on the QCY BLE protocol. These behaviours were derived and verified on a QCY MeloBuds N70, the device used as the test model for this code; other models are unverified.
+
+Verified on: QCY MeloBuds N70 (firmware 3.0.13), LE address `AA:BB:CC:DD:EE:FF`.
 
 Which model a unit is comes from the advertised `vendorId`, not from this
 protocol: see [Model detection](#model-detection) and `WEB_API.md`.
@@ -418,9 +419,9 @@ daemon and `qcyctl prompt-vol <4|6|8|10|low|medium|high|max>` now write the
 app's frame and confirm by reading back (after ~200 ms) that byte 0 equals v;
 a mismatch is reported as "escrito mas o aparelho reportou X". The constant
 `promptVolWritable` (daemon and CLI, currently `true`) turns this back into
-read-only. The write is N70 only: a model that is not verified refuses it.
+read-only. The write is limited to verified models (verified on the N70): a model that is not verified refuses it.
 
-The two other N70-only controls read from the same app:
+The two other controls, also limited to verified models (verified on the N70), read from the same app:
 
 | Control | Write | Query | Values |
 |---|---|---|---|
@@ -499,12 +500,12 @@ If the scan finds nothing and no cached address answers, the daemon replies `{"o
 | `eqApply` | optional `gains` (10 ints, centi-dB), `masterGain` (int, centi-dB), `slot` (int), `bands` (array of `{index, freq, gain (dB, number), q, type}`, exclusive with `gains`), `allowProtected` (bool), `allowFull` (bool). Nothing else: unknown keys and raw payloads (`payload`, `raw`, `hex`, ...) are rejected | the `eq` object plus `previous`, `fullLength`, `backupFirst`, `backupHistory` |
 | `eqMasterGain` | `masterGain` (int, centi-dB), required; optional `allowProtected`, `allowFull` | same as `eqApply` |
 | `wear` | `state`: 1 on / 2 off | confirmed `0x2C` payload (byte array) |
-| `fitTest` | optional `seconds` (5..60, default 30) | `{status, left, right}` once the notification with status 2 arrives; the stop frame is always sent at the end; N70 only; verified on the N70 |
+| `fitTest` | optional `seconds` (5..60, default 30) | `{status, left, right}` once the notification with status 2 arrives; the stop frame is always sent at the end; verified models only (verified on the N70) |
 | `fitStop` | none | cancels a running `fitTest` (which then fails with `fit: cancelled`), otherwise sends the stop frame |
 | `noise` | none | raw `0x17` payload `[mode, scene, level]` |
 | `find`, `keys`, `keysSet`, `disconnect` | as before | |
 
-`set` also accepts `promptVol` (`params` `[v]`, v in 4/6/8/10; sent as `[v, 0]`) and `wearSensitivity` (`params` `[1..3]`), both N70 only and read back after ~200 ms; `status` carries `wearSensitivity` (1..3) only when the unit answers `0x48`.
+`set` also accepts `promptVol` (`params` `[v]`, v in 4/6/8/10; sent as `[v, 0]`) and `wearSensitivity` (`params` `[1..3]`), both limited to verified models (verified on the N70) and read back after ~200 ms; `status` carries `wearSensitivity` (1..3) only when the unit answers `0x48`.
 
 `eqApply`, `eqMasterGain`, `keysSet` and `fitTest` are refused on a model that
 is not verified (`<cmd> is disabled: <model> is not a verified model`), and so

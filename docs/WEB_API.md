@@ -32,7 +32,7 @@ product database, 199 products; the Quicky module embeds a copy), `public/findSo
 and `public/useSoundMarket` (the EQ "market", needs a `userId`), `earphoneoOta/findEarphoneoOta`,
 `cuetone/*`, `pairingName/findAllPairingNames`, `devicebind/*`, `earphoneTheme/*`.
 
-## What the N70 panel says (layouts, by `type`)
+## What the N70 panel says (verified on the N70) (layouts, by `type`)
 
 | type | name | content |
 |---|---|---|

@@ -165,7 +165,7 @@ const (
 	FeatureFind         FeatureFlag = "find"         // Find my earbuds
 	FeatureBatteryCase  FeatureFlag = "batteryCase"  // Case battery level
 	FeatureKeysRemap    FeatureFlag = "keysRemap"    // Touch key remapping
-	FeatureFit          FeatureFlag = "fit"          // Ear-tip fit test (N70 only)
+	FeatureFit          FeatureFlag = "fit"          // Ear-tip fit test (verified models only)
 	FeatureEQ           FeatureFlag = "eq"           // EQ curve + master gain (read/write via eqApply, backed up)
 )
 
@@ -192,7 +192,8 @@ type Capabilities struct {
 	Actions      []ActionSpec  `json:"actions"`      // settable actions
 	BatteryChars []string      `json:"batteryChars"` // "left", "right", "case"
 	// Verified is true only for models this tool was exercised against (the
-	// N70). Anything else runs on the shared, conservative command set.
+	// verified-model set, see verifiedVendorIDs). Anything else runs on the
+	// shared, conservative command set.
 	Verified     bool   `json:"verified"`
 	VendorID     int    `json:"vendorId,omitempty"`     // manufacturer-data vendorId, when known
 	ProductTitle string `json:"productTitle,omitempty"` // product name from the Quicky database
@@ -293,7 +294,9 @@ func (GenericHandler) OnConnect(d *daemon) error { return nil }
 func (GenericHandler) OnDisconnect(d *daemon)    {}
 
 // ============================================================
-// MeloBuds N70 handler
+// MeloBuds N70 handler. These behaviours were derived and verified on a QCY
+// MeloBuds N70, the device used as the test model for this code; other models
+// are unverified.
 // ============================================================
 
 type meloBudsN70Handler struct{}
@@ -578,20 +581,23 @@ func detectModelFromVersion(fw string) string {
 	return "generic"
 }
 
-// n70VendorIDs are the manufacturer-data vendorIds that are a MeloBuds N70.
+// verifiedVendorIDs are the manufacturer-data vendorIds of the models whose
+// behaviour was verified on hardware. Today that is only the QCY MeloBuds N70
+// (the device used as the test model for this code; other models are
+// unverified), and this set is the single place that names it.
 // Exactly these two: the neighbouring ids are other products (23873/23878
 // AilyBuds E50, 23874/23879 MeloBuds N60, 23875 CT03) and 23876 is not in the
 // database, so a range would verify earbuds this tool was never tried on.
-var n70VendorIDs = map[uint16]bool{23872: true, 23877: true}
+var verifiedVendorIDs = map[uint16]bool{23872: true, 23877: true}
 
 // detectModel picks the model id. Precedence: the vendorId from the
 // advertisement (the real identifier), then the advertised name, then the
 // firmware string, then "generic". A vendorId the Quicky database knows but
-// that is not an N70 becomes "qcy-<vendorId>", driven by a profile generated
-// from the product entry, never by N70 assumptions.
+// that is not a verified model becomes "qcy-<vendorId>", driven by a profile generated
+// from the product entry, never by assumptions about the verified model.
 func detectModel(vendorID uint16, haveVendor bool, name, version string) string {
 	if haveVendor {
-		if n70VendorIDs[vendorID] {
+		if verifiedVendorIDs[vendorID] {
 			return "melobuds-n70"
 		}
 		if _, ok := lookupProduct(vendorID); ok {
@@ -607,7 +613,7 @@ func detectModel(vendorID uint16, haveVendor bool, name, version string) string 
 // detectModelFromName maps the advertised Bluetooth name onto a registered model
 // id. This is the only source that actually identifies a model: the 0007
 // characteristic holds a bare numeric firmware ("1.2.3") with no model string in
-// it, so it cannot be used to tell an N70 from anything else.
+// it, so it cannot be used to tell a model from another.
 func detectModelFromName(name string) string {
 	n := strings.ToLower(name)
 	switch {
@@ -1094,7 +1100,7 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 		// never offers the control.
 		"spatial": 0x2D, "fit": 0x11,
 		// Wear-sensor sensitivity: [1 medium, 2 normal, 3 high]. Frame
-		// FF 03 48 01 p, verified on the N70 2026-10-13 (PROTOCOL.md).
+		// FF 03 48 01 p, verified on the test device (N70) 2026-10-13 (PROTOCOL.md).
 		"wearSensitivity": 0x48,
 		// Find my earbuds = make the indicator LED blink. An audible tone is
 		// useless here: a lost earbud is by definition not in your ear, so it
@@ -1102,7 +1108,7 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 		// NewLightFlashCommand and is what actually lets you spot them.
 		"find": 0x05,
 	}
-	// Refused on purpose — writing 0x23 REBOOTS the MeloBuds N70, and unlike
+	// Refused on purpose — writing 0x23 REBOOTS the earbuds, and unlike
 	// multipoint below no documentation sanctions that restart, so it is a
 	// firmware fault rather than expected behaviour. Multipoint (0x24) also
 	// restarts the earbuds and that one is documented: the product notes state
@@ -1113,7 +1119,7 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 	// whose only effect is rebooting the user's hardware. It is pinned false by
 	// readOnlyCmds, while gatherStatus still reads its state for display.
 	if action == "ldac" {
-		return nil, errors.New("ldac is disabled: writing it reboots this N70 and, unlike multipoint, the restart is not documented behaviour")
+		return nil, errors.New("ldac is disabled: writing it reboots the earbuds and, unlike multipoint, the restart is not documented behaviour")
 	}
 	// Answering a query is not the same as honouring a write: readOnlyCmds
 	// lists what must not be driven (promptVol only while promptVolWritable is
@@ -1135,7 +1141,7 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 	if err != nil {
 		return nil, err
 	}
-	if n70OnlyActions[action] {
+	if verifiedOnlyActions[action] {
 		if h := d.knownHandler(); h == nil || !h.Capabilities().Verified {
 			return nil, fmt.Errorf("%s is only available on a verified model", action)
 		}
@@ -1189,17 +1195,17 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 
 // promptVolWritable switches the 0x1D prompt-volume write on. The earlier
 // "ignores every value" measurement used a one-byte frame; the app's frame
-// (FF 04 1D 02 <v> 00, v in 4/6/8/10) is verified on the N70 (2026-10-13).
+// (FF 04 1D 02 <v> 00, v in 4/6/8/10) is verified on the test device (N70, 2026-10-13).
 // Set false to restore the read-only behaviour.
 const promptVolWritable = true
 
-// n70PromptVolumeSteps is the value list the vendor server gives the N70
+// verifiedPromptVolumeSteps is the value list the vendor server gives the verified model
 // (Quieter / Medium / Louder / Maximum). Per-model spec, constant for now.
-var n70PromptVolumeSteps = []byte{4, 6, 8, 10}
+var verifiedPromptVolumeSteps = []byte{4, 6, 8, 10}
 
-// n70OnlyActions are setters whose frames were read from the app for the N70
+// verifiedOnlyActions are setters whose frames were read from the app for the verified model
 // and are refused on any model that is not verified.
-var n70OnlyActions = map[string]bool{"promptVol": true, "wearSensitivity": true}
+var verifiedOnlyActions = map[string]bool{"promptVol": true, "wearSensitivity": true}
 
 // settleBeforeQuery is how long a confirmed setter waits before reading back.
 var settleBeforeQuery = map[string]time.Duration{
@@ -1217,8 +1223,8 @@ func prepareSetter(action string, params, expect []byte) ([]byte, []byte, error)
 			return nil, nil, errors.New("promptVol: expected one value (4, 6, 8 or 10)")
 		}
 		v := params[0]
-		if !bytes.Contains(n70PromptVolumeSteps, []byte{v}) {
-			return nil, nil, fmt.Errorf("promptVol: %d is not one of %v", v, n70PromptVolumeSteps)
+		if !bytes.Contains(verifiedPromptVolumeSteps, []byte{v}) {
+			return nil, nil, fmt.Errorf("promptVol: %d is not one of %v", v, verifiedPromptVolumeSteps)
 		}
 		// Two parameter bytes, the second 0, as the vendor app writes it.
 		return []byte{v, 0}, []byte{v}, nil
@@ -1232,8 +1238,8 @@ func prepareSetter(action string, params, expect []byte) ([]byte, []byte, error)
 }
 
 // fitStart / fitStop are the frames the vendor app sends for the ear-tip fit
-// test (FF 05 11 03 01 01 01 / FF 05 11 03 00 00 00), verified on the N70
-// 2026-10-13.
+// test (FF 05 11 03 01 01 01 / FF 05 11 03 00 00 00), verified on the test device
+// (N70) 2026-10-13.
 var (
 	fitStart = []byte{1, 1, 1}
 	fitStop  = []byte{0, 0, 0}
@@ -1631,7 +1637,7 @@ func buildReadOnlyCmds() map[string]string {
 	}
 	if !promptVolWritable {
 		// One-byte writes to 0x1D were ignored (read back 06 0f). The
-		// two-byte frame FF 04 1D 02 v 00 is verified on the N70 (2026-10-13).
+		// two-byte frame FF 04 1D 02 v 00 is verified on the test device (N70, 2026-10-13).
 		m["promptVol"] = "one-byte writes were ignored; the two-byte frame is not in use"
 	}
 	return m
@@ -1663,20 +1669,20 @@ func (d *daemon) handlerHasFeature(f FeatureFlag) bool {
 	return false
 }
 
-// n70OnlyCmds are the daemon commands whose wire behaviour was only ever
-// established on the N70: they are refused on any model that is not verified.
-var n70OnlyCmds = map[string]bool{"eqApply": true, "eqMasterGain": true, "keysSet": true, "fitTest": true,
+// verifiedOnlyCmds are the daemon commands whose wire behaviour was only ever
+// established on the verified model: they are refused on any model that is not verified.
+var verifiedOnlyCmds = map[string]bool{"eqApply": true, "eqMasterGain": true, "keysSet": true, "fitTest": true,
 	"hearingMode": true, "hearingWrite": true}
 
 // gateCommand is the single gate between a request and the model-specific
-// commands. A model that is not Verified gets none of the N70-only commands,
+// commands. A model that is not Verified gets none of the verified-only commands,
 // and "wear" only when its profile declares the wearDetect action.
 func gateCommand(h ModelHandler, cmd string) error {
 	c := h.Capabilities()
 	if c.Verified {
 		return nil
 	}
-	if n70OnlyCmds[cmd] {
+	if verifiedOnlyCmds[cmd] {
 		return fmt.Errorf("%s is disabled: %s is not a verified model", cmd, c.DisplayName)
 	}
 	if cmd == "wear" && !declaresAction(c, "wearDetect") {

@@ -21,7 +21,7 @@ import (
 // Keys starting with "_" are metadata ("_name", "_decimal"), never UI text.
 //
 // Two places hold languages:
-//   - embedded in this binary (backend/i18n/*.json), shipped with the plugin;
+//   - embedded in this binary (cmd/qcyctl/i18n/*.json), shipped with the plugin;
 //   - the user's directory (~/.config/qcy-omarchy/i18n/<lang>.json), outside the
 //     plugin directory because the installer wipes that one on every install.
 // User keys override the embedded ones, so a user file may be a partial patch.

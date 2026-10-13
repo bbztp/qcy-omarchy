@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "author": "bbztp",
   "license": "MIT",
-  "description": "Control QCY earbuds (MeloBuds N70 and friends) from the Omarchy bar: battery, active noise control, LDAC, multipoint, low-latency game mode, find-my-buds, and a readout of the earbuds' state.",
+  "description": "Control QCY earbuds (MeloBuds and other models) from the Omarchy bar: battery, active noise control, LDAC, multipoint, low-latency game mode, find-my-buds, and a readout of the earbuds' state.",
   "kinds": [
     "bar-widget"
   ],

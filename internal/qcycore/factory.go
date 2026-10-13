@@ -4,7 +4,7 @@ import "fmt"
 
 // FactoryEffect is one of the earbuds' factory EQ effects as the phone app
 // lists them: the slot the device reports it under, its display name and the
-// 0x22 payload read back from a MeloBuds N70 with that effect active.
+// 0x22 payload read back from a test device (QCY MeloBuds N70) with that effect active.
 type FactoryEffect struct {
 	Slot    int
 	Name    string

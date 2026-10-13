@@ -31,7 +31,7 @@ var (
 	keysUUID     = mustUUID("0000000d-0000-1000-8000-00805f9b34fb")
 	eqPresetUUID = mustUUID("0000000b-0000-1000-8000-00805f9b34fb")
 
-	// N70 ANC opcode is 0x17 with 3 params [mode, scene, value].
+	// ANC opcode is 0x17 with 3 params [mode, scene, value].
 	// "anc" is an alias for "adaptive".
 	ancModes = map[string][3]byte{
 		"off":          {0x02, 0x00, 0x00},
@@ -602,21 +602,21 @@ func opcodeFor(action string) (byte, error) {
 	opcodeMap := map[string]byte{
 		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
 		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
-		// 0x11 starts/stops the ear-tip fit check (verified on the N70
+		// 0x11 starts/stops the ear-tip fit check (verified on the test device, an N70
 		// 2026-10-13). 0x2D is spatial audio, not yet exercised.
 		"fit":     0x11,
 		"spatial": 0x2D,
 		// Wear-sensor sensitivity 1..3 (1 medium, 2 normal, 3 high): frame
-		// FF 03 48 01 p, verified on the N70 2026-10-13.
+		// FF 03 48 01 p, verified on a QCY MeloBuds N70 (the test device), 2026-10-13.
 		"wearSensitivity": 0x48,
 		// Indicator blink — how you spot a lost earbud. See the note in the
 		// daemon's opcodeMap for why this is not an audible tone.
 		"find": 0x05,
 	}
-	// Writing ldac (0x23) reboots this N70 and, unlike multipoint, the restart
+	// Writing ldac (0x23) reboots the earbuds and, unlike multipoint, the restart
 	// is not documented behaviour. Mirrors the daemon's guard.
 	if action == "ldac" {
-		return 0, errors.New("ldac is disabled: writing it reboots this N70 and, unlike multipoint, the restart is not documented behaviour")
+		return 0, errors.New("ldac is disabled: writing it reboots the earbuds and, unlike multipoint, the restart is not documented behaviour")
 	}
 	// 0x22 is only ever written through eqApply, which reads, patches and backs
 	// the payload up first. A raw write here would bypass all of that.
@@ -624,7 +624,7 @@ func opcodeFor(action string) (byte, error) {
 		return 0, errors.New("eq cannot be written as a raw action: use `qcyctl eq set` or `qcyctl master-gain`, which back up the slot first")
 	}
 	// promptVol (0x1D): frame FF 04 1D 02 <v> 00 (two data bytes, v in
-	// 4/6/8/10), verified on the N70 2026-10-13. A one-byte write was
+	// 4/6/8/10), verified on the test device (N70), 2026-10-13. A one-byte write was
 	// ignored. See PROTOCOL.md, "Prompt volume".
 	if action == "promptVol" && !promptVolWritable {
 		return 0, errors.New("prompt-vol is read-only on this device: promptVolWritable is false")
@@ -863,7 +863,7 @@ func usage() {
   qcyctl find [seconds]
   qcyctl prompt-vol <4|6|8|10|low|medium|high|max> [seconds]
   qcyctl wear-sensitivity <medium|normal|high|1|2|3> [seconds]
-  qcyctl fit <start|stop|begin> [--json] [seconds]   (start waits for the result; frames verified on the N70)
+  qcyctl fit <start|stop|begin> [--json] [seconds]   (start waits for the result; frames verified on the test device)
   qcyctl auto-off <minutes|never> [seconds]
   qcyctl balance <left|center|right|0-100> [seconds]
   qcyctl eq get [--json] [seconds]
@@ -2022,10 +2022,10 @@ func cmdWear(args []string) error {
 }
 
 // promptVolWritable mirrors the daemon's switch: false restores the old
-// read-only behaviour of prompt-vol. The 2-byte frame is verified on the N70 (2026-10-13).
+// read-only behaviour of prompt-vol. The 2-byte frame is verified on the test device (N70, 2026-10-13).
 const promptVolWritable = true
 
-// promptVolSteps are the values the vendor server lists for the N70, with the
+// promptVolSteps are the values the vendor server lists for verified models, with the
 // app's labels (Quieter / Medium / Louder / Maximum).
 var promptVolSteps = []struct {
 	Value byte
@@ -2061,7 +2061,7 @@ func parseWearSensitivity(s string) (byte, error) {
 }
 
 // Fit test frames (FF 05 11 03 01 01 01 / FF 05 11 03 00 00 00), verified on
-// the N70 2026-10-13. The result notification is [status 2, left, right].
+// the test device (N70) 2026-10-13. The result notification is [status 2, left, right].
 var (
 	fitStartParams = []byte{1, 1, 1}
 	fitStopParams  = []byte{0, 0, 0}

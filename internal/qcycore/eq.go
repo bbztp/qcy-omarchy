@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-// EQ payload (opcode 0x22), as observed on the MeloBuds N70:
+// EQ payload (opcode 0x22), as observed on a QCY MeloBuds N70 (the test device):
 //
 //	[slot:1][masterGain:int16 LE, centi-dB][20 x (freq:u16 LE, gain:int16 LE, q:u16 LE, type:u8)]
 //

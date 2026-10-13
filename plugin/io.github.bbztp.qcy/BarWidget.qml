@@ -75,9 +75,9 @@ Panel {
   ]
   readonly property var _cancelScenes: ["adaptive", "indoor", "commuting", "noisy", "antiwind"]
 
-  // LDAC is deliberately absent: writing 0x23 reboots this N70 and, unlike
+  // LDAC is deliberately absent: writing 0x23 reboots the earbuds and, unlike
   // multipoint below, the restart is not documented behaviour. Multipoint IS
-  // listed because the N70 product notes state the earphones restart every time
+  // listed because the product notes state the earphones restart every time
   // Dual Device Connection is toggled — that is expected, not a fault.
   readonly property var toggleDefs: [
     { key: "game", label: Qcy.tr("Game mode"), hint: Qcy.tr("Lower latency") },
@@ -498,7 +498,7 @@ Panel {
   }
 
   // The model name BlueZ reports, trimmed of the vendor prefix so the header
-  // reads "MeloBuds N70" rather than repeating "QCY".
+  // reads e.g. "MeloBuds N70" rather than repeating "QCY".
   readonly property string modelName: {
     var raw = Qcy.productTitle
     if (raw === "" && Qcy.device) raw = (Qcy.device.name || Qcy.device.deviceName || "")

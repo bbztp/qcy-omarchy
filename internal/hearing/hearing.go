@@ -21,8 +21,7 @@ const Bands = 8
 // Freqs are the tested frequencies in Hz (individuation_eq.freq).
 var Freqs = [Bands]int{63, 125, 250, 500, 1000, 2000, 4000, 8000}
 
-// DefaultSoundDB is the per-band reference tone level in dBFS of the MeloBuds
-// N70 (vendorId 23877 / 23872): `individuation_eq.soundDB` of the control panel
+// DefaultSoundDB is the per-band reference tone level in dBFS. These behaviours were derived and verified on a QCY MeloBuds N70, the device used as the test model for this code; other models are unverified. The values are those of the QCY MeloBuds N70 (vendorId 23877 / 23872): `individuation_eq.soundDB` of the control panel
 // 23877 (product/findControlPanels, server panel JSON,
 // layout 2). It is not part of the embedded models snapshot, so it is a
 // constant here; callers may pass another table per model.
