@@ -27,6 +27,66 @@ Singleton {
   // the device may or may not have applied the change, only a read tells.
   signal setFailed()
 
+  // ---------------------------------------------------------- translations
+  //
+  // English is the source language and the key: tr("Refresh"). The
+  // bundle comes from `qcyctl i18n bundle --json` (shipped languages plus the
+  // user's own in ~/.config/qcy-omarchy/i18n) and maps English text to the
+  // active language; a missing entry falls back to the English key itself.
+  // Every UI binding that calls tr() re-evaluates when `trRev` changes,
+  // because tr() reads it.
+  property var strings: ({})
+  property int trRev: 0
+  property string lang: "en"           // language in use (resolved)
+  property string langChoice: "auto"   // saved choice: "auto" or a code
+  property var languages: []           // [{code, name, builtin, user}]
+
+  // Decimal separator of the active language ("_decimal" in its file).
+  readonly property string decimalSep: {
+    var rev = trRev
+    var d = strings["_decimal"]
+    return (typeof d === "string" && d !== "") ? d : "."
+  }
+
+  // `params` fills {name} markers: tr("Updated {n} s ago", { n: 5 }).
+  function tr(key, params) {
+    var rev = trRev
+    var out = key
+    if (Object.prototype.hasOwnProperty.call(strings, key)) {
+      var v = strings[key]
+      if (typeof v === "string" && v !== "") out = v
+    }
+    if (params) {
+      for (var k in params) out = out.split("{" + k + "}").join(String(params[k]))
+    }
+    return out
+  }
+
+  function loadLanguages() {
+    runOffline(["i18n", "bundle", "--json"], function (code, out, err) {
+      var o = root._parseJson(out)
+      root.strings = (code === 0 && o && typeof o === "object" && !Array.isArray(o)) ? o : ({})
+      root.trRev++
+    })
+    runOffline(["i18n", "list", "--json"], function (code, out, err) {
+      var j = root._parseJson(out)
+      if (code !== 0 || !j) return
+      root.languages = Array.isArray(j.languages) ? j.languages : []
+      root.langChoice = j.choice ? String(j.choice) : "auto"
+      root.lang = j.active ? String(j.active) : "en"
+    })
+  }
+
+  // `choice` is "auto" or a language code; applies at once.
+  function setLanguage(choice) {
+    runOffline(["i18n", "set", String(choice)], function (code, out, err) {
+      if (code !== 0) root.error = root.tr("Could not change the language")
+      root.loadLanguages()
+    })
+  }
+
+  Component.onCompleted: loadLanguages()
+
   // Pushed by each bar-widget instance from shell.json settings.
   property var settings: ({})
 
@@ -78,7 +138,7 @@ Singleton {
   // Age in seconds of a status served from the daemon's cache, or -1 when the
   // report on screen is fresh.
   property int staleAgeSeconds: -1
-  readonly property string busyMessage: "Os fones est\u00e3o em uso por outro app \u2014 feche-o e atualize"
+  readonly property string busyMessage: tr("The earbuds are in use by another app — close it and refresh")
   property double updatedAt: 0     // Date.now() of the last successful read
   property string busyAction: ""   // label of an in-flight setter, for UI feedback
 
@@ -198,13 +258,13 @@ Singleton {
         var age = Math.max(0, Math.round(Number(report.ageSeconds) || 0))
         staleAgeSeconds = age
         busy = true
-        error = busyMessage + " (mostrando a \u00faltima leitura, de " + age + " s atr\u00e1s)"
+        error = tr("{message} (showing the last reading, from {n} s ago)", { message: busyMessage, n: age })
       } else {
         staleAgeSeconds = -1
         busy = false
       }
     } catch (e) {
-      error = "N\u00e3o foi poss\u00edvel ler a sa\u00edda do qcyctl"
+      error = tr("Could not read qcyctl's output")
     }
   }
 
@@ -293,7 +353,7 @@ Singleton {
         root.error = root.busyMessage
       } else if (failed && root.report === null) {
         root.busy = false
-        root.error = "N\u00e3o foi poss\u00edvel ler os fones (c\u00f3digo " + exitCode + ")"
+        root.error = tr("Could not read the earbuds (code {code})", { code: exitCode })
       }
       if (failed) root._scheduleRetry(wasBusy)
       else if (exitCode === 0 && !root.busy) root._retryCount = 0
@@ -362,7 +422,7 @@ Singleton {
       error = busyMessage
     } else if (!hasCallback) {
       // A caller with a callback explains the failure itself.
-      error = "O comando falhou (c\u00f3digo " + exitCode + ")"
+      error = tr("The command failed (code {code})", { code: exitCode })
     }
     setFailed()
     // No immediate re-read when the earbuds are held elsewhere: that would
@@ -526,7 +586,7 @@ Singleton {
       var arr = root._parseJson(out)
       if (code !== 0 || !Array.isArray(arr)) {
         root.libraryLoading = false
-        root.libraryError = root._lastLine(err) || "Não foi possível ler a biblioteca"
+        root.libraryError = root._lastLine(err) || tr("Could not read the library")
         return
       }
       if (arr.length === 0 && !root._seeded) {
@@ -590,7 +650,7 @@ Singleton {
       if (req.master !== null) args.push("--master=" + req.master.toFixed(1))
       args.push("--yes", "--json")
     }
-    set(req.kind === "apply" ? "Aplicar efeito" : "Aplicar equalizador", args, function (code, out, err) {
+    set(req.kind === "apply" ? "Apply effect" : "Apply equalizer", args, function (code, out, err) {
       root.writeBusy = false
       root._writeDone(req, code, out, err)
       // -1: replaced inside set() by another setter; starting the next write
@@ -614,7 +674,7 @@ Singleton {
     }
     if (stale) return
     if (code === -1) {
-      root._setOp(req.kind, "error", id, "Cancelado: outra ação foi enviada ou os fones saíram de alcance.", "")
+      root._setOp(req.kind, "error", id, tr("Cancelled: another action was sent or the earbuds went out of range."), "")
       return
     }
     if (j && j.code === "unconfirmed") {
@@ -626,11 +686,11 @@ Singleton {
     if (j && j.code === "busy" || root._isBusyText(err))
       msg = root.busyMessage
     else if (j && j.code === "not_found")
-      msg = "Fones não encontrados (desligados ou fora de alcance)."
+      msg = tr("Earbuds not found (off or out of range).")
     else if (/hold at most|bands, but/i.test((j && j.error ? j.error : "") + " " + err))
-      msg = "Bandas demais: zere algumas barras ou escolha outro efeito."
+      msg = tr("Too many bands: zero some bars or choose another effect.")
     else
-      msg = (j && j.error) ? j.error : (root._lastLine(err) || ("O comando falhou (código " + code + ")"))
+      msg = (j && j.error) ? j.error : (root._lastLine(err) || tr("The command failed (code {code})", { code: code }))
     root._setOp(req.kind, "error", id, msg, backup)
   }
 
@@ -652,8 +712,8 @@ Singleton {
           return
         }
         var msg = /already exists/i.test(err)
-          ? "Já existe um efeito com esse nome. Escolha outro nome."
-          : (root._lastLine(err) || ("O comando falhou (código " + code + ")"))
+          ? tr("An effect with that name already exists. Choose another name.")
+          : (root._lastLine(err) || tr("The command failed (code {code})", { code: code }))
         root._setOp("save", "error", "", msg, "")
         if (done) done(false, msg)
       })
@@ -667,7 +727,7 @@ Singleton {
         root._setOp("delete", "ok", id, "", "")
         root.libraryReload()
       } else {
-        root._setOp("delete", "error", id, root._lastLine(err) || ("O comando falhou (código " + code + ")"), "")
+        root._setOp("delete", "error", id, root._lastLine(err) || tr("The command failed (code {code})", { code: code }), "")
       }
     })
   }

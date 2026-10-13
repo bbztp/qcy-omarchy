@@ -48,20 +48,20 @@ Panel {
   // Detailed noise scenes (Ajustes). The three headline modes on the Status
   // tab are noiseButtons below.
   readonly property var ancModes: [
-    { key: "adaptive", label: "Adaptativo" },
-    { key: "indoor", label: "Interno" },
-    { key: "commuting", label: "Deslocamento" },
-    { key: "noisy", label: "Ruidoso" },
-    { key: "antiwind", label: "Anti-vento" }
+    { key: "adaptive", label: Qcy.tr("Adaptive") },
+    { key: "indoor", label: Qcy.tr("Indoor") },
+    { key: "commuting", label: Qcy.tr("Commuting") },
+    { key: "noisy", label: Qcy.tr("Noisy") },
+    { key: "antiwind", label: Qcy.tr("Anti-wind") }
   ]
 
   // Headline modes: glyphs are Material Design Icons code points (headphones,
-  // ear-hearing, volume-high). "Cancelamento" is the adaptive scene; the
+  // ear-hearing, volume-high). "Cancellation" is the adaptive scene; the
   // finer scenes are in Ajustes.
   readonly property var noiseButtons: [
-    { key: "adaptive", label: "Cancelamento", glyph: 0xF02CB },
-    { key: "transparency", label: "Transparência", glyph: 0xF07E6 },
-    { key: "off", label: "Normal", glyph: 0xF057E }
+    { key: "adaptive", label: Qcy.tr("Cancellation"), glyph: 0xF02CB },
+    { key: "transparency", label: Qcy.tr("Transparency"), glyph: 0xF07E6 },
+    { key: "off", label: Qcy.tr("Normal"), glyph: 0xF057E }
   ]
   readonly property var _cancelScenes: ["adaptive", "indoor", "commuting", "noisy", "antiwind"]
 
@@ -70,11 +70,11 @@ Panel {
   // listed because the N70 product notes state the earphones restart every time
   // Dual Device Connection is toggled — that is expected, not a fault.
   readonly property var toggleDefs: [
-    { key: "game", label: "Modo jogo", hint: "Menor latência" },
-    { key: "sleep", label: "Modo sono", hint: "Desativa os toques; sem efeito no som" },
-    { key: "wind", label: "Detecção de vento", hint: "" },
-    { key: "wear", label: "Detecção de uso", hint: "Pausa ao tirar um fone e retoma ao recolocar" },
-    { key: "multipoint", label: "Multiponto", hint: "Reinicia os fones; é esperado, não é falha" }
+    { key: "game", label: Qcy.tr("Game mode"), hint: Qcy.tr("Lower latency") },
+    { key: "sleep", label: Qcy.tr("Sleep mode"), hint: Qcy.tr("Disables the touch controls; no effect on the sound") },
+    { key: "wind", label: Qcy.tr("Wind detection"), hint: "" },
+    { key: "wear", label: Qcy.tr("Wear detection"), hint: Qcy.tr("Pauses when an earbud is removed and resumes when put back") },
+    { key: "multipoint", label: Qcy.tr("Multipoint"), hint: Qcy.tr("Restarts the earbuds; this is expected, not a fault") }
   ]
 
   // ---- Som tab state ----
@@ -173,12 +173,15 @@ Panel {
   function effectName() {
     if (!rep || !rep.eq) return "—"
     var id = root.activeEntryId
-    var sfx = root.adjusted && id === root.baseId ? " (ajustado)" : ""
-    if (root.activeSlot === 255) return id !== "" ? root.curveName(id) + sfx : "Personalizado"
+    var adj = root.adjusted && id === root.baseId
+    if (root.activeSlot === 255) {
+      if (id === "") return Qcy.tr("Custom")
+      return adj ? Qcy.tr("{name} (adjusted)", { name: root.curveName(id) }) : root.curveName(id)
+    }
     var eff = rep.eq.effect
     if (eff !== undefined && eff !== null && String(eff) !== "") return String(eff)
     if (id !== "") return root.curveName(id)
-    return root.activeSlot >= 0 ? "Personalizado" : "—"
+    return root.activeSlot >= 0 ? Qcy.tr("Custom") : "—"
   }
 
   // The bars or the overall gain were moved on top of the effect in use.
@@ -186,7 +189,7 @@ Panel {
     && (root.masterTouched || root.editGains.some(function (g) { return Number(g) !== 0 }))
 
   function baseLabel() {
-    return root.composeBase === "none" ? "sem efeito" : root.curveName(root.composeBase)
+    return root.composeBase === "none" ? Qcy.tr("no effect") : root.curveName(root.composeBase)
   }
 
   // The overall gain on screen: the user's value once touched, else the one the
@@ -195,11 +198,11 @@ Panel {
     return root.masterTouched ? root.editMaster : root.masterGainDb()
   }
 
-  // "+3,5", "-2,0", "0" — pt-BR decimal comma.
+  // "+3.5", "-2.0", "0"; the decimal separator comes from the language ("_decimal").
   function fmtDb(v) {
     var n = Number(v) || 0
     if (n === 0) return "0"
-    return (n > 0 ? "+" : "") + n.toFixed(1).replace(".", ",")
+    return (n > 0 ? "+" : "") + n.toFixed(1).replace(".", Qcy.decimalSep)
   }
 
   // Names the user types for a saved effect. Same length rule as the backend.
@@ -331,7 +334,7 @@ Panel {
     // there is nothing to write.
     var flat = root.editGains.every(function (g) { return Number(g) === 0 })
     if (root.composeBase === "none" && flat) {
-      root.eqNote = "Sem efeito base e com todas as barras em zero não há o que aplicar. Escolha um efeito ou mova uma barra."
+      root.eqNote = Qcy.tr("With no base effect and all bars at zero there is nothing to apply. Choose an effect or move a bar.")
       return
     }
     root.eqNote = ""
@@ -403,28 +406,28 @@ Panel {
     if (op.phase === "idle") return ""
     if (op.kind === "apply") {
       var nm = curveName(op.id)
-      if (op.phase === "running") return "Aplicando “" + nm + "”…"
-      if (op.phase === "ok") return "“" + nm + "” aplicado ✓"
+      if (op.phase === "running") return Qcy.tr("Applying “{name}”…", { name: nm })
+      if (op.phase === "ok") return Qcy.tr("“{name}” applied ✓", { name: nm })
       if (op.phase === "unconfirmed")
-        return "Enviado, mas os fones não confirmaram." + (op.message !== "" ? "\n" + op.message : "")
-      return "Não foi possível aplicar: " + op.message
+        return Qcy.tr("Sent, but the earbuds did not confirm.") + (op.message !== "" ? "\n" + op.message : "")
+      return Qcy.tr("Could not apply: {message}", { message: op.message })
     }
     if (op.kind === "compose") {
-      if (op.phase === "running") return "Aplicando…"
-      if (op.phase === "ok") return "Aplicado ✓"
+      if (op.phase === "running") return Qcy.tr("Applying…")
+      if (op.phase === "ok") return Qcy.tr("Applied ✓")
       if (op.phase === "unconfirmed")
-        return "Enviado, mas os fones não confirmaram." + (op.message !== "" ? "\n" + op.message : "")
-      return "Não foi possível aplicar: " + op.message
+        return Qcy.tr("Sent, but the earbuds did not confirm.") + (op.message !== "" ? "\n" + op.message : "")
+      return Qcy.tr("Could not apply: {message}", { message: op.message })
     }
     if (op.kind === "save") {
-      if (op.phase === "running") return "Salvando…"
-      if (op.phase === "ok") return "Efeito salvo ✓"
-      return "Não foi possível salvar: " + op.message
+      if (op.phase === "running") return Qcy.tr("Saving…")
+      if (op.phase === "ok") return Qcy.tr("Effect saved ✓")
+      return Qcy.tr("Could not save: {message}", { message: op.message })
     }
     if (op.kind === "delete") {
-      if (op.phase === "running") return "Excluindo…"
-      if (op.phase === "ok") return "Efeito excluído."
-      return "Não foi possível excluir: " + op.message
+      if (op.phase === "running") return Qcy.tr("Deleting…")
+      if (op.phase === "ok") return Qcy.tr("Effect deleted.")
+      return Qcy.tr("Could not delete: {message}", { message: op.message })
     }
     return ""
   }
@@ -459,19 +462,20 @@ Panel {
     // forget. Falls back to the model name until the first battery read lands.
     function barTooltip() {
       var name = root.modelName
-      if (!Qcy.connected) return name + " — desconectado"
-      if (!batt) return name + " — lendo a bateria…"
-      var parts = ["E " + batt.left + "%", "D " + batt.right + "%"]
-      if (batt.casePresent) parts.push("estojo " + batt.case + "%")
+      if (!Qcy.connected) return Qcy.tr("{name} — disconnected", { name: name })
+      if (!batt) return Qcy.tr("{name} — reading battery…", { name: name })
+      var parts = [Qcy.tr("L {n}%", { n: batt.left }), Qcy.tr("R {n}%", { n: batt.right })]
+      if (batt.casePresent) parts.push(Qcy.tr("case {n}%", { n: batt.case }))
       return name + " — " + parts.join(" · ")
     }
 
   function heroStatus() {
-    if (!Qcy.connected) return "Desconectado"
-    if (isStale) return "Dados em cache há " + Math.max(0, Math.round(Number(rep.ageSeconds) || 0)) + " s (fones em uso por outro app)"
-    if (Qcy.loading) return "Lendo…"
-    if (!rep) return "Ocioso"
-    return "Conectado"
+    if (!Qcy.connected) return Qcy.tr("Disconnected")
+    if (isStale) return Qcy.tr("Cached data from {n} s ago (earbuds in use by another app)",
+      { n: Math.max(0, Math.round(Number(rep.ageSeconds) || 0)) })
+    if (Qcy.loading) return Qcy.tr("Reading…")
+    if (!rep) return Qcy.tr("Idle")
+    return Qcy.tr("Connected")
   }
 
   // The model name BlueZ reports, trimmed of the vendor prefix so the header
@@ -499,11 +503,11 @@ Panel {
   function batteryRows() {
     if (!batt) return []
     var rows = [
-      { label: "Left", level: batt.left, charging: batt.leftCharging, present: true },
-      { label: "Right", level: batt.right, charging: batt.rightCharging, present: true }
+      { label: Qcy.tr("Left"), level: batt.left, charging: batt.leftCharging, present: true },
+      { label: Qcy.tr("Right"), level: batt.right, charging: batt.rightCharging, present: true }
     ]
     if (batt.casePresent) {
-      rows.push({ label: "Case", level: batt.case, charging: batt.caseCharging, present: true })
+      rows.push({ label: Qcy.tr("Case"), level: batt.case, charging: batt.caseCharging, present: true })
     }
     return rows
   }
@@ -638,7 +642,7 @@ Panel {
   // null until a test finishes; then { ok, left, right } (grades 0..3).
   property var fitResult: null
 
-  readonly property var fitGrades: ["ruim", "razoável", "bom", "selado"]
+  readonly property var fitGrades: [Qcy.tr("poor"), Qcy.tr("fair"), Qcy.tr("good"), Qcy.tr("sealed")]
 
   function fitGradeName(n) {
     return n >= 0 && n < fitGrades.length ? fitGrades[n] : "?"
@@ -647,8 +651,8 @@ Panel {
   function fitSummary() {
     var r = fitResult
     if (!r) return ""
-    if (!r.ok) return "Sem resultado — encaixe os fones e tente de novo"
-    return "Esquerdo: " + fitGradeName(r.left) + " · Direito: " + fitGradeName(r.right)
+    if (!r.ok) return Qcy.tr("No result — fit the earbuds and try again")
+    return Qcy.tr("Left: {left} · Right: {right}", { left: fitGradeName(r.left), right: fitGradeName(r.right) })
   }
 
   // Urgent colour and hint when a side is poor or fair, or there was no result.
@@ -659,7 +663,7 @@ Panel {
     if (fitRunning) return
     fitRunning = true
     fitResult = null
-    Qcy.set("Teste de vedação", ["fit", "start", "--json", "35"], function (code, out, err) {
+    Qcy.set("Fit test", ["fit", "start", "--json", "35"], function (code, out, err) {
       var res = { ok: false, left: -1, right: -1 }
       if (code === 0) {
         var lines = String(out || "").trim().split("\n")
@@ -678,12 +682,12 @@ Panel {
   function updatedLabel() {
     var tick = root.nowTick // binding dependency for the "ago" clock
     if (Qcy.error !== "") return Qcy.error
-    if (Qcy.loading) return "Lendo os fones…"
-    if (!Qcy.updatedAt) return "Abra para ler o estado dos fones"
+    if (Qcy.loading) return Qcy.tr("Reading the earbuds…")
+    if (!Qcy.updatedAt) return Qcy.tr("Open to read the earbuds' state")
     var s = Math.round((Date.now() - Qcy.updatedAt) / 1000)
-    if (s < 5) return "Atualizado agora"
-    if (s < 60) return "Atualizado há " + s + " s"
-    return "Atualizado há " + Math.round(s / 60) + " min"
+    if (s < 5) return Qcy.tr("Updated just now")
+    if (s < 60) return Qcy.tr("Updated {n} s ago", { n: s })
+    return Qcy.tr("Updated {n} min ago", { n: Math.round(s / 60) })
   }
 
   function setToggle(key, label, on) {
@@ -716,9 +720,9 @@ Panel {
   }
 
   readonly property var ancStrengthChoices: [
-    { label: "Baixa", value: 0 },
-    { label: "Média", value: 1 },
-    { label: "Alta", value: 2 }
+    { label: Qcy.tr("Low"), value: 0 },
+    { label: Qcy.tr("Medium"), value: 1 },
+    { label: Qcy.tr("High"), value: 2 }
   ]
 
   function setAncStrength(value) {
@@ -727,7 +731,7 @@ Panel {
     optimistic = next
     // The scene has to be re-sent with the new strength; the earbuds treat the
     // third ANC parameter as part of the same command.
-    Qcy.set("Intensidade ANC", ["anc", currentAnc(), "--level", String(value)])
+    Qcy.set("ANC intensity", ["anc", currentAnc(), "--level", String(value)])
   }
 
   // ---- sliders -------------------------------------------------------------
@@ -753,34 +757,34 @@ Panel {
   // ---- auto power-off ------------------------------------------------------
 
   readonly property var autoOffChoices: [
-    { label: "Nunca", value: "never" },
-    { label: "15 min", value: "15" },
-    { label: "30 min", value: "30" },
-    { label: "60 min", value: "60" },
-    { label: "90 min", value: "90" }
+    { label: Qcy.tr("Never"), value: "never" },
+    { label: Qcy.tr("{n} min", { n: 15 }), value: "15" },
+    { label: Qcy.tr("{n} min", { n: 30 }), value: "30" },
+    { label: Qcy.tr("{n} min", { n: 60 }), value: "60" },
+    { label: Qcy.tr("{n} min", { n: 90 }), value: "90" }
   ]
 
   // Touch-control remap table, decoded from the pairs reported for characteristic
   // 000D. Ids follow Quicky's KeyID/FuncID vocabulary; an id outside it is shown
   // as-is rather than guessed at.
   readonly property var funcNames: ({
-    0x00: "Desativado", 0x01: "Tocar/pausar", 0x02: "Anterior", 0x03: "Próxima",
-    0x04: "Assistente de voz", 0x05: "Volume +", 0x06: "Volume −",
-    0x07: "Modo jogo", 0x08: "Atender", 0x09: "Rejeitar",
-    0x0a: "Reter chamada", 0x0b: "Rediscar"
+    0x00: Qcy.tr("Disabled"), 0x01: Qcy.tr("Play/pause"), 0x02: Qcy.tr("Previous"), 0x03: Qcy.tr("Next"),
+    0x04: Qcy.tr("Voice assistant"), 0x05: Qcy.tr("Volume +"), 0x06: Qcy.tr("Volume −"),
+    0x07: Qcy.tr("Game mode"), 0x08: Qcy.tr("Answer"), 0x09: Qcy.tr("Reject"),
+    0x0a: Qcy.tr("Hold call"), 0x0b: Qcy.tr("Redial")
   })
 
   readonly property var keyNames: ({
-    0x01: "Esq. toque", 0x02: "Dir. toque", 0x03: "Esq. duplo", 0x04: "Dir. duplo",
-    0x05: "Esq. triplo", 0x06: "Dir. triplo", 0x07: "Esq. quádruplo", 0x08: "Dir. quádruplo",
-    0x09: "Esq. segurar", 0x0a: "Dir. segurar",
-    0x15: "Esq. toque (chamada)", 0x16: "Dir. toque (chamada)", 0x17: "Esq. duplo (chamada)",
-    0x18: "Dir. duplo (chamada)", 0x19: "Esq. triplo (chamada)", 0x1a: "Dir. triplo (chamada)",
-    0x1b: "Esq. quádruplo (chamada)", 0x1c: "Dir. quádruplo (chamada)",
-    0x1d: "Esq. segurar (chamada)", 0x1e: "Dir. segurar (chamada)"
+    0x01: Qcy.tr("Left tap"), 0x02: Qcy.tr("Right tap"), 0x03: Qcy.tr("Left double"), 0x04: Qcy.tr("Right double"),
+    0x05: Qcy.tr("Left triple"), 0x06: Qcy.tr("Right triple"), 0x07: Qcy.tr("Left quadruple"), 0x08: Qcy.tr("Right quadruple"),
+    0x09: Qcy.tr("Left hold"), 0x0a: Qcy.tr("Right hold"),
+    0x15: Qcy.tr("Left tap (call)"), 0x16: Qcy.tr("Right tap (call)"), 0x17: Qcy.tr("Left double (call)"),
+    0x18: Qcy.tr("Right double (call)"), 0x19: Qcy.tr("Left triple (call)"), 0x1a: Qcy.tr("Right triple (call)"),
+    0x1b: Qcy.tr("Left quadruple (call)"), 0x1c: Qcy.tr("Right quadruple (call)"),
+    0x1d: Qcy.tr("Left hold (call)"), 0x1e: Qcy.tr("Right hold (call)")
   })
 
-  readonly property var gestureNames: ["Toque", "Duplo", "Triplo", "Quádruplo", "Segurar"]
+  readonly property var gestureNames: [Qcy.tr("Tap"), Qcy.tr("Double"), Qcy.tr("Triple"), Qcy.tr("Quadruple"), Qcy.tr("Hold")]
 
   // Same identity-stable caching as the EQ bands: `rep` is replaced on every
   // status read, so the decoded rows are rebuilt only when the raw pair list
@@ -812,7 +816,7 @@ Panel {
       var gi = Math.floor(n / 2)
       var key = (call ? "c" : "n") + gi
       if (!byKey[key]) {
-        byKey[key] = { gesture: root.gestureNames[gi] + (call ? " (chamada)" : ""),
+        byKey[key] = { gesture: call ? Qcy.tr("{gesture} (call)", { gesture: root.gestureNames[gi] }) : root.gestureNames[gi],
                        left: "—", right: "—", order: (call ? 10 : 0) + gi }
         rows.push(byKey[key])
       }
@@ -828,17 +832,17 @@ Panel {
 
   // Prompt volume accepts only these four levels (the reported max is not one).
   readonly property var promptVolChoices: [
-    { label: "Mais baixo", value: 4 },
-    { label: "Médio", value: 6 },
-    { label: "Mais alto", value: 8 },
-    { label: "Máximo", value: 10 }
+    { label: Qcy.tr("Quieter"), value: 4 },
+    { label: Qcy.tr("Medium volume"), value: 6 },
+    { label: Qcy.tr("Louder"), value: 8 },
+    { label: Qcy.tr("Maximum"), value: 10 }
   ]
 
   // Wear-sensor sensitivity; only meaningful while wear detection is on.
   readonly property var wearSensChoices: [
-    { label: "Média", value: 1 },
-    { label: "Normal", value: 2 },
-    { label: "Alta", value: 3 }
+    { label: Qcy.tr("Medium"), value: 1 },
+    { label: Qcy.tr("Normal"), value: 2 },
+    { label: Qcy.tr("High"), value: 3 }
   ]
   readonly property bool wearSensVisible: !!(rep && rep.wear && rep.wear.enabled === true)
     && rep.wearSensitivity !== undefined && rep.wearSensitivity !== null
@@ -854,7 +858,7 @@ Panel {
     var next = Object.assign({}, optimistic)
     next["autoOff"] = value
     optimistic = next
-    Qcy.set("Desligamento automático", ["auto-off", value])
+    Qcy.set("Auto power-off", ["auto-off", value])
   }
 
   Component.onCompleted: {
@@ -907,6 +911,14 @@ Panel {
       var op = Qcy.libraryOp
       if (op.kind === "apply" && op.phase === "error" && op.id !== "" && op.id === root.baseId)
         root.baseId = ""
+    }
+    // Decoded touch rows are cached by their raw pairs: rebuild them in the
+    // new language once the translated name tables have re-evaluated.
+    function onTrRevChanged() {
+      Qt.callLater(function () {
+        root._touchSig = ""
+        root.updateTouchRows()
+      })
     }
     function onSetFailed() {
       // Drop the optimistic master gain; the refresh Qcy starts re-reads the
@@ -1058,8 +1070,8 @@ Panel {
           spacing: Style.space(14)
 
           // ---------- Tabs ----------
-          // Status (device + noise mode), Som (live curve + library) and
-          // Ajustes (everything else). Short tabs keep every section reachable.
+          // Status (device + noise mode), Sound (live curve + library) and
+          // Settings (everything else). Short tabs keep every section reachable.
           Row {
             id: tabBar
             width: parent.width
@@ -1067,9 +1079,9 @@ Panel {
 
             Repeater {
               model: [
-                { label: "Status", index: 0 },
-                { label: "Som", index: 1 },
-                { label: "Ajustes", index: 2 }
+                { label: Qcy.tr("Status"), index: 0 },
+                { label: Qcy.tr("Sound"), index: 1 },
+                { label: Qcy.tr("Settings"), index: 2 }
               ]
               TabButton {
                 required property var modelData
@@ -1096,21 +1108,21 @@ Panel {
 
               BatteryRing {
                 width: (ringRow.width - Style.space(8) * 2) / 3
-                label: "Esq."
+                label: Qcy.tr("L")
                 valid: Qcy.connected && !!root.batt
                 level: root.batt ? root.batt.left : 0
                 charging: root.batt ? root.batt.leftCharging : false
               }
               BatteryRing {
                 width: (ringRow.width - Style.space(8) * 2) / 3
-                label: "Dir."
+                label: Qcy.tr("R")
                 valid: Qcy.connected && !!root.batt
                 level: root.batt ? root.batt.right : 0
                 charging: root.batt ? root.batt.rightCharging : false
               }
               BatteryRing {
                 width: (ringRow.width - Style.space(8) * 2) / 3
-                label: "Estojo"
+                label: Qcy.tr("Case")
                 valid: Qcy.connected && !!(root.batt && root.batt.casePresent)
                 level: root.batt ? root.batt.case : 0
                 charging: root.batt ? root.batt.caseCharging : false
@@ -1167,7 +1179,7 @@ Panel {
               visible: root.has("anc")
 
               PanelSectionHeader {
-                text: "MODO DE RUÍDO"
+                text: Qcy.tr("Noise mode").toUpperCase()
                 foreground: root.foreground
                 fontFamily: root.fontFamily
               }
@@ -1208,7 +1220,7 @@ Panel {
               spacing: Style.space(4)
 
               PanelSectionHeader {
-                text: "EM USO"
+                text: Qcy.tr("In use").toUpperCase()
                 foreground: root.foreground
                 fontFamily: root.fontFamily
               }
@@ -1226,7 +1238,7 @@ Panel {
               Text {
                 width: parent.width
                 visible: !root.rep
-                text: Qcy.loading ? "Lendo os fones…" : "Conecte os fones para escolher um efeito."
+                text: Qcy.loading ? Qcy.tr("Reading the earbuds…") : Qcy.tr("Connect the earbuds to choose an effect.")
                 color: Qt.darker(root.foreground, 1.5)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -1237,7 +1249,7 @@ Panel {
             Text {
               visible: root.unverifiedModel
               width: parent.width
-              text: "Equalizador dispon\u00edvel s\u00f3 no MeloBuds N70."
+              text: Qcy.tr("Equalizer is only available on the MeloBuds N70.")
               color: Qt.darker(root.foreground, 1.5)
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -1251,7 +1263,7 @@ Panel {
               spacing: Style.space(8)
 
               PanelSectionHeader {
-                text: "EFEITOS"
+                text: Qcy.tr("Effects").toUpperCase()
                 foreground: root.foreground
                 fontFamily: root.fontFamily
               }
@@ -1270,8 +1282,8 @@ Panel {
                 width: parent.width
                 visible: Qcy.libraryError === "" && Qcy.library.length === 0
                 text: Qcy.libraryLoading || !Qcy.libraryLoaded
-                  ? "Carregando os efeitos…"
-                  : "Nenhum efeito encontrado. Toque em Atualizar."
+                  ? Qcy.tr("Loading effects…")
+                  : Qcy.tr("No effect found. Tap Refresh.")
                 color: Qt.darker(root.foreground, 1.5)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -1329,7 +1341,7 @@ Panel {
               spacing: Style.space(8)
 
               PanelSectionHeader {
-                text: "EQUALIZADOR"
+                text: Qcy.tr("Equalizer").toUpperCase()
                 foreground: root.foreground
                 fontFamily: root.fontFamily
               }
@@ -1347,7 +1359,7 @@ Panel {
 
                 Text {
                   width: parent.width
-                  text: "As barras mostram o efeito escolhido. Arraste (±12 dB) e solte: o som muda na hora. Toque duas vezes para zerar uma barra. \"Salvar como…\" guarda o que você vê."
+                  text: Qcy.tr("The bars show the chosen effect. Drag (±12 dB) and release: the sound changes right away. Double-click to zero a bar. \"Save as…\" keeps what you see.")
                   color: Qt.darker(root.foreground, 1.5)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -1358,7 +1370,7 @@ Panel {
                   width: parent.width
                   enabled: root.canApplyLibrary
                   opacity: root.canApplyLibrary ? 1.0 : 0.5
-                  label: "Ganho geral"
+                  label: Qcy.tr("Overall gain")
                   minimum: root.masterGainMin
                   maximum: root.masterGainMax
                   step: 0.5
@@ -1374,7 +1386,7 @@ Panel {
 
                 Text {
                   width: parent.width
-                  text: "base: " + root.baseLabel()
+                  text: Qcy.tr("base: {name}", { name: root.baseLabel() })
                   color: Qt.darker(root.foreground, 1.5)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -1396,17 +1408,17 @@ Panel {
 
                   Chip {
                     opacity: root.canApplyLibrary ? 1.0 : 0.5
-                    label: root.composeBase === "none" ? "Zerar" : "Restaurar"
+                    label: root.composeBase === "none" ? Qcy.tr("Zero") : Qcy.tr("Restore")
                     onClicked: root.eqZero()
                   }
                   Chip {
                     visible: root.composeBase !== "none"
                     opacity: root.canApplyLibrary ? 1.0 : 0.5
-                    label: "Começar do zero"
+                    label: Qcy.tr("Start from scratch")
                     onClicked: root.detachBase()
                   }
                   Chip {
-                    label: "Salvar como…"
+                    label: Qcy.tr("Save as…")
                     active: root.saveOpen
                     onClicked: {
                       if (root.saveOpen) { root.closeSave(); return }
@@ -1429,7 +1441,7 @@ Panel {
                   TextField {
                     id: nameField
                     width: parent.width
-                    placeholderText: "Nome do efeito"
+                    placeholderText: Qcy.tr("Effect name")
                     maximumLength: 40
                     foreground: root.foreground
                     accent: root.accent
@@ -1440,12 +1452,12 @@ Panel {
                   Row {
                     spacing: Style.space(8)
                     Chip {
-                      label: "Salvar"
+                      label: Qcy.tr("Save")
                       active: root.nameValid(nameField.text)
                       onClicked: root.submitSave(nameField.text)
                     }
                     Chip {
-                      label: "Cancelar"
+                      label: Qcy.tr("Cancel")
                       onClicked: root.closeSave()
                     }
                   }
@@ -1469,7 +1481,7 @@ Panel {
               visible: root.has("anc")
 
               PanelSectionHeader {
-                text: "CENAS DE CANCELAMENTO"
+                text: Qcy.tr("Cancellation scenes").toUpperCase()
                 foreground: root.foreground
                 fontFamily: root.fontFamily
               }
@@ -1494,7 +1506,7 @@ Panel {
               ChoiceRow {
                 width: parent.width
                 visible: root.ancStrengthApplies
-                label: "Intensidade"
+                label: Qcy.tr("Intensity")
                 model: root.ancStrengthChoices
                 current: String(root.ancStrength)
                 onPicked: function (v) { root.setAncStrength(Number(v)) }
@@ -1520,19 +1532,19 @@ Panel {
               ToggleRow {
                 width: parent.width
                 visible: root.has("spatial")
-                label: "Áudio espacial"
+                label: Qcy.tr("Spatial audio")
                 hint: ""
                 checked: root.toggleState("spatial")
-                onToggled: root.setToggle("spatial", "Áudio espacial", !root.toggleState("spatial"))
+                onToggled: root.setToggle("spatial", "Spatial audio", !root.toggleState("spatial"))
               }
 
               ChoiceRow {
                 width: parent.width
                 visible: root.wearSensVisible
-                label: "Sensibilidade do sensor"
+                label: Qcy.tr("Sensor sensitivity")
                 model: root.wearSensChoices
                 current: String(root.sliderValue("wearSensitivity", 0))
-                onPicked: function (v) { root.commitSlider("wearSensitivity", "Sensibilidade do sensor", function (n) { return ["wear-sensitivity", String(n)] }, Number(v)) }
+                onPicked: function (v) { root.commitSlider("wearSensitivity", "Sensor sensitivity", function (n) { return ["wear-sensitivity", String(n)] }, Number(v)) }
               }
             }
 
@@ -1542,27 +1554,27 @@ Panel {
 
               SliderRow {
                 width: parent.width
-                label: "Balanço"
+                label: Qcy.tr("Balance")
                 minimum: 0
                 maximum: 100
                 step: 1
                 suffix: "%"
                 value: root.sliderValue("balance", 50)
-                onReleased: function (v) { root.commitSlider("balance", "Balanço", function (n) { return ["balance", String(Math.round(n))] }, Math.round(v)) }
+                onReleased: function (v) { root.commitSlider("balance", "Balance", function (n) { return ["balance", String(Math.round(n))] }, Math.round(v)) }
               }
 
               ChoiceRow {
                 width: parent.width
                 visible: root.has("promptVol")
-                label: "Volume dos avisos"
+                label: Qcy.tr("Prompt volume")
                 model: root.promptVolChoices
                 current: String(root.sliderValue("promptVolume", -1))
-                onPicked: function (v) { root.commitSlider("promptVolume", "Volume dos avisos", function (n) { return ["prompt-vol", String(n)] }, Number(v)) }
+                onPicked: function (v) { root.commitSlider("promptVolume", "Prompt volume", function (n) { return ["prompt-vol", String(n)] }, Number(v)) }
               }
 
               ChoiceRow {
                 width: parent.width
-                label: "Desligamento automático"
+                label: Qcy.tr("Auto power-off")
                 model: root.autoOffChoices
                 current: root.currentAutoOff()
                 onPicked: function (v) { root.setAutoOff(v) }
@@ -1579,7 +1591,7 @@ Panel {
                 implicitHeight: fitButton.implicitHeight
 
                 Text {
-                  text: "Teste de vedação das pontas"
+                  text: Qcy.tr("Earbud fit test")
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -1591,7 +1603,7 @@ Panel {
                   id: fitButton
                   anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
-                  label: root.fitRunning ? "Tocando…" : "Iniciar"
+                  label: root.fitRunning ? Qcy.tr("Playing…") : Qcy.tr("Start")
                   active: root.fitRunning
                   enabled: !root.fitRunning
                   onClicked: {
@@ -1605,8 +1617,10 @@ Panel {
                 width: parent.width
                 visible: root.fitRunning || root.fitResult !== null
                 wrapMode: Text.WordWrap
-                text: root.fitRunning ? "Tocando… ouça os fones"
-                  : root.fitSummary() + (root.fitNeedsAttention && root.fitResult.ok ? ". Ajuste as pontas e repita" : "")
+                text: root.fitRunning ? Qcy.tr("Playing… listen to the earbuds")
+                  : (root.fitNeedsAttention && root.fitResult.ok
+                    ? Qcy.tr("{summary}. Adjust the tips and repeat", { summary: root.fitSummary() })
+                    : root.fitSummary())
                 color: root.fitNeedsAttention ? Color.urgent : Qt.darker(root.foreground, 1.3)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -1620,7 +1634,7 @@ Panel {
               spacing: Style.space(8)
 
               PanelSectionHeader {
-                text: "CONTROLES DE TOQUE"
+                text: Qcy.tr("Touch controls").toUpperCase()
                 foreground: root.foreground
                 fontFamily: root.fontFamily
               }
@@ -1629,8 +1643,8 @@ Panel {
                 width: parent.width
                 header: true
                 gesture: ""
-                leftText: "ESQUERDO"
-                rightText: "DIREITO"
+                leftText: Qcy.tr("Left").toUpperCase()
+                rightText: Qcy.tr("Right").toUpperCase()
               }
 
               Repeater {
@@ -1651,14 +1665,14 @@ Panel {
               spacing: Style.space(8)
 
               PanelSectionHeader {
-                text: "APARELHO"
+                text: Qcy.tr("Device").toUpperCase()
                 foreground: root.foreground
                 fontFamily: root.fontFamily
               }
 
               StatRow {
                 width: parent.width
-                label: "Modelo"
+                label: Qcy.tr("Model")
                 value: root.modelName
               }
               StatRow {
@@ -1669,12 +1683,42 @@ Panel {
               }
               Text {
                 visible: Qcy.modelUnverified
-                text: "Modelo n\u00e3o verificado \u2014 s\u00f3 os controles comuns foram testados em outro aparelho."
+                text: Qcy.tr("Unverified model — only the common controls were tested on another device.")
                 color: Qt.darker(root.foreground, 1.5)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 wrapMode: Text.WordWrap
                 width: parent.width
+              }
+            }
+
+            // ---- Language: Automatic follows the system locale ----
+            Column {
+              width: parent.width
+              spacing: Style.space(8)
+
+              PanelSectionHeader {
+                text: Qcy.tr("Language").toUpperCase()
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              ChoiceRow {
+                width: parent.width
+                label: Qcy.tr("Language")
+                model: [{ label: Qcy.tr("Automatic"), value: "auto" }].concat(
+                  Qcy.languages.map(function (l) { return { label: l.name, value: l.code } }))
+                current: Qcy.langChoice
+                onPicked: function (v) { Qcy.setLanguage(v) }
+              }
+
+              Text {
+                width: parent.width
+                text: Qcy.tr("To add a language: qcyctl i18n template (see the README).")
+                color: Qt.darker(root.foreground, 1.5)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
               }
             }
           }
@@ -1684,7 +1728,7 @@ Panel {
             spacing: Style.space(8)
 
             Chip {
-              label: Qcy.loading ? "Lendo…" : "Atualizar"
+              label: Qcy.loading ? Qcy.tr("Reading…") : Qcy.tr("Refresh")
               active: Qcy.loading
               onClicked: if (!Qcy.loading) Qcy.refresh()
             }
@@ -2242,8 +2286,8 @@ Panel {
 
   // One effect as a card of the three-column grid: name, a mini curve and a
   // small status line. Clicking it applies it at once; the card itself shows
-  // "Aplicando…", the check mark or a short error. Only the effect in use is
-  // highlighted. User effects have a small "···" menu with "Excluir".
+  // "Applying…", the check mark or a short error. Only the effect in use is
+  // highlighted. User effects have a small "···" menu with "Delete".
   component CurveCard: BorderSurface {
     id: cc
     required property var entry
@@ -2309,7 +2353,7 @@ Panel {
         width: parent.width - (cc.isUser ? Style.space(20) : 0)
         // Two lines reserved, so the cards of a row line up.
         height: Math.ceil(nameMetrics.height) * 2
-        text: cc.entry.name + (cc.live && cc.adjusted ? " (ajustado)" : "")
+        text: cc.live && cc.adjusted ? Qcy.tr("{name} (adjusted)", { name: cc.entry.name }) : cc.entry.name
         color: root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
@@ -2331,11 +2375,11 @@ Panel {
         height: Math.ceil(noteMetrics.height)
         visible: !cc.menuOpen
         text: {
-          if (cc.phase === "running") return "Aplicando…"
-          if (cc.phase === "ok") return "Aplicado ✓"
-          if (cc.phase === "unconfirmed") return "Não confirmou"
-          if (cc.phase === "error") return "Erro ao aplicar"
-          if (cc.live) return "Em uso"
+          if (cc.phase === "running") return Qcy.tr("Applying…")
+          if (cc.phase === "ok") return Qcy.tr("Applied ✓")
+          if (cc.phase === "unconfirmed") return Qcy.tr("Did not confirm")
+          if (cc.phase === "error") return Qcy.tr("Error applying")
+          if (cc.live) return Qcy.tr("In use")
           return ""
         }
         color: (cc.phase === "error" || cc.phase === "unconfirmed")
@@ -2365,12 +2409,12 @@ Panel {
 
         Chip {
           visible: !cc.confirmingDelete
-          label: "Excluir"
+          label: Qcy.tr("Delete")
           onClicked: cc.deleteAsked()
         }
         Text {
           visible: cc.confirmingDelete
-          text: "Excluir este efeito?"
+          text: Qcy.tr("Delete this effect?")
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -2381,11 +2425,11 @@ Panel {
           visible: cc.confirmingDelete
           spacing: Style.space(6)
           Chip {
-            label: "Sim"
+            label: Qcy.tr("Yes")
             onClicked: cc.deleteConfirmed()
           }
           Chip {
-            label: "Não"
+            label: Qcy.tr("No")
             onClicked: cc.deleteCancelled()
           }
         }

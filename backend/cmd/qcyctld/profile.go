@@ -6,13 +6,28 @@ import (
 	"strings"
 
 	quicky "github.com/hui1601/Quicky/lib"
+
+	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore/models"
 )
 
-// lookupProduct resolves a vendorId against the Quicky product database. The
+// quickyProduct resolves a vendorId against the Quicky product database. The
 // library only exposes the lookup through ScanResult, so a synthetic one is used.
-func lookupProduct(vendorID uint16) (*quicky.Product, bool) {
+func quickyProduct(vendorID uint16) (*quicky.Product, bool) {
 	r := quicky.ScanResult{Advertisement: &quicky.AdvertisementInfo{VendorID: vendorID}}
 	return r.GetProductInfo()
+}
+
+// lookupProduct answers "is this vendorId a known QCY product" for detectModel:
+// the Quicky database first, then the embedded snapshot (as an entry that
+// declares nothing; the snapshot itself is read by newProfileHandler).
+func lookupProduct(vendorID uint16) (*quicky.Product, bool) {
+	if p, ok := quickyProduct(vendorID); ok {
+		return p, true
+	}
+	if sp, ok := models.Lookup(vendorID); ok {
+		return &quicky.Product{Title: sp.Title}, true
+	}
+	return nil, false
 }
 
 // vendorFromModelID parses "qcy-<vendorId>".
@@ -38,12 +53,99 @@ type profileHandler struct {
 	caps     Capabilities
 }
 
+// newProfileHandler prefers the embedded snapshot (what the QCY server
+// declares for the vendorId) and falls back to the Quicky database when the
+// vendorId is not in the snapshot or the snapshot has no panel for it.
 func newProfileHandler(vendorID uint16) (*profileHandler, bool) {
-	p, ok := lookupProduct(vendorID)
+	sp, inSnap := models.Lookup(vendorID)
+	if inSnap && sp.Panel != nil {
+		return &profileHandler{vendorID: vendorID, title: sp.Title, caps: snapshotCapabilities(vendorID, sp)}, true
+	}
+	p, ok := quickyProduct(vendorID)
 	if !ok {
+		if inSnap {
+			// Listed by QCY but no panel and no database entry: nothing is
+			// declared, only the battery readout.
+			return &profileHandler{vendorID: vendorID, title: sp.Title, caps: baseProfileCaps(vendorID, sp.Title, nil, nil)}, true
+		}
 		return nil, false
 	}
-	return &profileHandler{vendorID: vendorID, title: p.Title, caps: profileCapabilities(vendorID, p)}, true
+	caps := profileCapabilities(vendorID, p)
+	if inSnap && sp.Title != "" {
+		caps.DisplayName, caps.ProductTitle = sp.Title, sp.Title
+	}
+	return &profileHandler{vendorID: vendorID, title: caps.ProductTitle, caps: caps}, true
+}
+
+// featureOfAction maps the shared action ids to their feature flags.
+var featureOfAction = map[string]FeatureFlag{
+	"anc": FeatureANC, "gameMode": FeatureGameMode, "sleepMode": FeatureSleepMode,
+	"ldac": FeatureLDAC, "multipoint": FeatureMultipoint, "windNoise": FeatureWindNoise,
+	"wearDetect": FeatureWearDetect, "autoOff": FeatureAutoOff, "balance": FeatureBalance,
+}
+
+// toggleByCmd maps the command id of a panel toggle (layout type 4, or the
+// dedicated gaming/multi-device layouts) onto the shared action it drives.
+var toggleByCmd = map[int]string{9: "gameMode", 16: "sleepMode", 35: "ldac", 36: "multipoint", 42: "windNoise", 44: "wearDetect"}
+
+// snapshotCapabilities derives the offer from the server panel. Only the
+// shared command set is offered, filtered by what the panel declares: EQ, fit,
+// prompt volume and wear sensitivity are never offered on an unverified model
+// even though the panel lists them.
+func snapshotCapabilities(vendorID uint16, p models.Product) Capabilities {
+	pn := p.Panel
+	declared := map[string]bool{}
+	if pn.ANC != nil {
+		declared["anc"] = true
+	}
+	if pn.Balance {
+		declared["balance"] = true
+	}
+	if pn.AutoOff != nil {
+		declared["autoOff"] = true
+	}
+	if pn.Wear != nil {
+		declared["wearDetect"] = true
+	}
+	for _, o := range pn.Other {
+		if o.Type == nil || o.CmdID == nil {
+			continue
+		}
+		if *o.Type == 4 || *o.Type == 113 {
+			if id, ok := toggleByCmd[*o.CmdID]; ok {
+				declared[id] = true
+			}
+		}
+	}
+	return baseProfileCaps(vendorID, p.Title, declared, &pn.Find)
+}
+
+// baseProfileCaps builds the capabilities from the set of declared shared
+// action ids (find is a feature flag, not an action).
+func baseProfileCaps(vendorID uint16, title string, declared map[string]bool, find *bool) Capabilities {
+	common := GenericHandler{}.Capabilities()
+	var actions []ActionSpec
+	var features []FeatureFlag
+	for _, a := range common.Actions {
+		if declared[a.ID] {
+			actions = append(actions, a)
+			features = append(features, featureOfAction[a.ID])
+		}
+	}
+	if find != nil && *find {
+		features = append(features, FeatureFind)
+	}
+	features = append(features, FeatureBatteryCase)
+	return Capabilities{
+		ModelID:      "qcy-" + strconv.Itoa(int(vendorID)),
+		DisplayName:  title,
+		Features:     features,
+		Actions:      actions,
+		BatteryChars: common.BatteryChars,
+		Verified:     false,
+		VendorID:     int(vendorID),
+		ProductTitle: title,
+	}
 }
 
 // declaredSettings returns the handler action ids the product declares

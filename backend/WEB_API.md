@@ -99,3 +99,28 @@ files still load) and used on the fast path, which does not scan.
 `productTitle` (both omitted when unknown). `status` adds a `model` object (also `actions` and `features`, the ids the model declares; the panel hides anything undeclared on an unverified model)
 (`modelId`, `displayName`, `verified`, `vendorId`, `productTitle`) and `capabilities.verified`.
 The panel shows "Modelo não verificado" in Ajustes > Aparelho when `verified` is false.
+
+## Snapshot embutido
+
+`internal/qcycore/models/models.json` (embutido com `go:embed`, pacote `models`) é um
+instantâneo, de 2026-10-13, da lista de produtos da QCY (193 fones) e da resposta de
+`product/findControlPanels` de cada vendorId (221 arquivos; 191 com painel). O daemon
+o usa sem rede: `qcy-<vendorId>` é derivado do painel (ANC, balanço, localizar,
+desligamento automático, detecção de uso e os toggles de `type` 4 por cmdid 9/16/35/36/42);
+EQ, teste de ajuste, volume dos avisos e sensibilidade de uso continuam não oferecidos a
+modelos não verificados mesmo quando o painel os lista. Sem entrada no snapshot, cai no
+banco da Quicky.
+
+- Origem: a lista pública de produtos da QCY
+  e o JSON de painel do servidor por vendorId (fora do repositório).
+- Regenerar: `python3 scripts/gen_models.py [lista.json] [pasta_paineis] [saida.json]`
+  (saída determinística, chaves ordenadas).
+- Descartado: URLs e imagens, HTML dos textos (`info`, `msg`), textos de pareamento,
+  cores, `character` (UUIDs GATT) e os comandos hexadecimais de `sub_items`. Layouts
+  não interpretados (`type` 6, 11, 13, 105, 108, 109, 112 a 116...) ficam só como
+  `other: {type, name, cmdId}`; teclas (`type` 1, 10, 14) ficam como eventos com a
+  lista de ações (nome e cmd).
+- Ressalva: são dados vindos do servidor da QCY, de uma única consulta com firmware
+  genérico; o snapshot guarda a faixa `firmwareversionGte/Lte` devolvida, mas não há
+  painel por faixa de firmware específica. Um modelo pode declarar no painel algo que
+  o firmware real não implementa (ver o N70 acima).

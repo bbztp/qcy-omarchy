@@ -96,12 +96,13 @@ func TestProfileHandlerMatchesProduct(t *testing.T) {
 	for _, a := range c.Actions {
 		ids[a.ID] = true
 	}
-	for _, id := range []string{"anc", "balance", "autoOff", "gameMode", "sleepMode", "ldac", "multipoint"} {
+	// The server panel of 19786 also lists wear detection (type 104).
+	for _, id := range []string{"anc", "balance", "autoOff", "gameMode", "sleepMode", "ldac", "multipoint", "wearDetect"} {
 		if !ids[id] {
 			t.Errorf("action %s missing", id)
 		}
 	}
-	for _, id := range []string{"windNoise", "wearDetect", "promptVolume"} {
+	for _, id := range []string{"windNoise", "promptVolume", "wearSensitivity"} {
 		if ids[id] {
 			t.Errorf("action %s must not be offered (product does not declare it)", id)
 		}
@@ -174,11 +175,6 @@ func TestDaemonUsesVendorIDAndKeepsProfileReadOnly(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "not a verified model") {
 			t.Errorf("%s: %v", cmd, err)
 		}
-	}
-	// 19786 does not declare wear detection: the wear command is refused too.
-	if _, err := d.handleRequest(request{Cmd: "wear", Args: map[string]interface{}{"state": float64(1)}}); err == nil ||
-		!strings.Contains(err.Error(), "does not declare") {
-		t.Errorf("wear: %v", err)
 	}
 	// An action the product does not declare is refused with a clear error.
 	_, err := d.handleRequest(request{Cmd: "set", Args: map[string]interface{}{"action": "windNoise"}})
@@ -289,5 +285,60 @@ func TestNeighbourVendorIDsAreNotVerified(t *testing.T) {
 	}
 	if _, ok := GetHandler(detectModel(23876, true, "", "")).(GenericHandler); !ok {
 		t.Error("23876 must be generic")
+	}
+}
+
+// 23880 (MeloBuds N70i) is only in the embedded snapshot, not in Quicky. Its
+// panel lists EQ, fit, beep volume and wear sensitivity: none may be offered.
+func TestSnapshotOnlyVendorIsAnUnverifiedProfile(t *testing.T) {
+	if _, ok := quickyProduct(23880); ok {
+		t.Skip("23880 is now in the Quicky database; pick another snapshot-only vendor")
+	}
+	if got := detectModel(23880, true, "", ""); got != "qcy-23880" {
+		t.Fatalf("detectModel = %q", got)
+	}
+	h := GetHandler("qcy-23880")
+	if _, ok := h.(*profileHandler); !ok {
+		t.Fatalf("handler is %T", h)
+	}
+	c := h.Capabilities()
+	if c.Verified || c.VendorID != 23880 || c.ProductTitle != "QCY MeloBuds N70i" || c.DisplayName != c.ProductTitle {
+		t.Fatalf("caps %+v", c)
+	}
+	feats := map[FeatureFlag]bool{}
+	for _, f := range c.Features {
+		feats[f] = true
+	}
+	if feats[FeatureEQ] || feats[FeatureFit] || feats[FeatureKeysRemap] {
+		t.Errorf("EQ/fit/keys offered: %v", c.Features)
+	}
+	if !feats[FeatureANC] || !feats[FeatureWearDetect] || !feats[FeatureFind] {
+		t.Errorf("features %v", c.Features)
+	}
+	for _, a := range c.Actions {
+		switch a.ID {
+		case "promptVolume", "wearSensitivity":
+			t.Errorf("action %s must not be offered", a.ID)
+		}
+	}
+	// The verified N70 is unchanged.
+	if detectModel(23872, true, "", "") != "melobuds-n70" || detectModel(23877, true, "", "") != "melobuds-n70" {
+		t.Error("n70 detection changed")
+	}
+	if !GetHandler("melobuds-n70").Capabilities().Verified {
+		t.Error("n70 must stay verified")
+	}
+}
+
+// 16755 (QCY H3) has no wear detection in its panel: the command is refused.
+func TestProfileRefusesWearWhenPanelLacksIt(t *testing.T) {
+	cfg := defaultLifecycle()
+	cfg.idle = time.Hour
+	d := newDaemon(vendorDialer{&fakeDialer{}, 16755}, cfg)
+	mustStatus(t, d)
+	settle(t, d)
+	if _, err := d.handleRequest(request{Cmd: "wear", Args: map[string]interface{}{"state": float64(1)}}); err == nil ||
+		!strings.Contains(err.Error(), "does not declare") {
+		t.Errorf("wear: %v", err)
 	}
 }

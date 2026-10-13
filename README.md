@@ -85,6 +85,29 @@ curves are always slot 255):
 
 Slot 0 is the old test curve of this tool. Details in `backend/PROTOCOL.md`.
 
+## Languages
+
+The panel is in English by default and ships with Português (Brasil). It follows
+your system language (`LC_ALL`, `LC_MESSAGES`, `LANG`); to override it, pick a
+language in the panel under Settings → Language (Automatic restores the
+system's), or run `qcyctl i18n set <code|auto>`.
+
+To add a language, no code changes are needed:
+
+```sh
+mkdir -p ~/.config/qcy-omarchy/i18n
+qcyctl i18n template > ~/.config/qcy-omarchy/i18n/es.json
+```
+
+Edit `es.json`: set `_name` to the language's own name (shown in the picker),
+`_decimal` to its decimal separator, and translate the values (the keys are the
+English texts; keep `{n}`, `{name}`... markers as they are). Untranslated or
+empty entries fall back to English. Then choose the language in the panel.
+`qcyctl i18n list` shows what was found; an invalid file is skipped with a
+warning on stderr. A file named `pt-BR.json` overrides entries of the shipped
+one; `pt.json` is the fallback for any `pt-*`. User files live outside the
+plugin directory, so reinstalling the plugin keeps them.
+
 ## Settings
 
 Configurable per widget in `shell.json` (or via the shell's settings UI):
