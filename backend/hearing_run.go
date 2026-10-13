@@ -738,9 +738,12 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	for !sess.Done() {
 		t := sess.Current()
 		fmt.Fprintf(out, "[%2d] %-5s ear  band %d/%d  %5d Hz  step %+d  %6.1f dBFS ... ", len(answers)+1, t.Ear, t.Band+1, hearing.Bands, t.Freq, t.Gain, t.LevelDB)
-		drainKeys()
 		answered := false
 		for !answered {
+			// Every presentation of a tone starts with an empty key queue: a
+			// key typed for a tone that died (or in the gaps) is not an
+			// answer to this one.
+			drainKeys()
 			if e := checkAbort(); e != nil {
 				fmt.Fprintln(out)
 				return e
@@ -749,6 +752,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 				fmt.Fprintln(out)
 				return e
 			}
+			drainKeys() // the window of sinkAlive and of the previous tone's stop
 			stop, dead, e := env.player.Start(sink, t.Ear, t.Freq, t.LevelDB)
 			if e != nil {
 				return fmt.Errorf("play tone: %w", e)
@@ -811,6 +815,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 					return e
 				}
 				answered = true
+				delete(fails, int(t.Ear)*hearing.Bands+t.Band)
 			default:
 				fmt.Fprintln(out, "not heard")
 				answers = append(answers, heardRec{Tone: t, Heard: false})
@@ -818,6 +823,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 					return e
 				}
 				answered = true
+				delete(fails, int(t.Ear)*hearing.Bands+t.Band)
 			}
 		}
 	}

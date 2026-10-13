@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -227,6 +228,8 @@ type fakePlayer struct {
 	// deadCh: the Nth start's dead channel is handed to the test, which
 	// closes it when it wants the tone to die.
 	deadCh map[int]chan struct{}
+	// onStop runs inside the Nth tone's stop.
+	onStop func(n int)
 }
 
 func (p *fakePlayer) Start(sink string, ear hearing.Ear, freq int, level float64) (func() error, <-chan struct{}, error) {
@@ -244,7 +247,16 @@ func (p *fakePlayer) Start(sink string, ear hearing.Ear, freq int, level float64
 	}
 	err := p.stopErr[n]
 	p.mu.Unlock()
-	return func() error { p.mu.Lock(); p.stop++; p.mu.Unlock(); return err }, dead, nil
+	return func() error {
+		p.mu.Lock()
+		p.stop++
+		hook := p.onStop
+		p.mu.Unlock()
+		if hook != nil {
+			hook(n)
+		}
+		return err
+	}, dead, nil
 }
 
 type fnKeys struct{ next func() (byte, error) }
@@ -1148,4 +1160,139 @@ func TestPwcatDyingMidToneClosesDead(t *testing.T) {
 		t.Fatal("dead never closed")
 	}
 	_ = stop()
+}
+
+// ctlKeys is a keyboard the test drives: press returns once the runner's key
+// reader has taken the key and asked for the next one, i.e. the key is in the
+// queue (or already consumed).
+type ctlKeys struct {
+	in    chan byte
+	reads int32
+}
+
+func newCtlKeys() *ctlKeys { return &ctlKeys{in: make(chan byte)} }
+
+func (c *ctlKeys) ReadKey() (byte, error) {
+	atomic.AddInt32(&c.reads, 1)
+	if k, ok := <-c.in; ok {
+		return k, nil
+	}
+	return 'n', nil
+}
+
+func (c *ctlKeys) press(k byte) {
+	before := atomic.LoadInt32(&c.reads)
+	c.in <- k
+	for atomic.LoadInt32(&c.reads) <= before {
+		time.Sleep(100 * time.Microsecond)
+	}
+}
+
+func (c *ctlKeys) release() { close(c.in) }
+
+func waitStarted(pl *fakePlayer, n int) {
+	for pl.startedCount() < n {
+		time.Sleep(100 * time.Microsecond)
+	}
+}
+
+type answerRec struct {
+	Tone  struct{ Freq int }
+	Heard bool
+}
+
+func answersOf(t *testing.T, path string) []answerRec {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var o struct{ Answers []answerRec }
+	if err := json.Unmarshal(b, &o); err != nil {
+		t.Fatal(err)
+	}
+	return o.Answers
+}
+
+// A key that reaches the queue while a dead tone is being torn down belongs to
+// that tone, not to its repetition: the recorded answer comes from a LATER key.
+func TestHearingRunKeyQueuedWhenToneDiesIsNotAppliedToRepeat(t *testing.T) {
+	ck := newCtlKeys()
+	r := newRig(t, ck)
+	r.pl.deadCh = map[int]chan struct{}{1: nil}
+	r.pl.onStop = func(n int) {
+		if n == 1 {
+			ck.press('n') // stale: typed for the tone that died
+		}
+	}
+	go func() {
+		waitStarted(r.pl, 1)
+		for {
+			r.pl.mu.Lock()
+			ch := r.pl.deadCh[1]
+			r.pl.mu.Unlock()
+			if ch != nil {
+				close(ch)
+				break
+			}
+			time.Sleep(100 * time.Microsecond)
+		}
+		waitStarted(r.pl, 2)
+		ck.press('h') // the real answer to the repeated tone
+		ck.release()
+	}()
+	o := opts()
+	o.outFile = filepath.Join(t.TempDir(), "r.json")
+	if err := hearingRunLive(r.env, o); err != nil {
+		t.Fatal(err)
+	}
+	a := answersOf(t, o.outFile)
+	if len(a) == 0 || !a[0].Heard {
+		t.Fatalf("the first recorded answer must come from the later key (heard), got %+v", a[:1])
+	}
+}
+
+// A key pressed after the repetition was decided but before its Start (the
+// sinkAlive window) is discarded too.
+func TestHearingRunKeyBeforeRepeatStartIsDiscarded(t *testing.T) {
+	ck := newCtlKeys()
+	r := newRig(t, ck)
+	r.pl.deadAtStart = map[int]bool{1: true}
+	calls := 0
+	r.ex.onCall = func(line string) {
+		if line == "pactl list short sinks" {
+			calls++
+			if calls == 3 { // 1: pick, 2: before tone 1, 3: before the repeat
+				ck.press('h')
+			}
+		}
+	}
+	go func() {
+		waitStarted(r.pl, 2)
+		ck.press('n')
+		ck.release()
+	}()
+	o := opts()
+	o.outFile = filepath.Join(t.TempDir(), "r.json")
+	if err := hearingRunLive(r.env, o); err != nil {
+		t.Fatal(err)
+	}
+	a := answersOf(t, o.outFile)
+	if len(a) == 0 || a[0].Heard {
+		t.Fatalf("the stale key (h) was applied: %+v", a[:1])
+	}
+}
+
+// The retry ceiling is per presentation: an accepted answer resets it.
+func TestHearingRunRetryCountResetsAfterAnswer(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	// Band 0 is presented several times (one tone per staircase step). Starts
+	// 1-2 die, start 3 is answered; starts 4-5 die on the NEXT presentation of
+	// the same band: without the reset the count would reach 4 and abort.
+	r.pl.deadAtStart = map[int]bool{1: true, 2: true, 4: true, 5: true}
+	o := opts()
+	o.outFile = filepath.Join(t.TempDir(), "r.json")
+	if err := hearingRunLive(r.env, o); err != nil {
+		t.Fatal(err)
+	}
 }
