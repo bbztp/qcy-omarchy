@@ -2352,10 +2352,10 @@ Panel {
               GroupRow {
                 width: parent.width
                 visible: root.wearSensVisible
-                label: Qcy.tr("Sensor sensitivity")
+                label: Qcy.tr("In-ear sensor sensitivity")
                 model: root.wearSensChoices
                 current: String(root.sliderValue("wearSensitivity", 0))
-                onPicked: function (v) { root.commitSlider("wearSensitivity", "Sensor sensitivity", function (n) { return ["wear-sensitivity", String(n)] }, Number(v)) }
+                onPicked: function (v) { root.commitSlider("wearSensitivity", "In-ear sensor sensitivity", function (n) { return ["wear-sensitivity", String(n)] }, Number(v)) }
               }
             }
 
