@@ -166,6 +166,31 @@ func normMAC(s string) string {
 	return strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(s), ":", "_"), "-", "_"))
 }
 
+var sinkMACRe = regexp.MustCompile(`(?i)([0-9a-f]{2}(?:_[0-9a-f]{2}){5})`)
+
+// macNear reports whether the sink name carries a MAC (normalised, "AA_BB_...")
+// that matches m in the first five octets and differs by at most one in the last.
+func macNear(m, sink string) bool {
+	a := strings.Split(m, "_")
+	f := sinkMACRe.FindString(sink)
+	if len(a) != 6 || f == "" {
+		return false
+	}
+	b := strings.Split(strings.ToUpper(f), "_")
+	for i := 0; i < 5; i++ {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	x, err1 := strconv.ParseUint(a[5], 16, 8)
+	y, err2 := strconv.ParseUint(b[5], 16, 8)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	d := int(x) - int(y)
+	return d >= -1 && d <= 1
+}
+
 // pickSink chooses the earbuds' sink: an explicit name, or the one whose name
 // carries the cached MAC. There is no "only sink" fallback: guessing could play
 // the test on somebody else's headphones.
@@ -186,6 +211,17 @@ func pickSink(sinks []string, explicit, mac string) (string, error) {
 			if strings.Contains(strings.ToUpper(s), m) {
 				return s, nil
 			}
+		}
+		// The BLE address often differs from the audio (classic) one by one in
+		// the last octet; accept it only when exactly one sink is that close.
+		var near []string
+		for _, s := range sinks {
+			if macNear(m, s) {
+				near = append(near, s)
+			}
+		}
+		if len(near) == 1 {
+			return near[0], nil
 		}
 	}
 	return "", fmt.Errorf("no Bluetooth sink matches the earbuds' cached MAC %q (sinks: %s): choose one with --sink (the cached address is the BLE one and may differ from the audio address)", mac, strings.Join(sinks, ", "))

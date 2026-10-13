@@ -2006,3 +2006,17 @@ func TestHearingRunApplySlot11BackupAbortsBeforeAnythingElse(t *testing.T) {
 		t.Fatal(r2.out.String())
 	}
 }
+
+func TestPickSinkAcceptsAdjacentLastOctetOnlyWhenUnique(t *testing.T) {
+	one := []string{"bluez_output.AA_BB_CC_DD_EE_00.1", "bluez_output.11_22_33_44_55_66.1"}
+	if s, err := pickSink(one, "", "AA:BB:CC:DD:EE:01"); err != nil || s != one[0] {
+		t.Fatalf("adjacent octet: %q, %v", s, err)
+	}
+	if _, err := pickSink(one, "", "AA:BB:CC:DD:EE:05"); err == nil {
+		t.Fatal("octet 5 away must not match")
+	}
+	two := []string{"bluez_output.AA_BB_CC_DD_EE_00.1", "bluez_output.AA_BB_CC_DD_EE_02.1"}
+	if _, err := pickSink(two, "", "AA:BB:CC:DD:EE:01"); err == nil {
+		t.Fatal("ambiguous near match must fail")
+	}
+}
