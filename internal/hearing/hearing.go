@@ -97,6 +97,7 @@ type Session struct {
 	hasLast bool
 	done    bool
 	res     [2][Bands]int
+	floor   [2][Bands]bool
 }
 
 // NewSession starts a test with the given per-band reference levels.
@@ -134,7 +135,7 @@ func clampStep(g int) int {
 	return g
 }
 
-func (s *Session) record(g int) {
+func (s *Session) record(g int, atFloor bool) {
 	if g > MaxGain {
 		g = MaxGain
 	}
@@ -142,6 +143,7 @@ func (s *Session) record(g int) {
 		g = MinStep
 	}
 	s.res[s.ear][s.band] = g
+	s.floor[s.ear][s.band] = atFloor
 	s.band++
 	if s.band == Bands {
 		s.band = 0
@@ -167,7 +169,7 @@ func (s *Session) Answer(heard bool) error {
 		if g >= MaxGain {
 			s.endCnt++
 			if s.endCnt >= 2 {
-				s.record(MaxGain)
+				s.record(MaxGain, false)
 				return nil
 			}
 		}
@@ -183,8 +185,11 @@ func (s *Session) Answer(heard bool) error {
 		s.endCnt++
 	}
 	s.last, s.hasLast = g, true
+	// Heard at or below the "very quiet" threshold of the band: the listener
+	// is at the floor of the staircase and the result is only relative.
+	atFloor := (low && g <= -4) || (!low && g <= -2)
 	if s.endCnt >= 2 || same {
-		s.record(g)
+		s.record(g, atFloor)
 		return nil
 	}
 	step := 1
@@ -193,12 +198,17 @@ func (s *Session) Answer(heard bool) error {
 	}
 	if g-step < MinStep {
 		// Cannot go lower: the quietest tone was heard, record it.
-		s.record(g)
+		s.record(g, true)
 		return nil
 	}
 	s.gain = g - step
 	return nil
 }
+
+// Floor reports, per band, that the listener still heard the tone at the
+// lowest level of the staircase (the recorded gain sits at the floor): the
+// value is a bound, not a measurement. Only meaningful once Done.
+func (s *Session) Floor() (left, right [Bands]bool) { return s.floor[Left], s.floor[Right] }
 
 // Result is the recorded gain per band, in dB, for each ear. Only meaningful
 // once Done.

@@ -22,12 +22,16 @@ const hearingUsage = `usage: qcyctl hearing <subcommand>
   hearing plan [--sound-db a,b,..8] [--json]                         (tones of the first step of every band)
   hearing result --left g1,..,g8 --right g1,..,g8 [--json]            (master gain, curves and the write frames as hex; nothing is sent)
   hearing run --dry-run --answers "h,n,h,..." [--sound-db ..] [--json] (simulates the staircase from answers: h = heard, n = not heard; no audio)
-  hearing run [--sink NAME] [--sink-volume 100%] [--sound-db ..] [--device-mode] [--apply --yes] [--out file.json]
+  hearing run [--sink NAME] [--sink-volume 100%] [--sound-db ..] [--device-mode] [--apply --yes [--accept-floor]] [--out file.json]
                                                                       (the real test: pauses the music (playerctl or busctl; aborts if anything still plays
                                                                        into the sink), plays the tones on the earbuds' Bluetooth sink; keys h/Enter = heard,
                                                                        n/space = not heard, r = repeat, q = abort. The device test mode (frame 0x45, NOT
                                                                        verified on hardware) is only sent with --device-mode or --apply --yes; the volume,
-                                                                       the music and the mode are always restored. Nothing is written without --apply --yes)
+                                                                       the music and the mode are always restored. Nothing is written without --apply --yes.
+                                                                       The absolute level of a tone depends on the sink volume, and the staircase assumes
+                                                                       the app's (phone) reference level: PipeWire volume is cubic, dB = 60*log10(v), so
+                                                                       60% is about -13 dB. Bands still heard at the lowest level are marked "floor";
+                                                                       --apply --yes refuses them unless --accept-floor is given)
   hearing mode on|off --yes                                           (sends the 0x45 test-mode frame, NOT verified on hardware; for recovery)`
 
 func cmdHearing(args []string) error { return hearingMain(args, os.Stdout) }
@@ -219,8 +223,9 @@ func hearingRunCmd(args []string, out io.Writer) error {
 	sinkName := fs.String("sink", "", "")
 	sinkVol := fs.String("sink-volume", "100%", "")
 	devMode := fs.Bool("device-mode", false, "")
+	acceptFloor := fs.Bool("accept-floor", false, "")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		return errors.New("usage: qcyctl hearing run [--dry-run --answers \"h,n,h,...\"] [--sound-db ..] [--json] [--sink NAME] [--sink-volume 100%] [--device-mode] [--apply --yes] [--out file.json]")
+		return errors.New("usage: qcyctl hearing run [--dry-run --answers \"h,n,h,...\"] [--sound-db ..] [--json] [--sink NAME] [--sink-volume 100%] [--device-mode] [--apply --yes [--accept-floor]] [--out file.json]")
 	}
 	db, err := soundDBFlag(*sdb)
 	if err != nil {
@@ -237,7 +242,7 @@ func hearingRunCmd(args []string, out io.Writer) error {
 		env, done := liveHearingEnv(out)
 		defer done()
 		return hearingRunLive(env, hearingRunOpts{soundDB: db, sinkVolume: pct, sinkName: *sinkName,
-			apply: *apply, yes: *yes, deviceMode: *devMode, outFile: *outFile})
+			apply: *apply, yes: *yes, deviceMode: *devMode, acceptFloor: *acceptFloor, outFile: *outFile})
 	}
 	var seq []bool
 	for _, a := range strings.Split(*answers, ",") {
@@ -268,10 +273,12 @@ func hearingRunCmd(args []string, out io.Writer) error {
 	for i := range l {
 		gl[i], gr[i] = float64(l[i]), float64(r[i])
 	}
+	fl, fr := s.Floor()
 	if *jsonOut {
 		o := map[string]interface{}{"steps": steps, "complete": complete}
 		if complete {
 			o["left"], o["right"] = l, r
+			o["floor"] = map[string][]bool{"left": fl[:], "right": fr[:]}
 			o["result"] = computeResult(gl, gr)
 		} else {
 			o["next"] = s.Current()
@@ -290,7 +297,8 @@ func hearingRunCmd(args []string, out io.Writer) error {
 		fmt.Fprintf(out, "incomplete after %d answers; next: %s %d Hz step %+d %.1f dBFS\n", len(steps), t.Ear, t.Freq, t.Gain, t.LevelDB)
 		return nil
 	}
-	fmt.Fprintf(out, "left : %v\nright: %v\n", l, r)
+	nFloor := printFloor(out, l, r, fl, fr, true)
+	printFloorWarning(out, nFloor)
 	res := computeResult(gl, gr)
 	fmt.Fprintf(out, "master gain: %.2f dB\nleft frame:  %s\nright frame: %s\n", res.MasterGain, res.Left.Frame, res.Right.Frame)
 	return nil

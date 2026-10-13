@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -91,6 +93,9 @@ type hearingEnv struct {
 	// its id (the equivalent of `library import-device <name>`).
 	saveCurve func(name string, snap *qcycore.EqSnapshot) (string, error)
 	pingEvery time.Duration
+	// monitor reads ~0.4 s of the sink's monitor as s16le mono 8 kHz (read
+	// only). Nil/failing = not measurable (the conservative path).
+	monitor func(sink string) ([]byte, error)
 }
 
 type hearingRunOpts struct {
@@ -101,7 +106,10 @@ type hearingRunOpts struct {
 	// deviceMode sends the (unverified) 0x45 test-mode frame even without
 	// --apply --yes.
 	deviceMode bool
-	outFile    string
+	// acceptFloor lets --apply --yes write bands that were still heard at the
+	// lowest level of the staircase.
+	acceptFloor bool
+	outFile     string
 }
 
 // ---------- parsing ----------
@@ -335,6 +343,28 @@ const (
 	audioStopPolls = 32
 )
 
+// silencePeak: a monitor reading whose largest |s16 sample| is below this is
+// silence (about -70 dBFS). Two consecutive readings are required.
+const silencePeak = 10
+
+// peakS16 is the largest |sample| of s16le mono PCM and its level in dBFS.
+func peakS16(b []byte) (int, float64) {
+	peak := 0
+	for i := 0; i+1 < len(b); i += 2 {
+		v := int(int16(uint16(b[i]) | uint16(b[i+1])<<8))
+		if v < 0 {
+			v = -v
+		}
+		if v > peak {
+			peak = v
+		}
+	}
+	if peak == 0 {
+		return 0, math.Inf(-1)
+	}
+	return peak, 20 * math.Log10(float64(peak)/32768)
+}
+
 // errToneDead: the tone stopped playing while waiting for the answer.
 var errToneDead = errors.New("tone died")
 
@@ -348,20 +378,23 @@ type heardRec struct {
 }
 
 type hearingRunOut struct {
-	Timestamp  string              `json:"timestamp"`
-	Sink       string              `json:"sink"`
-	SinkVolume int                 `json:"sinkVolume"`
-	DeviceMode bool                `json:"deviceMode"`
-	SoundDB    []float64           `json:"soundDb"`
-	Answers    []heardRec          `json:"answers"`
-	Left       []int               `json:"left"`
-	Right      []int               `json:"right"`
-	Result     resultOut           `json:"result"`
-	Applied    bool                `json:"applied"`
-	Backup     string              `json:"backup,omitempty"`
-	Restore    string              `json:"restore,omitempty"`
-	Writes     []*hearingCall      `json:"writes,omitempty"`
-	Final      *qcycore.EqSnapshot `json:"finalEq,omitempty"`
+	Timestamp  string     `json:"timestamp"`
+	Sink       string     `json:"sink"`
+	SinkVolume int        `json:"sinkVolume"`
+	DeviceMode bool       `json:"deviceMode"`
+	SoundDB    []float64  `json:"soundDb"`
+	Answers    []heardRec `json:"answers"`
+	Left       []int      `json:"left"`
+	Right      []int      `json:"right"`
+	// Floor: bands still heard at the lowest level of the staircase (the gain
+	// is a bound, not a measurement).
+	Floor   map[string][]bool   `json:"floor"`
+	Result  resultOut           `json:"result"`
+	Applied bool                `json:"applied"`
+	Backup  string              `json:"backup,omitempty"`
+	Restore string              `json:"restore,omitempty"`
+	Writes  []*hearingCall      `json:"writes,omitempty"`
+	Final   *qcycore.EqSnapshot `json:"finalEq,omitempty"`
 }
 
 type hearingBackup struct {
@@ -593,6 +626,21 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	// timeout -> abort, naming who holds the stream.
 	var lastState string
 	var lastActive []string
+	var lastPeakDB float64
+	peakKnown, silentRuns, usedMonitor := false, 0, false
+	haveMonitor := env.monitor != nil && env.have("parec")
+	// measure reads the monitor once: (peak, dBFS, ok).
+	measure := func() (int, float64, bool) {
+		if !haveMonitor {
+			return 0, 0, false
+		}
+		b, err := env.monitor(sink)
+		if err != nil || len(b) < 2*800 { // < 0.1 s of data is not a reading
+			return 0, 0, false
+		}
+		p, db := peakS16(b)
+		return p, db, true
+	}
 	for poll := 0; ; poll++ {
 		sinksOut, err := env.exec("pactl", "list", "sinks")
 		if err != nil {
@@ -608,6 +656,23 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		if lastState != "" { // the state is authoritative when pactl reports it
 			quiet = lastState == "IDLE" || lastState == "SUSPENDED"
 		}
+		if !quiet && lastState == "RUNNING" {
+			// RUNNING does not prove sound: a browser may keep a stream open
+			// sending silence. Measure the monitor.
+			if p, db, ok := measure(); ok {
+				peakKnown, lastPeakDB = true, db
+				if p < silencePeak {
+					silentRuns++
+				} else {
+					silentRuns = 0
+				}
+				if silentRuns >= 2 {
+					quiet, usedMonitor = true, true
+				}
+			} else {
+				peakKnown, silentRuns = false, 0
+			}
+		}
 		if quiet {
 			break
 		}
@@ -616,13 +681,27 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			if len(lastActive) > 0 {
 				who = strings.Join(lastActive, ", ")
 			}
-			return fmt.Errorf("audio is still playing into %s (state %s; %s) after %s: stop it and run again; the volume was not raised",
-				sink, lastState, who, time.Duration(audioStopPolls)*audioStopPoll)
+			peak := "peak not measured"
+			if peakKnown {
+				peak = fmt.Sprintf("peak %.1f dBFS", lastPeakDB)
+			}
+			return fmt.Errorf("audio is still playing into %s (state %s; %s; %s) after %s: stop it and run again; the volume was not raised",
+				sink, lastState, peak, who, time.Duration(audioStopPolls)*audioStopPoll)
 		}
 		if poll == 0 {
 			fmt.Fprintln(out, "waiting for the audio to stop…")
 		}
 		env.sleep(audioStopPoll)
+	}
+	if usedMonitor {
+		// Shrink the window: measure again right before raising the volume.
+		if p, db, ok := measure(); !ok || p >= silencePeak {
+			why := "the monitor could not be read"
+			if ok {
+				why = fmt.Sprintf("peak %.1f dBFS", db)
+			}
+			return fmt.Errorf("audio started again on %s (%s): the volume was not raised", sink, why)
+		}
 	}
 	if e := checkAbort(); e != nil {
 		return e
@@ -874,11 +953,14 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		gl[i], gr[i] = float64(l[i]), float64(r[i])
 	}
 	res := computeResult(gl, gr)
-	fmt.Fprintf(out, "\nleft : %v\nright: %v\n", l, r)
+	fl, fr := sess.Floor()
+	nFloor := printFloor(out, l, r, fl, fr, false)
 	printResultText(out, res)
+	printFloorWarning(out, nFloor)
 	rec := hearingRunOut{
 		Timestamp: env.now().Format(time.RFC3339), Sink: sink, SinkVolume: o.sinkVolume, DeviceMode: useMode,
 		SoundDB: o.soundDB[:], Answers: answers, Left: l[:], Right: r[:], Result: res,
+		Floor: map[string][]bool{"left": fl[:], "right": fr[:]},
 	}
 	save := func() error {
 		if o.outFile == "" {
@@ -893,6 +975,10 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		if e := checkAbort(); e != nil {
 			_ = save()
 			return e
+		}
+		if nFloor > 0 && !o.acceptFloor {
+			_ = save()
+			return fmt.Errorf("refused to write: %d band(s) were still heard at the lowest level, so the result is only relative. Rerun with a lower --sink-volume (e.g. 60%%), or pass --accept-floor to write it anyway; nothing was written (restore point: %s)", nFloor, restoreCmd)
 		}
 		rec.Backup, rec.Restore = backupPath, restoreCmd
 		var li, ri [hearing.Bands]int = l, r
@@ -980,6 +1066,34 @@ func writeConfirmed(c *hearingCall, gains [hearing.Bands]int) bool {
 		}
 	}
 	return true
+}
+
+// printFloor prints the per-ear gains with the floor bands marked and returns
+// how many bands are at the floor. dry only changes nothing but the prefix.
+func printFloor(out io.Writer, l, r [hearing.Bands]int, fl, fr [hearing.Bands]bool, _ bool) int {
+	n := 0
+	line := func(name string, g [hearing.Bands]int, f [hearing.Bands]bool) {
+		fmt.Fprintf(out, "%-5s:", name)
+		for i, v := range g {
+			mark := ""
+			if f[i] {
+				mark = " floor"
+				n++
+			}
+			fmt.Fprintf(out, " %d%s", v, mark)
+		}
+		fmt.Fprintln(out)
+	}
+	fmt.Fprintln(out)
+	line("left", l, fl)
+	line("right", r, fr)
+	return n
+}
+
+func printFloorWarning(out io.Writer, n int) {
+	if n > 0 {
+		fmt.Fprintf(out, "WARNING: %d bands were still heard at the lowest level: the result is only relative; rerun with a lower --sink-volume (e.g. 60%%)\n", n)
+	}
 }
 
 func writeJSONFile(path string, v interface{}) error {
@@ -1198,6 +1312,27 @@ func liveExec(name string, args ...string) (string, error) {
 	return string(b), err
 }
 
+// liveMonitor records ~0.4 s of the sink's monitor with parec (read only).
+func liveMonitor(sink string) ([]byte, error) {
+	if err := refuseHardware(); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "parec", "-d", sink+".monitor", "--format=s16le", "--rate=8000", "--channels=1", "--latency-msec=50")
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	err := cmd.Run() // killed by the deadline on purpose: the bytes read are the reading
+	if buf.Len() == 0 {
+		if err == nil {
+			err = errors.New("parec returned no data")
+		}
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 func saveBackupCurve(name string, snap *qcycore.EqSnapshot) (string, error) {
 	if snap == nil {
 		return "", errors.New("no active EQ snapshot")
@@ -1241,6 +1376,7 @@ func liveHearingEnv(out io.Writer) (hearingEnv, func()) {
 		sleep:     time.Sleep,
 		configDir: qcyConfigDir,
 		saveCurve: saveBackupCurve,
+		monitor:   liveMonitor,
 		pingEvery: 3 * time.Second,
 	}, func() { signal.Stop(sigs) }
 }

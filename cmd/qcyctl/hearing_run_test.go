@@ -41,7 +41,7 @@ type fakeExec struct {
 
 func newFakeExec() *fakeExec {
 	return &fakeExec{
-		have: map[string]bool{"pactl": true, "pw-cat": true, "playerctl": true},
+		have: map[string]bool{"pactl": true, "pw-cat": true, "playerctl": true, "parec": true},
 		out: map[string]string{
 			"pactl list short sinks":                               pactlSinks,
 			"playerctl -l":                                         "spotify\nfirefox.instance123\nmpv\n",
@@ -391,7 +391,7 @@ func (r *rig) assertRestored(t *testing.T) {
 }
 
 func opts() hearingRunOpts {
-	return hearingRunOpts{soundDB: hearing.DefaultSoundDB, sinkVolume: 100, deviceMode: true}
+	return hearingRunOpts{soundDB: hearing.DefaultSoundDB, sinkVolume: 100, deviceMode: true, acceptFloor: true}
 }
 
 // ---------- tests ----------
@@ -1396,5 +1396,129 @@ func TestPwcatArgsAreRawPCM(t *testing.T) {
 	// and --raw must come before the "-" input, as an option.
 	if has("--raw") > len(a)-2 {
 		t.Fatalf("%v", a)
+	}
+}
+
+func pcm(vals ...int16) []byte {
+	var b []byte
+	for len(b) < 2*3200 { // 0.4 s at 8 kHz
+		for _, v := range vals {
+			b = append(b, byte(v), byte(uint16(v)>>8))
+		}
+	}
+	return b
+}
+
+func TestHearingRunRunningSinkWithSilenceProceeds(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	r.ex.out["pactl list sink-inputs"] = activeInput
+	sinkState(r, "RUNNING")
+	reads := 0
+	r.env.monitor = func(string) ([]byte, error) { reads++; return pcm(0, 3, -4, 0), nil }
+	if err := hearingRunLive(r.env, opts()); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 3 { // two consecutive silent readings + the one before the volume
+		t.Fatalf("monitor read %d times", reads)
+	}
+	r.assertRestored(t)
+}
+
+func TestHearingRunRunningSinkWithAudioAbortsAndReportsPeak(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	r.ex.out["pactl list sink-inputs"] = activeInput
+	sinkState(r, "RUNNING")
+	r.env.monitor = func(string) ([]byte, error) { return pcm(0, 3000, -3000), nil }
+	err := hearingRunLive(r.env, opts())
+	if err == nil || !strings.Contains(err.Error(), "still playing into") || !strings.Contains(err.Error(), "peak -20.8 dBFS") {
+		t.Fatal(err)
+	}
+	if r.ex.count("set-sink") != 0 || r.link.list() != "" {
+		t.Fatal("side effects")
+	}
+}
+
+func TestHearingRunMonitorMissingOrFailingKeepsConservativeAbort(t *testing.T) {
+	for name, setup := range map[string]func(r *rig){
+		"parec absent": func(r *rig) { r.ex.have["parec"] = false },
+		"parec fails":  func(r *rig) { r.env.monitor = func(string) ([]byte, error) { return nil, errors.New("no monitor") } },
+		"short read":   func(r *rig) { r.env.monitor = func(string) ([]byte, error) { return []byte{0, 0}, nil } },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t, cycleKeys())
+			r.ex.out["pactl list sink-inputs"] = activeInput
+			sinkState(r, "RUNNING")
+			r.env.monitor = func(string) ([]byte, error) { return pcm(0), nil }
+			setup(r)
+			err := hearingRunLive(r.env, opts())
+			if err == nil || !strings.Contains(err.Error(), "peak not measured") {
+				t.Fatal(err)
+			}
+			if r.ex.count("set-sink") != 0 {
+				t.Fatal("volume raised")
+			}
+		})
+	}
+}
+
+func TestHearingRunAudioReturningBeforeVolumeAborts(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	r.ex.out["pactl list sink-inputs"] = activeInput
+	sinkState(r, "RUNNING")
+	reads := 0
+	r.env.monitor = func(string) ([]byte, error) {
+		reads++
+		if reads == 3 {
+			return pcm(0, 5000), nil
+		}
+		return pcm(0), nil
+	}
+	err := hearingRunLive(r.env, opts())
+	if err == nil || !strings.Contains(err.Error(), "started again") || r.ex.count("set-sink") != 0 {
+		t.Fatal(err)
+	}
+}
+
+func heardKeys() fnKeys { return fnKeys{func() (byte, error) { return 'h', nil }} }
+
+func TestHearingRunFloorBandsMarkedAndApplyRefused(t *testing.T) {
+	r := newRig(t, heardKeys())
+	o := opts()
+	o.acceptFloor, o.apply, o.yes = false, true, true
+	o.outFile = filepath.Join(t.TempDir(), "r.json")
+	err := hearingRunLive(r.env, o)
+	out := r.out.String()
+	if err == nil || !strings.Contains(err.Error(), "--accept-floor") || strings.Contains(r.link.list(), "write") {
+		t.Fatalf("%v %s", err, r.link.list())
+	}
+	if !strings.Contains(out, "floor") || !strings.Contains(out, "bands were still heard at the lowest level") || !strings.Contains(out, "--sink-volume (e.g. 60%)") {
+		t.Fatal(out)
+	}
+	b, _ := os.ReadFile(o.outFile)
+	if !strings.Contains(string(b), `"floor"`) {
+		t.Fatalf("floor missing in the JSON: %s", b)
+	}
+	r.assertRestored(t)
+	// With the flag it goes through.
+	r2 := newRig(t, heardKeys())
+	o.acceptFloor = true
+	if err := hearingRunLive(r2.env, o); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r2.link.list(), "write:left") {
+		t.Fatal(r2.link.list())
+	}
+}
+
+func TestHearingRunNoFloorNoWarning(t *testing.T) {
+	// never heard: every band ends at +6, nowhere near the floor.
+	r := newRig(t, fnKeys{func() (byte, error) { return 'n', nil }})
+	o := opts()
+	o.acceptFloor, o.apply, o.yes = false, true, true
+	if err := hearingRunLive(r.env, o); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(r.out.String(), "lowest level") {
+		t.Fatal(r.out.String())
 	}
 }

@@ -303,3 +303,30 @@ func TestSynthChunksAreContinuousAndRamped(t *testing.T) {
 		t.Fatalf("must end at zero, got %d", v)
 	}
 }
+
+func TestSessionFloorFlags(t *testing.T) {
+	// Always heard: every band ends at the staircase floor.
+	s := NewSession(DefaultSoundDB)
+	for !s.Done() {
+		if err := s.Answer(true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fl, fr := s.Floor()
+	for i := 0; i < Bands; i++ {
+		if !fl[i] || !fr[i] {
+			t.Fatalf("band %d not flagged: %v %v", i, fl, fr)
+		}
+	}
+	// Never heard: ends at +6, no floor.
+	s = NewSession(DefaultSoundDB)
+	for !s.Done() {
+		s.Answer(false)
+	}
+	fl, fr = s.Floor()
+	for i := 0; i < Bands; i++ {
+		if fl[i] || fr[i] {
+			t.Fatalf("band %d flagged without being heard", i)
+		}
+	}
+}
