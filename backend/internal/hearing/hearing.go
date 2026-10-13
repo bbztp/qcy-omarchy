@@ -278,6 +278,23 @@ func MasterGain(gains [Bands]float64) float64 {
 	return baseMasterGain
 }
 
+// MasterLimit is the largest master gain magnitude, in dB, that is written:
+// PROTOCOL.md records -12..+12 as accepted by the 0x22 master gain field; the
+// 0x46/0x47 field is assumed to be the same and is NOT verified.
+const MasterLimit = 12.0
+
+// ClampMaster limits a master gain to -MasterLimit..+MasterLimit and reports
+// whether it had to.
+func ClampMaster(mg float64) (float64, bool) {
+	switch {
+	case mg < -MasterLimit:
+		return -MasterLimit, true
+	case mg > MasterLimit:
+		return MasterLimit, true
+	}
+	return mg, false
+}
+
 // ---------- frames ----------
 
 const (

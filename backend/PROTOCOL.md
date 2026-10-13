@@ -591,3 +591,14 @@ how many EQ slots it has, and the ANC level range differs by model.
 | `QCYCTL_DEBUG=1` | per-frame trace on stderr (`qcyctld`) |
 | `QCY_DEBUG=1` | per-frame trace on stderr (`qcyctl`, direct mode) |
 | `QCYCTL_PROBE=1` | enumerate service `a001` with read results |
+## Hearing test frames (0x45, 0x46, 0x47) — NOT verified on hardware
+
+Read from the phone app, never captured on a device. `0x45` (`FF 03 45 01 0x`)
+switches the personalised-effect flag (the test mode); `0x46` / `0x47` carry the
+left / right curve of effect 11 (`FF <n+2> 46|47 <n> 0B <master int16 LE>
+{freq, gain, q, type}*8`). What the earbuds answer is unknown: the daemon waits
+briefly for an echo of the opcode, never requires one, and reads 0x22 back. The
+master gain is limited to -12..+12 dB (the range recorded for 0x22; the range of
+0x46/0x47 is an assumption). `qcyctl hearing run` sends 0x45 only with
+`--device-mode` or `--apply --yes`; `qcyctl hearing mode on|off --yes` sends it
+by hand. Both daemon commands require `confirm:true`.

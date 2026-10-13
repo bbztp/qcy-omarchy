@@ -72,7 +72,7 @@ func gains8(v ...float64) []interface{} {
 
 func TestHearingModeSendsFlagFrameAndReadsBack(t *testing.T) {
 	d, hs := hearTestDaemon(t, true)
-	v, err := d.handleRequest(request{Cmd: "hearingMode", Args: map[string]interface{}{"on": true}})
+	v, err := d.handleRequest(request{Cmd: "hearingMode", Args: map[string]interface{}{"on": true, "confirm": true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,12 +85,21 @@ func TestHearingModeSendsFlagFrameAndReadsBack(t *testing.T) {
 	}
 	// Without an echo the command still succeeds and says so.
 	d2, hs2 := hearTestDaemon(t, false)
-	v, err = d2.handleRequest(request{Cmd: "hearingMode", Args: map[string]interface{}{"on": false}})
+	v, err = d2.handleRequest(request{Cmd: "hearingMode", Args: map[string]interface{}{"on": false, "confirm": true}})
 	if err != nil || v.(*hearingResult).Ack || v.(*hearingResult).Sent != "ff03450100" || len(hs2.sent()) != 1 {
 		t.Fatalf("%v %+v", err, v)
 	}
-	if _, err := d.handleRequest(request{Cmd: "hearingMode", Args: map[string]interface{}{}}); err == nil {
+	if _, err := d.handleRequest(request{Cmd: "hearingMode", Args: map[string]interface{}{"confirm": true}}); err == nil {
 		t.Fatal("on is required")
+	}
+	n := len(hs.sent())
+	for _, a := range []map[string]interface{}{{"on": true}, {"on": true, "confirm": false}, {"on": true, "confirm": "true"}} {
+		if _, err := d.handleRequest(request{Cmd: "hearingMode", Args: a}); err == nil {
+			t.Fatalf("%v accepted without confirm", a)
+		}
+	}
+	if len(hs.sent()) != n {
+		t.Fatal("a frame was sent without confirm")
 	}
 }
 
@@ -131,6 +140,7 @@ func TestHearingWriteBuildsFrameWithMasterGain(t *testing.T) {
 	if o := hearing.MasterGain(other); o < mg {
 		mg = o
 	}
+	mg, _ = hearing.ClampMaster(mg)
 	want := hex.EncodeToString(hearing.WriteFrame(hearing.Right, gains, mg))
 	v, err := d.handleRequest(request{Cmd: "hearingWrite", Args: map[string]interface{}{
 		"ear": "right", "gains": gains8(3, 4, 2, 1, 0, -2, 0, 5), "otherGains": gains8(6, 6, 6, 6, 6, 6, 6, 6), "confirm": true}})
@@ -143,5 +153,18 @@ func TestHearingWriteBuildsFrameWithMasterGain(t *testing.T) {
 	}
 	if p := hs.sent(); len(p) != 1 || hex.EncodeToString(p[0]) != want || p[0][2] != 0x47 {
 		t.Fatalf("wire %x", p)
+	}
+}
+
+func TestHearingWriteClampsMasterGain(t *testing.T) {
+	d, _ := hearTestDaemon(t, false)
+	v, err := d.handleRequest(request{Cmd: "hearingWrite", Args: map[string]interface{}{
+		"ear": "left", "gains": gains8(6, 6, 6, 6, 6, 6, 6, 6), "confirm": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := v.(*hearingResult)
+	if !r.MasterClamped || r.MasterGain == nil || *r.MasterGain != -12 {
+		t.Fatalf("%+v", r)
 	}
 }

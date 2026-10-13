@@ -14,7 +14,7 @@ import (
 
 // Hearing test (phase 2): two raw-frame commands, only for verified models.
 //
-//	hearingMode  {on: bool}                         FF 03 45 01 0x
+//	hearingMode  {on: bool, confirm:true}           FF 03 45 01 0x   (0x45: NOT verified on hardware)
 //	hearingWrite {ear, gains[8], confirm:true,      FF <n> 46|47 <n-2> 0B <mg> {bands}
 //	              otherGains[8]?}
 //
@@ -45,8 +45,10 @@ type hearingResult struct {
 	// AckPayload is its body (hex).
 	Ack        bool   `json:"ack"`
 	AckPayload string `json:"ackPayload,omitempty"`
-	// MasterGain is the dB value written (hearingWrite only).
-	MasterGain *float64 `json:"masterGain,omitempty"`
+	// MasterGain is the dB value written (hearingWrite only); MasterClamped
+	// says the rule's value was outside +-12 dB and was limited.
+	MasterGain    *float64 `json:"masterGain,omitempty"`
+	MasterClamped bool     `json:"masterClamped,omitempty"`
 	// Readback is the 0x22 state read after the send; ReadbackError says why
 	// it is missing.
 	Readback      *hearingReadback `json:"readback,omitempty"`
@@ -79,6 +81,9 @@ func hearingGains(v interface{}, what string) ([hearing.Bands]float64, error) {
 
 // hearingMode switches the personalised-effect flag.
 func (d *daemon) hearingMode(args map[string]interface{}) (*hearingResult, error) {
+	if c, _ := args["confirm"].(bool); !c {
+		return nil, errors.New("hearingMode: refused, the request needs confirm:true; nothing was sent")
+	}
 	on, ok := args["on"].(bool)
 	if !ok {
 		return nil, errors.New("hearingMode: on must be true or false")
@@ -117,7 +122,12 @@ func (d *daemon) hearingWrite(args map[string]interface{}) (*hearingResult, erro
 			mg = o
 		}
 	}
-	return d.hearingSend(hearing.WriteFrame(ear, gains, mg), &mg)
+	mg, clamped := hearing.ClampMaster(mg)
+	res, err := d.hearingSend(hearing.WriteFrame(ear, gains, mg), &mg)
+	if res != nil {
+		res.MasterClamped = clamped
+	}
+	return res, err
 }
 
 // hearingSend sends one raw frame under txMu, waits for an echo of its opcode

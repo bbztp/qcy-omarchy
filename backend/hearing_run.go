@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +11,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -20,21 +20,24 @@ import (
 	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore"
 )
 
-// `qcyctl hearing run` (phase 2): the real test. Everything that touches the
-// outside world sits behind hearingEnv so the tests drive it with fakes.
+// `qcyctl hearing run`: the real test. Everything that touches the outside
+// world sits behind hearingEnv so the tests drive it with fakes.
 //
 // Guarantees, whatever happens after the first side effect (error, abort key,
-// SIGINT/SIGTERM): the tone is stopped, the test mode is switched off, the
-// sink volume and mute are put back and the players this run paused are
-// resumed. Nothing is written to the earbuds without --apply --yes.
-
-const hearingRestoreCmd = "qcyctl library apply backup-antes-do-teste-auditivo --yes"
+// SIGINT/SIGTERM/SIGHUP, a panic in a helper goroutine): the tone is stopped,
+// the test mode (when it was switched on) is switched off, the sink volume and
+// mute are put back and the players this run paused are resumed.
+//
+// Nothing is written to the earbuds without --apply --yes. The device test
+// mode (frame 0x45) is NOT verified on hardware; it is only sent with
+// --device-mode or --apply --yes.
 
 // ---------- seams ----------
 
 // hearingLink is the daemon side: only the daemon speaks the hearing commands.
 type hearingLink interface {
 	status() (map[string]interface{}, error)
+	// hearingMode sends 0x45 (with confirm:true).
 	hearingMode(on bool) (*hearingCall, error)
 	hearingWrite(ear hearing.Ear, gains, other [hearing.Bands]int) (*hearingCall, error)
 	eqRead() (*qcycore.EqSnapshot, error)
@@ -45,11 +48,12 @@ type hearingLink interface {
 }
 
 type hearingCall struct {
-	Sent       string   `json:"sent"`
-	Ack        bool     `json:"ack"`
-	AckPayload string   `json:"ackPayload,omitempty"`
-	MasterGain *float64 `json:"masterGain,omitempty"`
-	Readback   *struct {
+	Sent          string   `json:"sent"`
+	Ack           bool     `json:"ack"`
+	AckPayload    string   `json:"ackPayload,omitempty"`
+	MasterGain    *float64 `json:"masterGain,omitempty"`
+	MasterClamped bool     `json:"masterClamped,omitempty"`
+	Readback      *struct {
 		Slot       int     `json:"slot"`
 		Effect     string  `json:"effect,omitempty"`
 		MasterGain float64 `json:"masterGain"`
@@ -59,6 +63,7 @@ type hearingCall struct {
 }
 
 // tonePlayer plays one continuous tone until the returned stop is called.
+// stop must return in bounded time.
 type tonePlayer interface {
 	Start(sink string, ear hearing.Ear, freq int, levelDB float64) (stop func() error, err error)
 }
@@ -76,7 +81,11 @@ type hearingEnv struct {
 	sigs      <-chan os.Signal
 	cachedMAC func() string
 	now       func() time.Time
+	sleep     func(time.Duration)
 	configDir func() (string, error)
+	// saveCurve stores the active curve in the library under name and returns
+	// its id (the equivalent of `library import-device <name>`).
+	saveCurve func(name string, snap *qcycore.EqSnapshot) (string, error)
 	pingEvery time.Duration
 }
 
@@ -85,66 +94,144 @@ type hearingRunOpts struct {
 	sinkVolume int
 	sinkName   string
 	apply, yes bool
+	// deviceMode sends the (unverified) 0x45 test-mode frame even without
+	// --apply --yes.
+	deviceMode bool
 	outFile    string
 }
 
 // ---------- parsing ----------
 
-// parseBluezSinks returns the Bluetooth sink names from `pactl list short sinks`.
-func parseBluezSinks(listing string) []string {
-	var out []string
+type sinkInfo struct {
+	Index string
+	Name  string
+}
+
+// parseSinks parses `pactl list short sinks`.
+func parseSinks(listing string) []sinkInfo {
+	var out []sinkInfo
 	for _, ln := range strings.Split(listing, "\n") {
-		f := strings.Fields(ln)
-		if len(f) >= 2 && (strings.HasPrefix(f[1], "bluez_output.") || strings.HasPrefix(f[1], "bluez_sink.")) {
-			out = append(out, f[1])
+		if f := strings.Fields(ln); len(f) >= 2 {
+			out = append(out, sinkInfo{Index: f[0], Name: f[1]})
 		}
 	}
 	return out
 }
 
-// pickSink chooses the earbuds' sink: an explicit name, else the one whose
-// name carries the cached MAC (":" -> "_"), else the only Bluetooth sink.
-// warn is non-empty when the choice was not confirmed by the MAC.
-func pickSink(sinks []string, explicit, mac string) (sink, warn string, err error) {
+// parseBluezSinks returns the Bluetooth sink names from `pactl list short sinks`.
+func parseBluezSinks(listing string) []string {
+	var out []string
+	for _, s := range parseSinks(listing) {
+		if strings.HasPrefix(s.Name, "bluez_output.") || strings.HasPrefix(s.Name, "bluez_sink.") {
+			out = append(out, s.Name)
+		}
+	}
+	return out
+}
+
+func normMAC(s string) string {
+	return strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(s), ":", "_"), "-", "_"))
+}
+
+// pickSink chooses the earbuds' sink: an explicit name, or the one whose name
+// carries the cached MAC. There is no "only sink" fallback: guessing could play
+// the test on somebody else's headphones.
+func pickSink(sinks []string, explicit, mac string) (string, error) {
 	if explicit != "" {
 		for _, s := range sinks {
 			if s == explicit {
-				return s, "", nil
+				return s, nil
 			}
 		}
-		return "", "", fmt.Errorf("sink %q is not a Bluetooth sink (found: %s)", explicit, strings.Join(sinks, ", "))
+		return "", fmt.Errorf("sink %q is not a Bluetooth sink (found: %s)", explicit, strings.Join(sinks, ", "))
 	}
 	if len(sinks) == 0 {
-		return "", "", errors.New("no Bluetooth sink found (pactl list short sinks): connect the earbuds' audio first")
+		return "", errors.New("no Bluetooth sink found (pactl list short sinks): connect the earbuds' audio first")
 	}
-	if mac = strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(mac), ":", "_")); mac != "" {
+	if m := normMAC(mac); m != "" {
 		for _, s := range sinks {
-			if strings.Contains(strings.ToUpper(s), mac) {
-				return s, "", nil
+			if strings.Contains(strings.ToUpper(s), m) {
+				return s, nil
 			}
 		}
 	}
-	if len(sinks) == 1 {
-		return sinks[0], fmt.Sprintf("the sink was not matched by the earbuds' MAC (%q); it is the only Bluetooth sink, so it is assumed to be them (use --sink to force another)", mac), nil
-	}
-	return "", "", fmt.Errorf("several Bluetooth sinks and none matches the earbuds' MAC %q: %s (choose with --sink)", mac, strings.Join(sinks, ", "))
+	return "", fmt.Errorf("no Bluetooth sink matches the earbuds' cached MAC %q (sinks: %s): choose one with --sink (the cached address is the BLE one and may differ from the audio address)", mac, strings.Join(sinks, ", "))
 }
 
+var propRe = regexp.MustCompile(`^\s*([A-Za-z0-9_.\-]+)\s*=\s*"(.*)"\s*$`)
+
+// parseSinkProps returns the Name/properties block of `pactl list sinks` for
+// the sink called name, or nil.
+func parseSinkProps(long, name string) map[string]string {
+	for _, blk := range strings.Split(long, "Sink #") {
+		props := map[string]string{}
+		found := false
+		for _, ln := range strings.Split(blk, "\n") {
+			t := strings.TrimSpace(ln)
+			if strings.HasPrefix(t, "Name: ") {
+				found = strings.TrimPrefix(t, "Name: ") == name
+				continue
+			}
+			if strings.HasPrefix(t, "Description: ") {
+				props["Description"] = strings.TrimPrefix(t, "Description: ")
+			}
+			if m := propRe.FindStringSubmatch(ln); m != nil {
+				props[m[1]] = m[2]
+			}
+		}
+		if found {
+			return props
+		}
+	}
+	return nil
+}
+
+// activeStreamsOn lists the uncorked sink inputs playing into sink index idx
+// (`pactl list sink-inputs`).
+func activeStreamsOn(long, idx string) []string {
+	var out []string
+	for _, blk := range strings.Split(long, "Sink Input #")[1:] {
+		id, _, _ := strings.Cut(blk, "\n")
+		sink, corked, app := "", "", ""
+		for _, ln := range strings.Split(blk, "\n") {
+			t := strings.TrimSpace(ln)
+			switch {
+			case strings.HasPrefix(t, "Sink: "):
+				sink = strings.TrimPrefix(t, "Sink: ")
+			case strings.HasPrefix(t, "Corked: "):
+				corked = strings.TrimPrefix(t, "Corked: ")
+			case strings.HasPrefix(t, "application.name = "):
+				app = strings.Trim(strings.TrimPrefix(t, "application.name = "), `"`)
+			}
+		}
+		if sink == idx && corked != "yes" {
+			out = append(out, strings.TrimSpace("#"+strings.TrimSpace(id)+" "+app))
+		}
+	}
+	return out
+}
+
+var rawVolRe = regexp.MustCompile(`(\d+)\s*/\s*\d+%`)
 var pctRe = regexp.MustCompile(`(\d+)%`)
 
-// parseSinkVolume reads the per-channel percentages of `pactl get-sink-volume`.
-func parseSinkVolume(s string) ([]int, error) {
+// parseSinkVolume reads the per-channel RAW values of `pactl get-sink-volume`
+// (65536 = 100%), the most precise thing it prints; percentages are the
+// fallback when the raw column is absent.
+func parseSinkVolume(s string) (vals []string, err error) {
 	for _, ln := range strings.Split(s, "\n") {
 		if !strings.HasPrefix(strings.TrimSpace(ln), "Volume:") {
 			continue
 		}
-		var v []int
-		for _, m := range pctRe.FindAllStringSubmatch(ln, -1) {
-			n, _ := strconv.Atoi(m[1])
-			v = append(v, n)
+		for _, m := range rawVolRe.FindAllStringSubmatch(ln, -1) {
+			vals = append(vals, m[1])
 		}
-		if len(v) > 0 {
-			return v, nil
+		if len(vals) == 0 {
+			for _, m := range pctRe.FindAllStringSubmatch(ln, -1) {
+				vals = append(vals, m[1]+"%")
+			}
+		}
+		if len(vals) > 0 {
+			return vals, nil
 		}
 	}
 	return nil, fmt.Errorf("cannot read the sink volume from %q", strings.TrimSpace(s))
@@ -164,12 +251,70 @@ func parseMute(s string) (bool, error) {
 	return false, fmt.Errorf("cannot read the sink mute from %q", strings.TrimSpace(s))
 }
 
-func pctArgs(v []int) []string {
-	out := make([]string, len(v))
-	for i, n := range v {
-		out[i] = strconv.Itoa(n) + "%"
+// ---------- MPRIS ----------
+
+type mprisCtl struct {
+	list   func() ([]string, error)
+	status func(p string) (string, error)
+	pause  func(p string) error
+	play   func(p string) error
+}
+
+const (
+	mprisPath  = "/org/mpris/MediaPlayer2"
+	mprisIface = "org.mpris.MediaPlayer2.Player"
+)
+
+// mprisFor picks playerctl, else busctl --user; neither -> error (the test
+// cannot know that nothing is playing).
+func mprisFor(env hearingEnv) (*mprisCtl, error) {
+	switch {
+	case env.have("playerctl"):
+		return &mprisCtl{
+			list: func() ([]string, error) {
+				o, err := env.exec("playerctl", "-l")
+				if err != nil && strings.TrimSpace(o) == "" && !strings.Contains(err.Error(), "exit status 1") {
+					return nil, err
+				}
+				return strings.Fields(o), nil // exit 1 = no players
+			},
+			status: func(p string) (string, error) {
+				o, err := env.exec("playerctl", "--player="+p, "status")
+				return strings.TrimSpace(o), err
+			},
+			pause: func(p string) error { _, err := env.exec("playerctl", "--player="+p, "pause"); return err },
+			play:  func(p string) error { _, err := env.exec("playerctl", "--player="+p, "play"); return err },
+		}, nil
+	case env.have("busctl"):
+		return &mprisCtl{
+			list: func() ([]string, error) {
+				o, err := env.exec("busctl", "--user", "list", "--no-legend")
+				if err != nil {
+					return nil, err
+				}
+				var out []string
+				for _, ln := range strings.Split(o, "\n") {
+					if f := strings.Fields(ln); len(f) > 0 && strings.HasPrefix(f[0], "org.mpris.MediaPlayer2.") {
+						out = append(out, f[0])
+					}
+				}
+				return out, nil
+			},
+			status: func(p string) (string, error) {
+				o, err := env.exec("busctl", "--user", "get-property", p, mprisPath, mprisIface, "PlaybackStatus")
+				return strings.Trim(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(o), "s")), `"`), err
+			},
+			pause: func(p string) error {
+				_, err := env.exec("busctl", "--user", "call", p, mprisPath, mprisIface, "Pause")
+				return err
+			},
+			play: func(p string) error {
+				_, err := env.exec("busctl", "--user", "call", p, mprisPath, mprisIface, "Play")
+				return err
+			},
+		}, nil
 	}
-	return out
+	return nil, errors.New("neither playerctl nor busctl found: cannot make sure the music is paused, so the test will not raise the volume")
 }
 
 // ---------- the run ----------
@@ -185,6 +330,7 @@ type hearingRunOut struct {
 	Timestamp  string              `json:"timestamp"`
 	Sink       string              `json:"sink"`
 	SinkVolume int                 `json:"sinkVolume"`
+	DeviceMode bool                `json:"deviceMode"`
 	SoundDB    []float64           `json:"soundDb"`
 	Answers    []heardRec          `json:"answers"`
 	Left       []int               `json:"left"`
@@ -192,13 +338,63 @@ type hearingRunOut struct {
 	Result     resultOut           `json:"result"`
 	Applied    bool                `json:"applied"`
 	Backup     string              `json:"backup,omitempty"`
+	Restore    string              `json:"restore,omitempty"`
 	Writes     []*hearingCall      `json:"writes,omitempty"`
 	Final      *qcycore.EqSnapshot `json:"finalEq,omitempty"`
+}
+
+type hearingBackup struct {
+	Timestamp string                 `json:"timestamp"`
+	Status    map[string]interface{} `json:"status"`
+	Eq        *qcycore.EqSnapshot    `json:"eq"`
+	Library   string                 `json:"libraryId"`
+	Restore   string                 `json:"restore"`
 }
 
 // hearingRunLive runs the whole test. Cleanup runs on every return path.
 func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	out := env.out
+	if env.sleep == nil {
+		env.sleep = time.Sleep
+	}
+	warnf := func(f string, a ...interface{}) { fmt.Fprintf(out, "warning: "+f+"\n", a...) }
+
+	// One permanent watcher turns any signal into an abort that every phase
+	// observes (checkAbort, waitKey).
+	var (
+		abortOnce sync.Once
+		abortMu   sync.Mutex
+		abortErr  error
+		abortCh   = make(chan struct{})
+		watchDone = make(chan struct{})
+	)
+	abort := func(e error) {
+		abortOnce.Do(func() {
+			abortMu.Lock()
+			abortErr = e
+			abortMu.Unlock()
+			close(abortCh)
+		})
+	}
+	checkAbort := func() error {
+		select {
+		case <-abortCh:
+			abortMu.Lock()
+			defer abortMu.Unlock()
+			return abortErr
+		default:
+			return nil
+		}
+	}
+	go func() {
+		select {
+		case <-env.sigs:
+			abort(errInterrupted)
+		case <-watchDone:
+		}
+	}()
+	defer close(watchDone)
+
 	link, err := env.link()
 	if err != nil {
 		return fmt.Errorf("hearing run needs the qcyctld daemon: %w", err)
@@ -213,20 +409,48 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	if m, _ := st["model"].(map[string]interface{}); m == nil || m["verified"] != true {
 		return errors.New("hearing run is only for a verified model (this earbud is not)")
 	}
+	var eqBefore *qcycore.EqSnapshot
+	if o.apply && o.yes {
+		// The active curve, raw, before anything (test mode included) can
+		// change it: it is what the backup and the library entry hold.
+		if eqBefore, err = link.eqRead(); err != nil {
+			return fmt.Errorf("backup: cannot read the active EQ, nothing was done: %w", err)
+		}
+	}
 	if !env.have("pactl") || !env.have("pw-cat") {
 		return errors.New("hearing run needs pactl and pw-cat (PipeWire) in PATH")
+	}
+	mp, err := mprisFor(env)
+	if err != nil {
+		return err
 	}
 	listing, err := env.exec("pactl", "list", "short", "sinks")
 	if err != nil {
 		return fmt.Errorf("pactl list short sinks: %w", err)
 	}
-	sink, warn, err := pickSink(parseBluezSinks(listing), o.sinkName, env.cachedMAC())
+	sink, err := pickSink(parseBluezSinks(listing), o.sinkName, env.cachedMAC())
 	if err != nil {
 		return err
 	}
-	if warn != "" {
-		fmt.Fprintln(out, "warning:", warn)
+	sinkIdx := ""
+	for _, s := range parseSinks(listing) {
+		if s.Name == sink {
+			sinkIdx = s.Index
+		}
 	}
+	long, err := env.exec("pactl", "list", "sinks")
+	if err != nil {
+		return fmt.Errorf("pactl list sinks: %w", err)
+	}
+	props := parseSinkProps(long, sink)
+	addr := props["api.bluez5.address"]
+	if addr == "" {
+		return fmt.Errorf("sink %s is not identified as a Bluetooth device (no api.bluez5.address in pactl list sinks)", sink)
+	}
+	if o.sinkName == "" && normMAC(addr) != normMAC(env.cachedMAC()) {
+		return fmt.Errorf("sink %s reports address %s, not the earbuds' %s", sink, addr, env.cachedMAC())
+	}
+	fmt.Fprintf(out, "sink: %s  (%s, address %s)  volume %d%%\n", sink, props["Description"], addr, o.sinkVolume)
 	volOut, err := env.exec("pactl", "get-sink-volume", sink)
 	if err != nil {
 		return fmt.Errorf("pactl get-sink-volume: %w", err)
@@ -243,6 +467,9 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	if err != nil {
 		return err
 	}
+	if e := checkAbort(); e != nil {
+		return e
+	}
 	keys, restoreTTY, err := env.keys()
 	if err != nil {
 		return err
@@ -256,7 +483,6 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			undo[i]()
 		}
 	}()
-	warnf := func(f string, a ...interface{}) { fmt.Fprintf(out, "warning: "+f+"\n", a...) }
 
 	var stopTone func() error
 	endTone := func() {
@@ -269,36 +495,59 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	}
 	undo = append(undo, endTone)
 
-	// Music: pause only what is Playing, resume only that.
+	// Music: pause what is Playing (resume only that), confirm it is paused,
+	// then refuse to go on while any stream still plays into the sink.
 	var paused []string
 	undo = append(undo, func() {
 		for _, p := range paused {
-			if _, e := env.exec("playerctl", "--player="+p, "play"); e != nil {
+			if e := mp.play(p); e != nil {
 				warnf("could not resume %s: %v", p, e)
 			}
 		}
 	})
-	if env.have("playerctl") {
-		names, e := env.exec("playerctl", "-l")
+	players, err := mp.list()
+	if err != nil {
+		return fmt.Errorf("listing media players: %w", err)
+	}
+	for _, p := range players {
+		s, e := mp.status(p)
 		if e != nil {
-			names = ""
+			return fmt.Errorf("cannot read the state of player %s: %w", p, e)
 		}
-		for _, p := range strings.Fields(names) {
-			s, e := env.exec("playerctl", "--player="+p, "status")
-			if e != nil || strings.TrimSpace(s) != "Playing" {
-				continue
+		if s != "Playing" {
+			continue
+		}
+		paused = append(paused, p) // resumed even if the pause fails half way
+		if e := mp.pause(p); e != nil {
+			return fmt.Errorf("could not pause %s: %w", p, e)
+		}
+	}
+	for _, p := range paused {
+		ok := false
+		for try := 0; try < 5 && !ok; try++ {
+			if s, e := mp.status(p); e == nil && s != "Playing" {
+				ok = true
+			} else {
+				env.sleep(100 * time.Millisecond)
 			}
-			if _, e := env.exec("playerctl", "--player="+p, "pause"); e != nil {
-				warnf("could not pause %s: %v", p, e)
-				continue
-			}
-			paused = append(paused, p)
 		}
-		if len(paused) > 0 {
-			fmt.Fprintf(out, "paused: %s (resumed at the end)\n", strings.Join(paused, ", "))
+		if !ok {
+			return fmt.Errorf("player %s is still Playing after the pause: aborted, the volume was not raised", p)
 		}
-	} else {
-		fmt.Fprintln(out, "warning: playerctl not found: pause any music manually before starting.")
+	}
+	if len(paused) > 0 {
+		fmt.Fprintf(out, "paused: %s (resumed at the end)\n", strings.Join(paused, ", "))
+	}
+	env.sleep(200 * time.Millisecond)
+	inputs, err := env.exec("pactl", "list", "sink-inputs")
+	if err != nil {
+		return fmt.Errorf("pactl list sink-inputs: %w", err)
+	}
+	if act := activeStreamsOn(inputs, sinkIdx); len(act) > 0 {
+		return fmt.Errorf("audio is still playing into %s (%s): stop it and run again; the volume was not raised", sink, strings.Join(act, ", "))
+	}
+	if e := checkAbort(); e != nil {
+		return e
 	}
 
 	// Sink volume and mute.
@@ -307,8 +556,8 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		if !volChanged {
 			return
 		}
-		if _, e := env.exec("pactl", append([]string{"set-sink-volume", sink}, pctArgs(vols)...)...); e != nil {
-			warnf("could not restore the sink volume (was %v): %v", pctArgs(vols), e)
+		if _, e := env.exec("pactl", append([]string{"set-sink-volume", sink}, vols...)...); e != nil {
+			warnf("could not restore the sink volume (was %v): %v", vols, e)
 		}
 		m := "0"
 		if muted {
@@ -326,8 +575,10 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		return fmt.Errorf("pactl set-sink-mute: %w", e)
 	}
 
-	// Test mode: always switched off again, even when switching it on failed
-	// half way (the frame may have reached the earbuds).
+	// Device test mode (0x45, NOT verified): only with --device-mode or
+	// --apply --yes. Always switched off again, even when switching it on
+	// failed half way (the frame may have reached the earbuds).
+	useMode := o.deviceMode || (o.apply && o.yes)
 	modeOn := false
 	modeOff := func() {
 		if !modeOn {
@@ -335,13 +586,17 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		}
 		modeOn = false
 		if _, e := link.hearingMode(false); e != nil {
-			warnf("could not switch the test mode off (%v); run: qcyctl hearing result ... or reconnect the earbuds", e)
+			warnf("could not switch the test mode off (%v); run: qcyctl hearing mode off --yes", e)
 		}
 	}
 	undo = append(undo, modeOff)
-	modeOn = true
-	if _, e := link.hearingMode(true); e != nil {
-		return fmt.Errorf("hearing mode on: %w", e)
+	if useMode {
+		modeOn = true
+		if _, e := link.hearingMode(true); e != nil {
+			return fmt.Errorf("hearing mode on: %w", e)
+		}
+	} else {
+		fmt.Fprintln(out, "device test mode (0x45) not sent: pass --device-mode (or --apply --yes) to enable it")
 	}
 
 	if env.pingEvery > 0 {
@@ -350,6 +605,11 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					abort(fmt.Errorf("keepalive panicked: %v", r))
+				}
+			}()
 			t := time.NewTicker(env.pingEvery)
 			defer t.Stop()
 			for {
@@ -368,6 +628,11 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	keyCh := make(chan byte, 16)
 	keyErr := make(chan error, 1)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				keyErr <- fmt.Errorf("key reader panicked: %v", r)
+			}
+		}()
 		for {
 			k, e := keys.ReadKey()
 			if e != nil {
@@ -386,8 +651,8 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 				return 0, errors.New("input closed: test aborted")
 			}
 			return 0, e
-		case <-env.sigs:
-			return 0, errInterrupted
+		case <-abortCh:
+			return 0, checkAbort()
 		}
 	}
 	drainKeys := func() {
@@ -399,18 +664,36 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			}
 		}
 	}
+	sinkAlive := func() error {
+		l, e := env.exec("pactl", "list", "short", "sinks")
+		if e != nil {
+			return fmt.Errorf("pactl list short sinks: %w", e)
+		}
+		for _, s := range parseSinks(l) {
+			if s.Name == sink {
+				return nil
+			}
+		}
+		return fmt.Errorf("sink %s disappeared (the earbuds disconnected?): aborted", sink)
+	}
 
-	fmt.Fprintf(out, "sink: %s  volume %d%%\n", sink, o.sinkVolume)
 	fmt.Fprintln(out, "keys: h/Enter = I hear it   n/space = I do not   r = repeat   q = abort")
 	sess := hearing.NewSession(o.soundDB)
 	var answers []heardRec
 	for !sess.Done() {
 		t := sess.Current()
-		bandN := t.Band + 1
-		fmt.Fprintf(out, "[%2d] %-5s ear  band %d/%d  %5d Hz  step %+d  %6.1f dBFS ... ", len(answers)+1, t.Ear, bandN, hearing.Bands, t.Freq, t.Gain, t.LevelDB)
+		fmt.Fprintf(out, "[%2d] %-5s ear  band %d/%d  %5d Hz  step %+d  %6.1f dBFS ... ", len(answers)+1, t.Ear, t.Band+1, hearing.Bands, t.Freq, t.Gain, t.LevelDB)
 		drainKeys()
 		answered := false
 		for !answered {
+			if e := checkAbort(); e != nil {
+				fmt.Fprintln(out)
+				return e
+			}
+			if e := sinkAlive(); e != nil {
+				fmt.Fprintln(out)
+				return e
+			}
 			stop, e := env.player.Start(sink, t.Ear, t.Freq, t.LevelDB)
 			if e != nil {
 				return fmt.Errorf("play tone: %w", e)
@@ -466,7 +749,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	fmt.Fprintf(out, "\nleft : %v\nright: %v\n", l, r)
 	printResultText(out, res)
 	rec := hearingRunOut{
-		Timestamp: env.now().Format(time.RFC3339), Sink: sink, SinkVolume: o.sinkVolume,
+		Timestamp: env.now().Format(time.RFC3339), Sink: sink, SinkVolume: o.sinkVolume, DeviceMode: useMode,
 		SoundDB: o.soundDB[:], Answers: answers, Left: l[:], Right: r[:], Result: res,
 	}
 	save := func() error {
@@ -478,22 +761,34 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 
 	switch {
 	case o.apply && o.yes:
+		endTone()
+		if e := checkAbort(); e != nil {
+			_ = save()
+			return e
+		}
 		cfg, e := env.configDir()
 		if e != nil {
 			return fmt.Errorf("backup: %w", e)
 		}
+		stamp := env.now().Format("20060102-150405")
+		libID, e := env.saveCurve("backup antes do teste auditivo "+stamp, eqBefore)
+		if e != nil {
+			return fmt.Errorf("backup: library entry failed, nothing was written to the earbuds: %w", e)
+		}
+		restore := "qcyctl library apply " + libID + " --yes"
 		dir := filepath.Join(cfg, "backups")
 		if e := os.MkdirAll(dir, 0o700); e != nil {
 			return fmt.Errorf("backup: %w", e)
 		}
-		bk := filepath.Join(dir, "hearing-before-"+env.now().Format("20060102-150405")+".json")
-		if e := writeJSONFile(bk, st); e != nil {
+		bk := filepath.Join(dir, "hearing-before-"+stamp+".json")
+		if e := writeJSONFile(bk, hearingBackup{Timestamp: stamp, Status: st, Eq: eqBefore, Library: libID, Restore: restore}); e != nil {
 			return fmt.Errorf("backup failed, nothing was written to the earbuds: %w", e)
 		}
-		rec.Backup = bk
-		fmt.Fprintf(out, "backup of the status before the test: %s\n", bk)
-		endTone()
+		rec.Backup, rec.Restore = bk, restore
+		fmt.Fprintf(out, "backup: %s\nlibrary entry: %s (slot %d)\n", bk, libID, eqBefore.Slot)
+
 		var li, ri [hearing.Bands]int = l, r
+		wrote := 0
 		for _, w := range []struct {
 			ear         hearing.Ear
 			gains, peer [hearing.Bands]int
@@ -501,8 +796,14 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			c, e := link.hearingWrite(w.ear, w.gains, w.peer)
 			if e != nil {
 				_ = save()
+				state := "no ear was confirmed written"
+				if wrote > 0 {
+					state = "MIXED STATE: the left ear was written and the right was not"
+				}
+				fmt.Fprintf(out, "ERROR writing the %s ear: %v\n%s; to restore the previous state: %s\n", w.ear, e, state, restore)
 				return fmt.Errorf("write %s ear: %w", w.ear, e)
 			}
+			wrote++
 			rec.Writes = append(rec.Writes, c)
 			fmt.Fprintf(out, "wrote %-5s sent %s  ack=%v", w.ear, c.Sent, c.Ack)
 			if c.Readback != nil {
@@ -520,8 +821,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			rec.Final = snap
 			fmt.Fprintf(out, "device now reports: slot %d %q masterGain %.2f dB, %d bands\n", snap.Slot, snap.Effect, snap.MasterGain, len(snap.Bands))
 		}
-		fmt.Fprintf(out, "to restore the previous state: %s\n", hearingRestoreCmd)
-		fmt.Fprintf(out, "(needs the library entry saved before the test: qcyctl library import-device \"backup antes do teste auditivo\"; the full status snapshot is %s)\n", bk)
+		fmt.Fprintf(out, "to restore the previous state: %s\n", restore)
 	case o.apply:
 		fmt.Fprintln(out, "--apply needs --yes: nothing was written to the earbuds.")
 	default:
@@ -566,7 +866,7 @@ func (l *liveHearingLink) status() (map[string]interface{}, error) {
 }
 
 func (l *liveHearingLink) hearingMode(on bool) (*hearingCall, error) {
-	return l.call("hearingMode", map[string]interface{}{"on": on})
+	return l.call("hearingMode", map[string]interface{}{"on": on, "confirm": true})
 }
 
 func (l *liveHearingLink) hearingWrite(ear hearing.Ear, gains, other [hearing.Bands]int) (*hearingCall, error) {
@@ -589,19 +889,36 @@ func (l *liveHearingLink) ping() {
 
 func (l *liveHearingLink) Close() error { return l.dc.Close() }
 
-// pwcatPlayer plays through `pw-cat --playback` fed on stdin.
-type pwcatPlayer struct{}
-
-func (pwcatPlayer) Start(sink string, ear hearing.Ear, freq int, levelDB float64) (func() error, error) {
-	if err := refuseHardware(); err != nil {
+func dialHearingLink() (hearingLink, error) {
+	dc, err := dialDaemon(2 * time.Second)
+	if err != nil {
 		return nil, err
+	}
+	return &liveHearingLink{dc: dc}, nil
+}
+
+// pwcatPlayer plays through `pw-cat --playback` fed on stdin. bin is the
+// executable (a test points it at a fake).
+type pwcatPlayer struct{ bin string }
+
+const (
+	toneWriteDeadline = 500 * time.Millisecond
+	toneStopGrace     = 600 * time.Millisecond
+)
+
+func (p pwcatPlayer) Start(sink string, ear hearing.Ear, freq int, levelDB float64) (func() error, error) {
+	bin := p.bin
+	if bin == "" {
+		bin = "pw-cat"
 	}
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		return nil, err
 	}
 	shrinkPipe(pw)
-	cmd := exec.Command("pw-cat", "--playback", "--target", sink, "--format", "s16", "--rate", "44100", "--channels", "2", "-")
+	cmd := exec.Command(bin, "--playback", "--target", sink,
+		"-P", "node.dont-fallback=true node.dont-reconnect=true",
+		"--format", "s16", "--rate", "44100", "--channels", "2", "-")
 	cmd.Stdin = pr
 	if err := cmd.Start(); err != nil {
 		pr.Close()
@@ -613,20 +930,29 @@ func (pwcatPlayer) Start(sink string, ear hearing.Ear, freq int, levelDB float64
 	ramp := hearing.RampSamples()
 	quit := make(chan struct{})
 	done := make(chan error, 1)
+	write := func(b []byte) error {
+		_ = pw.SetWriteDeadline(time.Now().Add(toneWriteDeadline))
+		_, e := pw.Write(b)
+		return e
+	}
 	go func() {
-		if _, e := pw.Write(synth.Next(ramp, hearing.FadeIn)); e != nil {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("tone writer panicked: %v", r)
+			}
+		}()
+		if e := write(synth.Next(ramp, hearing.FadeIn)); e != nil {
 			done <- e
 			return
 		}
 		for {
 			select {
 			case <-quit:
-				_, e := pw.Write(synth.Next(ramp, hearing.FadeOut))
-				done <- e
+				done <- write(synth.Next(ramp, hearing.FadeOut))
 				return
 			default:
 			}
-			if _, e := pw.Write(synth.Next(ramp, hearing.Steady)); e != nil {
+			if e := write(synth.Next(ramp, hearing.Steady)); e != nil {
 				done <- e
 				return
 			}
@@ -634,18 +960,42 @@ func (pwcatPlayer) Start(sink string, ear hearing.Ear, freq int, levelDB float64
 	}()
 	return func() error {
 		close(quit)
-		werr := <-done
+		var werr error
+		select {
+		case werr = <-done:
+		case <-time.After(toneStopGrace):
+			werr = errors.New("tone writer did not stop in time; pw-cat killed")
+			_ = cmd.Process.Kill()
+			pw.Close()
+			select {
+			case <-done:
+			case <-time.After(toneStopGrace):
+			}
+		}
 		pw.Close()
-		exited := make(chan error, 1)
-		go func() { exited <- cmd.Wait() }()
+		exited := make(chan struct{})
+		go func() { _ = cmd.Wait(); close(exited) }()
 		select {
 		case <-exited:
-		case <-time.After(2 * time.Second):
+		case <-time.After(toneStopGrace):
 			_ = cmd.Process.Kill()
-			<-exited
+			select {
+			case <-exited:
+			case <-time.After(toneStopGrace):
+			}
 		}
 		return werr
 	}, nil
+}
+
+// guardedPlayer refuses to play while hardware is disabled (tests).
+type guardedPlayer struct{ tonePlayer }
+
+func (g guardedPlayer) Start(sink string, ear hearing.Ear, freq int, level float64) (func() error, error) {
+	if err := refuseHardware(); err != nil {
+		return nil, err
+	}
+	return g.tonePlayer.Start(sink, ear, freq, level)
 }
 
 type stdinKeys struct{}
@@ -663,27 +1013,43 @@ func (stdinKeys) ReadKey() (byte, error) {
 	}
 }
 
+// hearingExecTimeout bounds every pactl/playerctl/busctl call.
+const hearingExecTimeout = 3 * time.Second
+
+func liveExec(name string, args ...string) (string, error) {
+	if err := refuseHardware(); err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), hearingExecTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	b, err := cmd.Output()
+	return string(b), err
+}
+
+func saveBackupCurve(name string, snap *qcycore.EqSnapshot) (string, error) {
+	if snap == nil {
+		return "", errors.New("no active EQ snapshot")
+	}
+	c, err := qcycore.SeedFromPayload(qcycore.SourceDeviceImport, snap.Slot, name, snap.Payload)
+	if err != nil {
+		return "", err
+	}
+	return c.ID, nil
+}
+
 func liveHearingEnv(out io.Writer) (hearingEnv, func()) {
 	sigs := make(chan os.Signal, 4)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	return hearingEnv{
-		out: out,
-		exec: func(name string, args ...string) (string, error) {
-			if err := refuseHardware(); err != nil {
-				return "", err
-			}
-			b, err := exec.Command(name, args...).Output()
-			return string(b), err
-		},
+		out:  out,
+		exec: liveExec,
 		have: func(name string) bool { _, err := exec.LookPath(name); return err == nil },
 		link: func() (hearingLink, error) {
-			dc, err := dialDaemon(2 * time.Second)
-			if err != nil {
-				return nil, err
-			}
-			return &liveHearingLink{dc: dc}, nil
+			return dialHearingLink()
 		},
-		player: pwcatPlayer{},
+		player: guardedPlayer{pwcatPlayer{bin: "pw-cat"}},
 		keys: func() (keySource, func(), error) {
 			if err := refuseHardware(); err != nil {
 				return nil, nil, err
@@ -702,7 +1068,9 @@ func liveHearingEnv(out io.Writer) (hearingEnv, func()) {
 			return ""
 		},
 		now:       time.Now,
+		sleep:     time.Sleep,
 		configDir: qcyConfigDir,
+		saveCurve: saveBackupCurve,
 		pingEvery: 3 * time.Second,
 	}, func() { signal.Stop(sigs) }
 }

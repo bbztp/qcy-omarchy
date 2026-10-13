@@ -22,10 +22,13 @@ const hearingUsage = `usage: qcyctl hearing <subcommand>
   hearing plan [--sound-db a,b,..8] [--json]                         (tones of the first step of every band)
   hearing result --left g1,..,g8 --right g1,..,g8 [--json]            (master gain, curves and the write frames as hex; nothing is sent)
   hearing run --dry-run --answers "h,n,h,..." [--sound-db ..] [--json] (simulates the staircase from answers: h = heard, n = not heard; no audio)
-  hearing run [--sink NAME] [--sink-volume 100%] [--sound-db ..] [--apply --yes] [--out file.json]
-                                                                      (the real test: pauses the music, plays the tones on the earbuds' Bluetooth sink,
-                                                                       keys h/Enter = heard, n/space = not heard, r = repeat, q = abort; the test mode,
-                                                                       the volume and the music are always restored; nothing is written without --apply --yes)`
+  hearing run [--sink NAME] [--sink-volume 100%] [--sound-db ..] [--device-mode] [--apply --yes] [--out file.json]
+                                                                      (the real test: pauses the music (playerctl or busctl; aborts if anything still plays
+                                                                       into the sink), plays the tones on the earbuds' Bluetooth sink; keys h/Enter = heard,
+                                                                       n/space = not heard, r = repeat, q = abort. The device test mode (frame 0x45, NOT
+                                                                       verified on hardware) is only sent with --device-mode or --apply --yes; the volume,
+                                                                       the music and the mode are always restored. Nothing is written without --apply --yes)
+  hearing mode on|off --yes                                           (sends the 0x45 test-mode frame, NOT verified on hardware; for recovery)`
 
 func cmdHearing(args []string) error { return hearingMain(args, os.Stdout) }
 
@@ -40,6 +43,8 @@ func hearingMain(args []string, out io.Writer) error {
 		return hearingResult(args[1:], out)
 	case "run":
 		return hearingRunCmd(args[1:], out)
+	case "mode":
+		return hearingModeCmd(args[1:], out, dialHearingLink)
 	}
 	return fmt.Errorf("hearing: unknown subcommand %q\n%s", args[0], hearingUsage)
 }
@@ -114,12 +119,16 @@ type earResult struct {
 }
 
 type resultOut struct {
-	MasterGain float64                         `json:"masterGain"`
-	Left       earResult                       `json:"left"`
-	Right      earResult                       `json:"right"`
-	Flag       map[string]string               `json:"flag"`
-	Curves     map[string][]hearing.CurvePoint `json:"curves,omitempty"`
-	Sent       bool                            `json:"sent"`
+	MasterGain float64 `json:"masterGain"`
+	// MasterClamped: the rule gave MasterRaw, outside +-12 dB, and MasterGain
+	// is that value limited.
+	MasterClamped bool                            `json:"masterClamped,omitempty"`
+	MasterRaw     float64                         `json:"masterRaw,omitempty"`
+	Left          earResult                       `json:"left"`
+	Right         earResult                       `json:"right"`
+	Flag          map[string]string               `json:"flag"`
+	Curves        map[string][]hearing.CurvePoint `json:"curves,omitempty"`
+	Sent          bool                            `json:"sent"`
 }
 
 // computeResult derives the master gain and the frames from both ears' gains.
@@ -135,10 +144,12 @@ func computeResult(left, right [hearing.Bands]float64) resultOut {
 	if r := hearing.MasterGain(right); r < mg {
 		mg = r
 	}
+	raw := mg
+	mg, clamped := hearing.ClampMaster(mg)
 	enc := func(g [hearing.Bands]float64, e hearing.Ear) earResult {
 		return earResult{Gains: g[:], Frame: hex.EncodeToString(hearing.WriteFrame(e, g, mg))}
 	}
-	return resultOut{
+	ro := resultOut{
 		MasterGain: mg,
 		Left:       enc(left, hearing.Left),
 		Right:      enc(right, hearing.Right),
@@ -148,6 +159,10 @@ func computeResult(left, right [hearing.Bands]float64) resultOut {
 		},
 		Curves: map[string][]hearing.CurvePoint{"left": decimate(hearing.Curve(left)), "right": decimate(hearing.Curve(right))},
 	}
+	if clamped {
+		ro.MasterClamped, ro.MasterRaw = true, raw
+	}
+	return ro
 }
 
 // decimate keeps the curve at the band frequencies and a coarse grid so the
@@ -203,8 +218,9 @@ func hearingRunCmd(args []string, out io.Writer) error {
 	outFile := fs.String("out", "", "")
 	sinkName := fs.String("sink", "", "")
 	sinkVol := fs.String("sink-volume", "100%", "")
+	devMode := fs.Bool("device-mode", false, "")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		return errors.New("usage: qcyctl hearing run [--dry-run --answers \"h,n,h,...\"] [--sound-db ..] [--json] [--sink NAME] [--sink-volume 100%] [--apply --yes] [--out file.json]")
+		return errors.New("usage: qcyctl hearing run [--dry-run --answers \"h,n,h,...\"] [--sound-db ..] [--json] [--sink NAME] [--sink-volume 100%] [--device-mode] [--apply --yes] [--out file.json]")
 	}
 	db, err := soundDBFlag(*sdb)
 	if err != nil {
@@ -221,7 +237,7 @@ func hearingRunCmd(args []string, out io.Writer) error {
 		env, done := liveHearingEnv(out)
 		defer done()
 		return hearingRunLive(env, hearingRunOpts{soundDB: db, sinkVolume: pct, sinkName: *sinkName,
-			apply: *apply, yes: *yes, outFile: *outFile})
+			apply: *apply, yes: *yes, deviceMode: *devMode, outFile: *outFile})
 	}
 	var seq []bool
 	for _, a := range strings.Split(*answers, ",") {
@@ -283,6 +299,9 @@ func hearingRunCmd(args []string, out io.Writer) error {
 // printResultText prints master gain, frames, flag frames and the curves.
 func printResultText(out io.Writer, res resultOut) {
 	fmt.Fprintf(out, "master gain: %.2f dB\n", res.MasterGain)
+	if res.MasterClamped {
+		fmt.Fprintf(out, "WARNING: the app's rule gave %.2f dB; limited to +-%.0f dB (the range PROTOCOL.md records as accepted).\n", res.MasterRaw, hearing.MasterLimit)
+	}
 	fmt.Fprintf(out, "left  gains: %v\nleft  frame: %s\n", res.Left.Gains, res.Left.Frame)
 	fmt.Fprintf(out, "right gains: %v\nright frame: %s\n", res.Right.Gains, res.Right.Frame)
 	fmt.Fprintf(out, "flag on:  %s\nflag off: %s\n", res.Flag["on"], res.Flag["off"])
@@ -291,4 +310,38 @@ func printResultText(out io.Writer, res resultOut) {
 		lp, rp := res.Curves["left"][i], res.Curves["right"][i]
 		fmt.Fprintf(out, "  %6.0f Hz  L %+6.2f  R %+6.2f\n", lp.Freq, lp.DB, rp.DB)
 	}
+}
+
+// hearingModeCmd: `hearing mode on|off --yes`. Frame 0x45 was read from the
+// app and is NOT verified on hardware, hence the explicit --yes.
+func hearingModeCmd(args []string, out io.Writer, dial func() (hearingLink, error)) error {
+	const usage = "usage: qcyctl hearing mode on|off --yes"
+	fs := hearingFlags("mode")
+	yes := fs.Bool("yes", false, "")
+	var word string
+	rest := args
+	if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+		word, rest = rest[0], rest[1:]
+	}
+	if err := fs.Parse(rest); err != nil || fs.NArg() != 0 || (word != "on" && word != "off") {
+		return errors.New(usage)
+	}
+	if !*yes {
+		return errors.New(usage + " (sends the 0x45 frame, not verified on hardware)")
+	}
+	link, err := dial()
+	if err != nil {
+		return fmt.Errorf("hearing mode needs the qcyctld daemon: %w", err)
+	}
+	defer link.Close()
+	c, err := link.hearingMode(word == "on")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "sent %s  ack=%v", c.Sent, c.Ack)
+	if c.Readback != nil {
+		fmt.Fprintf(out, "  device: slot %d %q masterGain %.2f dB", c.Readback.Slot, c.Readback.Effect, c.Readback.MasterGain)
+	}
+	fmt.Fprintln(out)
+	return nil
 }
