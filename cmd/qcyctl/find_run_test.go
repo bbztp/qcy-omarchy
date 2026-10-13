@@ -609,3 +609,17 @@ func TestFindNewStreamAfterStartStopsAndRestores(t *testing.T) {
 		t.Fatalf("events %v", ev)
 	}
 }
+
+func TestFindSinkAddressMayDifferByOneInLastOctet(t *testing.T) {
+	set := func(addr string) *findRig {
+		r := newFindRig(t, neverKeys())
+		r.ex.out["pactl list sinks"] = strings.Replace(r.ex.out["pactl list sinks"], "AA:BB:CC:DD:EE:FF\"\n", addr+"\"\n", 1)
+		return r
+	}
+	if err := set("AA:BB:CC:DD:EE:FE").run(findOpts{yes: true}); err != nil && strings.Contains(err.Error(), "reports address") {
+		t.Fatalf("adjacent address refused: %v", err)
+	}
+	if err := set("AA:BB:CC:DD:EE:10").run(findOpts{yes: true}); err == nil || !strings.Contains(err.Error(), "reports address") {
+		t.Fatalf("distant address accepted: %v", err)
+	}
+}

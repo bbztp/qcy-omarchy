@@ -92,7 +92,7 @@ func resolveBluezSink(env hearingEnv, explicit string) (sinkTarget, error) {
 	if addr == "" {
 		return t, fmt.Errorf("sink %s is not identified as a Bluetooth device (no api.bluez5.address in pactl list sinks)", sink)
 	}
-	if explicit == "" && normMAC(addr) != normMAC(env.cachedMAC()) {
+	if explicit == "" && normMAC(addr) != normMAC(env.cachedMAC()) && !macNear(normMAC(env.cachedMAC()), normMAC(addr)) {
 		return t, fmt.Errorf("sink %s reports address %s, not the earbuds' %s", sink, addr, env.cachedMAC())
 	}
 	t.Name, t.Desc, t.Addr = sink, props["Description"], addr
