@@ -222,6 +222,13 @@ factory slots and needs `--full-length` there, but slot 255 (the app's
 "Personalizado", where the phone app itself writes up to 143 bytes) takes it
 without the flag.
 
+## Known limitations
+
+- **Case charging.** The MeloBuds N70 (firmware 3.0.13) reports the case's battery
+  level but never sets the "charging" flag for it, so the case does not show a
+  charging state. The widget already draws one (charge tone, pulse, bolt) and
+  uses it whenever a model or firmware reports the flag.
+
 ## `qcyctl`
 
 The backend is also usable on its own:
