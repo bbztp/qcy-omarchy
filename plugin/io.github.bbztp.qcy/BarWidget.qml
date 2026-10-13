@@ -73,6 +73,7 @@ Panel {
     { key: "game", label: "Modo jogo", hint: "Menor latência" },
     { key: "sleep", label: "Modo sono", hint: "Desativa os toques; sem efeito no som" },
     { key: "wind", label: "Detecção de vento", hint: "" },
+    { key: "wear", label: "Detecção de uso", hint: "Pausa ao tirar um fone e retoma ao recolocar" },
     { key: "multipoint", label: "Multiponto", hint: "Reinicia os fones; é esperado, não é falha" }
   ]
 
@@ -491,6 +492,7 @@ Panel {
   function toggleState(key) {
     if (optimistic[key] !== undefined) return optimistic[key]
     if (key === "spatial") return !!(rep && rep.spatial && rep.spatial.enabled === true)
+    if (key === "wear") return !!(rep && rep.wear && rep.wear.enabled === true)
     return togglesReport[key] === true
   }
 
@@ -617,6 +619,10 @@ Panel {
   }
 
   function has(feature) {
+    // The fit test never answers a probe; the daemon declares it per model.
+    if (feature === "fit") {
+      return !!(unitModel && unitModel.features && unitModel.features.indexOf("fit") !== -1)
+    }
     if (unverifiedModel && !declared(feature)) return false
     if (caps) return caps[feature] === true
     if (feature === "spatial") return !!(rep && rep.spatial)
@@ -624,20 +630,49 @@ Panel {
     return true
   }
 
+  // ---- fit test ------------------------------------------------------------
+  // `fit start --json 35` plays a sound and waits (up to 35 s) for the result.
+  // Qcy.set runs it with a callback, whose watchdog (60 s) bounds the run so a
+  // long test is neither cut short nor able to hold the setter queue forever.
   property bool fitRunning: false
+  // null until a test finishes; then { ok, left, right } (grades 0..3).
+  property var fitResult: null
 
-  function startFit() {
-    fitRunning = true
-    Qcy.set("Teste de vedação", ["fit", "start"])
-    // The earbuds play a few seconds of sound while they measure the seal; the
-    // panel has no completion event to wait on, so clear the flag on a timer.
-    fitTimer.restart()
+  readonly property var fitGrades: ["ruim", "razoável", "bom", "selado"]
+
+  function fitGradeName(n) {
+    return n >= 0 && n < fitGrades.length ? fitGrades[n] : "?"
   }
 
-  Timer {
-    id: fitTimer
-    interval: 9000
-    onTriggered: root.fitRunning = false
+  function fitSummary() {
+    var r = fitResult
+    if (!r) return ""
+    if (!r.ok) return "Sem resultado — encaixe os fones e tente de novo"
+    return "Esquerdo: " + fitGradeName(r.left) + " · Direito: " + fitGradeName(r.right)
+  }
+
+  // Urgent colour and hint when a side is poor or fair, or there was no result.
+  readonly property bool fitNeedsAttention: !!fitResult
+    && (!fitResult.ok || fitResult.left < 2 || fitResult.right < 2)
+
+  function startFit() {
+    if (fitRunning) return
+    fitRunning = true
+    fitResult = null
+    Qcy.set("Teste de vedação", ["fit", "start", "--json", "35"], function (code, out, err) {
+      var res = { ok: false, left: -1, right: -1 }
+      if (code === 0) {
+        var lines = String(out || "").trim().split("\n")
+        try {
+          var j = JSON.parse(lines[lines.length - 1])
+          if (j && typeof j.left === "number" && typeof j.right === "number") {
+            res = { ok: true, left: j.left, right: j.right }
+          }
+        } catch (e) { /* no result line: reported as no result */ }
+      }
+      root.fitResult = res
+      root.fitRunning = false
+    })
   }
 
   function updatedLabel() {
@@ -791,11 +826,22 @@ Panel {
     return root.touchRowModel
   }
 
-  function promptMax() {
-    var p = rep ? rep.promptVolume : null
-    if (p && p.max) return p.max
-    return 15
-  }
+  // Prompt volume accepts only these four levels (the reported max is not one).
+  readonly property var promptVolChoices: [
+    { label: "Mais baixo", value: 4 },
+    { label: "Médio", value: 6 },
+    { label: "Mais alto", value: 8 },
+    { label: "Máximo", value: 10 }
+  ]
+
+  // Wear-sensor sensitivity; only meaningful while wear detection is on.
+  readonly property var wearSensChoices: [
+    { label: "Média", value: 1 },
+    { label: "Normal", value: 2 },
+    { label: "Alta", value: 3 }
+  ]
+  readonly property bool wearSensVisible: !!(rep && rep.wear && rep.wear.enabled === true)
+    && rep.wearSensitivity !== undefined && rep.wearSensitivity !== null
 
   function currentAutoOff() {
     if (optimistic["autoOff"] !== undefined) return String(optimistic["autoOff"])
@@ -1479,6 +1525,15 @@ Panel {
                 checked: root.toggleState("spatial")
                 onToggled: root.setToggle("spatial", "Áudio espacial", !root.toggleState("spatial"))
               }
+
+              ChoiceRow {
+                width: parent.width
+                visible: root.wearSensVisible
+                label: "Sensibilidade do sensor"
+                model: root.wearSensChoices
+                current: String(root.sliderValue("wearSensitivity", 0))
+                onPicked: function (v) { root.commitSlider("wearSensitivity", "Sensibilidade do sensor", function (n) { return ["wear-sensitivity", String(n)] }, Number(v)) }
+              }
             }
 
             // ---- Audio ----
@@ -1496,17 +1551,13 @@ Panel {
                 onReleased: function (v) { root.commitSlider("balance", "Balanço", function (n) { return ["balance", String(Math.round(n))] }, Math.round(v)) }
               }
 
-              // The device reports its prompt volume as 0..max; the slider
-              // follows that range instead of the CLI's 0-255.
-              SliderRow {
+              ChoiceRow {
                 width: parent.width
                 visible: root.has("promptVol")
                 label: "Volume dos avisos"
-                minimum: 0
-                maximum: root.promptMax()
-                step: 1
-                value: root.sliderValue("promptVolume", 6)
-                onReleased: function (v) { root.commitSlider("promptVolume", "Volume dos avisos", function (n) { return ["prompt-vol", String(Math.round(n))] }, Math.round(v)) }
+                model: root.promptVolChoices
+                current: String(root.sliderValue("promptVolume", -1))
+                onPicked: function (v) { root.commitSlider("promptVolume", "Volume dos avisos", function (n) { return ["prompt-vol", String(n)] }, Number(v)) }
               }
 
               ChoiceRow {
@@ -1542,11 +1593,23 @@ Panel {
                   anchors.verticalCenter: parent.verticalCenter
                   label: root.fitRunning ? "Tocando…" : "Iniciar"
                   active: root.fitRunning
+                  enabled: !root.fitRunning
                   onClicked: {
-                    if (Qcy.settling) return
+                    if (root.fitRunning || Qcy.settling) return
                     root.startFit()
                   }
                 }
+              }
+
+              Text {
+                width: parent.width
+                visible: root.fitRunning || root.fitResult !== null
+                wrapMode: Text.WordWrap
+                text: root.fitRunning ? "Tocando… ouça os fones"
+                  : root.fitSummary() + (root.fitNeedsAttention && root.fitResult.ok ? ". Ajuste as pontas e repita" : "")
+                color: root.fitNeedsAttention ? Color.urgent : Qt.darker(root.foreground, 1.3)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
               }
             }
 

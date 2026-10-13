@@ -110,8 +110,8 @@ func TestProfileHandlerMatchesProduct(t *testing.T) {
 	for _, f := range c.Features {
 		feats[f] = true
 	}
-	if feats[FeatureEQ] || feats[FeatureKeysRemap] {
-		t.Error("EQ/keys must not be offered on an unverified model")
+	if feats[FeatureEQ] || feats[FeatureKeysRemap] || feats[FeatureFit] {
+		t.Error("EQ/keys/fit must not be offered on an unverified model")
 	}
 	if !feats[FeatureFind] || !feats[FeatureANC] || !feats[FeatureBalance] || !feats[FeatureAutoOff] {
 		t.Errorf("features %v", c.Features)

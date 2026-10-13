@@ -162,6 +162,7 @@ const (
 	FeatureFind         FeatureFlag = "find"         // Find my earbuds
 	FeatureBatteryCase  FeatureFlag = "batteryCase"  // Case battery level
 	FeatureKeysRemap    FeatureFlag = "keysRemap"    // Touch key remapping
+	FeatureFit          FeatureFlag = "fit"          // Ear-tip fit test (N70 only)
 	FeatureEQ           FeatureFlag = "eq"           // EQ curve + master gain (read/write via eqApply, backed up)
 )
 
@@ -303,7 +304,7 @@ func (meloBudsN70Handler) Capabilities() Capabilities {
 			FeatureLDAC, FeatureMultipoint, FeatureWindNoise,
 			FeatureWearDetect, FeatureAutoOff, FeatureBalance,
 			FeaturePromptVolume, FeatureFind, FeatureBatteryCase,
-			FeatureEQ, FeatureKeysRemap,
+			FeatureEQ, FeatureKeysRemap, FeatureFit,
 		},
 		Actions: []ActionSpec{
 			{
