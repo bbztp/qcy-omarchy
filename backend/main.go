@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -256,6 +257,9 @@ func statusFromDaemon(raw map[string]interface{}) *statusReport {
 	if m, ok := raw["model"].(map[string]interface{}); ok {
 		rep.Model = m
 	}
+	if v := intOf(raw["wearSensitivity"]); v >= 1 && v <= 3 {
+		rep.WearSensitivity = &v
+	}
 	if p := bytesOf(raw["spatial"]); len(p) >= 1 {
 		rep.Spatial = &spatialReport{Enabled: p[0] == 0x01}
 	}
@@ -428,6 +432,31 @@ func (dc *daemonClient) wearSet(state byte) ([]byte, error) {
 	return bytesOf(data), nil
 }
 
+// fitResult is the outcome of the ear-tip fit test: per ear 3 sealed, 2 good,
+// 1 fair, 0 poor.
+type fitResult struct {
+	Status int `json:"status"`
+	Left   int `json:"left"`
+	Right  int `json:"right"`
+}
+
+func (dc *daemonClient) fitTest(seconds int) (fitResult, error) {
+	data, err := dc.request("fitTest", map[string]interface{}{"seconds": seconds})
+	if err != nil {
+		return fitResult{}, err
+	}
+	var r fitResult
+	if err := remarshal(data, &r); err != nil {
+		return fitResult{}, fmt.Errorf("daemon returned a malformed fit result: %w", err)
+	}
+	return r, nil
+}
+
+func (dc *daemonClient) fitStop() error {
+	_, err := dc.request("fitStop", nil)
+	return err
+}
+
 // noiseRead returns the raw 0x17 payload [mode, scene, level].
 func (dc *daemonClient) noiseRead() ([]byte, error) {
 	data, err := dc.request("noise", nil)
@@ -470,6 +499,11 @@ type daemonAPI interface {
 	wearSet(state byte) ([]byte, error)
 	// noiseRead returns the raw 0x17 payload.
 	noiseRead() ([]byte, error)
+	// fitTest starts the fit test, waits up to seconds for the final result and
+	// always sends the stop frame at the end. fitStop sends the stop frame (and
+	// cancels a running test).
+	fitTest(seconds int) (fitResult, error)
+	fitStop() error
 }
 
 // runViaDaemon tries the daemon first; on failure falls back to direct mode.
@@ -572,6 +606,8 @@ func opcodeFor(action string) (byte, error) {
 		// spatial audio. Both names are provisional until exercised.
 		"fit":     0x11,
 		"spatial": 0x2D,
+		// Wear-sensor sensitivity 1..3, from the vendor app (unconfirmed).
+		"wearSensitivity": 0x48,
 		// Indicator blink — how you spot a lost earbud. See the note in the
 		// daemon's opcodeMap for why this is not an audible tone.
 		"find": 0x05,
@@ -586,10 +622,10 @@ func opcodeFor(action string) (byte, error) {
 	if action == "eq" {
 		return 0, errors.New("eq cannot be written as a raw action: use `qcyctl eq set` or `qcyctl master-gain`, which back up the slot first")
 	}
-	// promptVol (0x1D) answers a query with a plausible maximum and then
-	// discards every value written to it, so a write here would report a change
-	// the earbuds never made. See PROTOCOL.md, "Prompt volume".
-	if action == "promptVol" {
+	// promptVol (0x1D): a one-byte write of an arbitrary value was ignored on
+	// this unit; the vendor app's frame is FF 04 1D 02 <v> 00 with v in
+	// 4/6/8/10, behind promptVolWritable. See PROTOCOL.md, "Prompt volume".
+	if action == "promptVol" && !promptVolWritable {
 		return 0, errors.New("prompt-vol is read-only on this device: it reports max=15 and ignores every value written")
 	}
 	opcode, ok := opcodeMap[action]
@@ -682,6 +718,29 @@ func (w *daemonClientWrapper) wearSet(state byte) ([]byte, error) {
 	return got, nil
 }
 
+func (w *daemonClientWrapper) fitTest(seconds int) (fitResult, error) {
+	defer func() { _ = w.send(0x11, fitStopParams) }()
+	w.drain()
+	if err := w.send(0x11, fitStartParams); err != nil {
+		return fitResult{}, err
+	}
+	deadline := time.Now().Add(time.Duration(seconds) * time.Second)
+	for time.Now().Before(deadline) {
+		p, err := w.wait(0x11, time.Until(deadline))
+		if err != nil {
+			break
+		}
+		if len(p) >= 3 && p[0] == 2 {
+			return fitResult{Status: 2, Left: int(p[1]), Right: int(p[2])}, nil
+		}
+	}
+	return fitResult{}, fmt.Errorf("fit: no final result within %d s", seconds)
+}
+
+func (w *daemonClientWrapper) fitStop() error {
+	return w.send(0x11, fitStopParams)
+}
+
 func (w *daemonClientWrapper) noiseRead() ([]byte, error) {
 	return w.query(0x17, 3*time.Second)
 }
@@ -756,6 +815,8 @@ func main() {
 		err = cmdToggle(cmd, args)
 	case "wear":
 		err = cmdWear(args)
+	case "wear-sensitivity":
+		err = cmdWearSensitivity(args)
 	case "find":
 		err = cmdFind(args)
 	case "prompt-vol":
@@ -793,7 +854,9 @@ func usage() {
   qcyctl <game|sleep|ldac|multipoint|wind> <on|off> [seconds]
   qcyctl wear <on|off> [seconds]
   qcyctl find [seconds]
-  qcyctl prompt-vol <0-255> [seconds]
+  qcyctl prompt-vol <4|6|8|10|low|medium|high|max> [seconds]
+  qcyctl wear-sensitivity <medium|normal|high|1|2|3> [seconds]
+  qcyctl fit <start|stop|begin> [--json] [seconds]   (start waits for the result; frames unconfirmed on hardware)
   qcyctl auto-off <minutes|never> [seconds]
   qcyctl balance <left|center|right|0-100> [seconds]
   qcyctl eq get [--json] [seconds]
@@ -1397,9 +1460,11 @@ type statusReport struct {
 	AutoOff   *autoOffReport  `json:"autoOff,omitempty"`
 	Wear      *wearReport     `json:"wear,omitempty"`
 	Balance   *int            `json:"balance,omitempty"`
-	EQ        *eqReport       `json:"eq,omitempty"`
-	Keys      *keysReport     `json:"keys,omitempty"`
-	Spatial   *spatialReport  `json:"spatial,omitempty"`
+	// WearSensitivity is 1 medium, 2 normal, 3 high; absent when unanswered.
+	WearSensitivity *int           `json:"wearSensitivity,omitempty"`
+	EQ              *eqReport      `json:"eq,omitempty"`
+	Keys            *keysReport    `json:"keys,omitempty"`
+	Spatial         *spatialReport `json:"spatial,omitempty"`
 	// Caps lists which optional commands this unit answered, so the panel can
 	// show only what the connected earbuds actually have.
 	Caps map[string]bool `json:"capabilities,omitempty"`
@@ -1945,33 +2010,171 @@ func cmdWear(args []string) error {
 	})
 }
 
-// cmdFit drives the ear-tip fit check: the earbuds play a short sound and
-// report how well they are seated. Unverified on this firmware, so it reports
-// what it sent rather than claiming a result.
+// promptVolWritable mirrors the daemon's switch: false restores the old
+// read-only behaviour of prompt-vol (the app's frame is unconfirmed on hardware).
+const promptVolWritable = true
+
+// promptVolSteps are the values the vendor server lists for the N70, with the
+// app's labels (Quieter / Medium / Louder / Maximum).
+var promptVolSteps = []struct {
+	Value byte
+	Names []string
+}{
+	{4, []string{"low"}}, {6, []string{"medium"}}, {8, []string{"high"}}, {10, []string{"max"}},
+}
+
+func parsePromptVol(s string) (byte, error) {
+	for _, st := range promptVolSteps {
+		if strconv.Itoa(int(st.Value)) == s {
+			return st.Value, nil
+		}
+		for _, n := range st.Names {
+			if strings.EqualFold(n, s) {
+				return st.Value, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("prompt-vol: invalid value %q (4|6|8|10 or low|medium|high|max)", s)
+}
+
+func parseWearSensitivity(s string) (byte, error) {
+	switch strings.ToLower(s) {
+	case "1", "medium":
+		return 1, nil
+	case "2", "normal":
+		return 2, nil
+	case "3", "high":
+		return 3, nil
+	}
+	return 0, fmt.Errorf("wear-sensitivity: invalid value %q (medium|normal|high or 1|2|3)", s)
+}
+
+// Fit test frames (FF 05 11 03 01 01 01 / FF 05 11 03 00 00 00), read from the
+// vendor app; not yet confirmed on hardware.
+var (
+	fitStartParams = []byte{1, 1, 1}
+	fitStopParams  = []byte{0, 0, 0}
+)
+
+// fitSealName names a per-ear fit grade: 3 sealed, 2 good, 1 fair, 0 poor.
+func fitSealName(n int) string {
+	switch n {
+	case 3:
+		return "selado"
+	case 2:
+		return "bom"
+	case 1:
+		return "razoável"
+	case 0:
+		return "ruim"
+	}
+	return "desconhecido"
+}
+
+// cmdFit drives the ear-tip fit check. `fit start [seconds]` runs the test and
+// waits for the result; `fit stop` sends the stop frame; `fit begin` only sends
+// the start frame, for debugging.
 func cmdFit(args []string) error {
-	if len(args) < 1 {
-		return errors.New("usage: qcyctl fit <start|stop> [seconds]")
+	const usageMsg = "usage: qcyctl fit <start|stop|begin> [--json] [seconds]"
+	jsonOut := false
+	var rest []string
+	for _, a := range args {
+		if a == "--json" {
+			jsonOut = true
+		} else {
+			rest = append(rest, a)
+		}
 	}
-	action := args[0]
-	rest := args[1:]
-	if action != "start" && action != "stop" {
-		return fmt.Errorf("fit: expected start|stop, got %q", action)
+	if len(rest) < 1 {
+		return errors.New(usageMsg)
 	}
-	scanSeconds, err := parseSeconds(rest, 30)
+	action := rest[0]
+	if action != "start" && action != "stop" && action != "begin" {
+		return fmt.Errorf("fit: expected start|stop|begin, got %q", action)
+	}
+	scanSeconds, err := parseSeconds(rest[1:], 30)
 	if err != nil {
 		return err
 	}
-	// The device distinguishes start (1,1) from stop (2,2) across both bytes.
-	first := byte(1)
-	if action == "stop" {
-		first = 2
+	switch action {
+	case "stop":
+		return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+			if err := dc.fitStop(); err != nil {
+				return err
+			}
+			fmt.Println("fit: stop sent")
+			return nil
+		})
+	case "begin":
+		return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+			if err := dc.setAction("fit", fitStartParams); err != nil {
+				return err
+			}
+			fmt.Println("fit: start sent (no wait; use `fit stop` to end)")
+			return nil
+		})
 	}
-	payload := []byte{first, first}
 	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
-		if err := dc.setAction("fit", payload); err != nil {
+		// Ctrl-C: have the daemon cancel the test, which sends the stop frame.
+		// A second connection, because this one is blocked on the result.
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(sig)
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			select {
+			case <-sig:
+				if c2, err := dialDaemon(500 * time.Millisecond); err == nil {
+					_ = c2.fitStop()
+					c2.Close()
+				} else {
+					_ = dc.fitStop()
+				}
+			case <-done:
+			}
+		}()
+		fmt.Fprintln(os.Stderr, "fit: aguardando o resultado (os fones tocam um som)...")
+		r, err := dc.fitTest(scanSeconds)
+		if err != nil {
 			return err
 		}
-		fmt.Printf("fit: %s sent (the earbuds play a sound and report the seal)\n", action)
+		return printFitResult(os.Stdout, r, jsonOut)
+	})
+}
+
+func printFitResult(w io.Writer, r fitResult, jsonOut bool) error {
+	if jsonOut {
+		b, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(w, string(b))
+		return nil
+	}
+	fmt.Fprintf(w, "esquerdo: %s (%d)\n", fitSealName(r.Left), r.Left)
+	fmt.Fprintf(w, "direito: %s (%d)\n", fitSealName(r.Right), r.Right)
+	return nil
+}
+
+func cmdWearSensitivity(args []string) error {
+	if len(args) < 1 {
+		return errors.New("usage: qcyctl wear-sensitivity <medium|normal|high|1|2|3> [seconds]")
+	}
+	v, err := parseWearSensitivity(args[0])
+	if err != nil {
+		return err
+	}
+	scanSeconds, err := parseSeconds(args[1:], 30)
+	if err != nil {
+		return err
+	}
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		got, err := dc.setActionExpect("wearSensitivity", []byte{v}, []byte{v})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("wear-sensitivity=%d confirmed (%x)\n", v, got)
 		return nil
 	})
 }
@@ -2031,20 +2234,22 @@ func cmdFind(args []string) error {
 
 func cmdPromptVol(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: qcyctl prompt-vol <0-15> [seconds]")
+		return errors.New("usage: qcyctl prompt-vol <4|6|8|10|low|medium|high|max> [seconds]")
 	}
-	n, err := strconv.Atoi(args[0])
-	// 0x1D carries one byte but the device reports max=15, so 0-255 was a
-	// range the hardware could never represent.
-	if err != nil || n < 0 || n > 15 {
-		return fmt.Errorf("prompt-vol: invalid value %q (0-15, the maximum this device reports)", args[0])
+	if !promptVolWritable {
+		return errors.New("prompt-vol is read-only on this device: it reports max=15 and ignores every value written")
+	}
+	v, err := parsePromptVol(args[0])
+	if err != nil {
+		return err
 	}
 	scanSeconds, err := parseSeconds(args[1:], 30)
 	if err != nil {
 		return err
 	}
 	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
-		got, err := dc.setActionExpect("promptVol", []byte{byte(n)}, []byte{byte(n)})
+		// Two parameter bytes, the second 0, as the vendor app writes it.
+		got, err := dc.setActionExpect("promptVol", []byte{v, 0}, []byte{v})
 		if err != nil {
 			return err
 		}

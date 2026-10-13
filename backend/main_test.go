@@ -256,3 +256,54 @@ func TestDirectEqApplyUnconfirmedReportsWrittenAndBackup(t *testing.T) {
 		t.Fatalf("backup %q: %v / %v", ee.Backup, serr, err)
 	}
 }
+
+func TestParsePromptVol(t *testing.T) {
+	ok := map[string]byte{"4": 4, "6": 6, "8": 8, "10": 10, "low": 4, "Medium": 6, "high": 8, "max": 10}
+	for in, want := range ok {
+		if got, err := parsePromptVol(in); err != nil || got != want {
+			t.Errorf("%q: %d %v", in, got, err)
+		}
+	}
+	for _, in := range []string{"0", "5", "15", "loud", ""} {
+		if _, err := parsePromptVol(in); err == nil {
+			t.Errorf("%q accepted", in)
+		}
+	}
+}
+
+func TestParseWearSensitivity(t *testing.T) {
+	for in, want := range map[string]byte{"1": 1, "2": 2, "3": 3, "medium": 1, "normal": 2, "HIGH": 3} {
+		if got, err := parseWearSensitivity(in); err != nil || got != want {
+			t.Errorf("%q: %d %v", in, got, err)
+		}
+	}
+	for _, in := range []string{"0", "4", "low"} {
+		if _, err := parseWearSensitivity(in); err == nil {
+			t.Errorf("%q accepted", in)
+		}
+	}
+}
+
+func TestPrintFitResult(t *testing.T) {
+	var b strings.Builder
+	if err := printFitResult(&b, fitResult{Status: 2, Left: 3, Right: 1}, false); err != nil {
+		t.Fatal(err)
+	}
+	if b.String() != "esquerdo: selado (3)\ndireito: razoável (1)\n" {
+		t.Fatalf("%q", b.String())
+	}
+	b.Reset()
+	_ = printFitResult(&b, fitResult{Status: 2, Left: 0, Right: 2}, true)
+	if strings.TrimSpace(b.String()) != `{"status":2,"left":0,"right":2}` {
+		t.Fatalf("%q", b.String())
+	}
+}
+
+func TestStatusFromDaemonWearSensitivity(t *testing.T) {
+	if r := statusFromDaemon(map[string]interface{}{"wearSensitivity": float64(2)}); r.WearSensitivity == nil || *r.WearSensitivity != 2 {
+		t.Fatalf("%v", r.WearSensitivity)
+	}
+	if r := statusFromDaemon(map[string]interface{}{}); r.WearSensitivity != nil {
+		t.Fatal("must be absent when unanswered")
+	}
+}

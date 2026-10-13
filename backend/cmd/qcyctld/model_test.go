@@ -189,10 +189,15 @@ func TestDaemonUsesVendorIDAndKeepsProfileReadOnly(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not declared") {
 		t.Errorf("wind (daemon id): %v", err)
 	}
-	// promptVol is undeclared but must reach the read-only guard, with its reason.
-	_, err = d.handleRequest(request{Cmd: "set", Args: map[string]interface{}{"action": "promptVol"}})
-	if err == nil || !strings.Contains(err.Error(), "read-only") {
-		t.Errorf("promptVol: %v", err)
+	// promptVol and wearSensitivity are N70-only: a profile does not declare them.
+	for _, a := range []string{"promptVol", "wearSensitivity"} {
+		_, err = d.handleRequest(request{Cmd: "set", Args: map[string]interface{}{"action": a, "params": []interface{}{float64(6)}}})
+		if err == nil || !strings.Contains(err.Error(), "not declared") {
+			t.Errorf("%s: %v", a, err)
+		}
+	}
+	if _, err = d.handleRequest(request{Cmd: "fitTest"}); err == nil || !strings.Contains(err.Error(), "not a verified model") {
+		t.Errorf("fitTest: %v", err)
 	}
 	_, err = d.handleRequest(request{Cmd: "set", Args: map[string]interface{}{"action": "ldac"}})
 	if err == nil || !strings.Contains(err.Error(), "ldac is disabled") {
@@ -211,8 +216,8 @@ func TestDaemonUsesVendorIDAndKeepsProfileReadOnly(t *testing.T) {
 	if _, ro := readOnlyCmds["ldac"]; !ro {
 		t.Error("ldac must stay in readOnlyCmds")
 	}
-	if _, ro := readOnlyCmds["promptVol"]; !ro {
-		t.Error("promptVol must stay in readOnlyCmds")
+	if _, ro := readOnlyCmds["promptVol"]; ro == promptVolWritable {
+		t.Errorf("promptVol read-only=%v with promptVolWritable=%v", ro, promptVolWritable)
 	}
 }
 

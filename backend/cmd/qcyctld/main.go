@@ -61,6 +61,8 @@ type daemon struct {
 	frames     chan frame
 	connected  bool
 	deviceName string
+	// fitCancel aborts a running fit test (guarded by mu).
+	fitCancel chan struct{}
 	// vendorID is the manufacturer-data vendorId of the connected unit, when
 	// the dialer could learn it (scan or cache). It decides the model.
 	vendorID   uint16
@@ -221,7 +223,7 @@ func (GenericHandler) Capabilities() Capabilities {
 			FeatureANC, FeatureGameMode, FeatureSleepMode,
 			FeatureLDAC, FeatureMultipoint, FeatureWindNoise,
 			FeatureWearDetect, FeatureAutoOff, FeatureBalance,
-			FeaturePromptVolume, FeatureFind, FeatureBatteryCase,
+			FeatureFind, FeatureBatteryCase,
 		},
 		Actions: []ActionSpec{
 			{ID: "anc", Label: "ANC", Type: "enum", Opcode: 0x17},
@@ -233,7 +235,6 @@ func (GenericHandler) Capabilities() Capabilities {
 			{ID: "wearDetect", Label: "Wear Detection", Type: "toggle", Opcode: 0x2C},
 			{ID: "autoOff", Label: "Auto Off", Type: "slider", Opcode: 0x14},
 			{ID: "balance", Label: "Balance", Type: "slider", Opcode: 0x16},
-			{ID: "promptVolume", Label: "Prompt Volume", Type: "slider", Opcode: 0x1D},
 		},
 		BatteryChars: []string{"left", "right", "case"},
 	}
@@ -325,7 +326,8 @@ func (meloBudsN70Handler) Capabilities() Capabilities {
 			{ID: "balance", Label: "Balance", Type: "slider", Min: 0, Max: 100, Step: 1, Opcode: 0x16, ReadOpcode: 0x16},
 			// Max is the measured ceiling (0x1D reports max=15), not the byte
 			// width — the payload is one byte but the scale is 0..15.
-			{ID: "promptVolume", Label: "Prompt Volume", Type: "slider", Min: 0, Max: 15, Step: 1, Opcode: 0x1D, ReadOpcode: 0x1D},
+			{ID: "promptVolume", Label: "Prompt Volume", Type: "slider", Min: 4, Max: 10, Step: 2, Opcode: 0x1D, ReadOpcode: 0x1D},
+			{ID: "wearSensitivity", Label: "Wear Sensitivity", Type: "slider", Min: 1, Max: 3, Step: 1, Opcode: 0x48, ReadOpcode: 0x48},
 		},
 		BatteryChars: []string{"left", "right", "case"},
 		Verified:     true,
@@ -774,6 +776,10 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 		d.closeSession()
 		return nil, nil
 	}
+	// Must not queue behind the fit test it is meant to cancel.
+	if req.Cmd == "fitStop" {
+		return nil, d.fitStopRequest()
+	}
 	// The capability list is static per model: answer it from what is already
 	// known instead of grabbing the single BLE link for it.
 	if req.Cmd == "capabilities" {
@@ -900,6 +906,18 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 			return nil, err
 		}
 		return d.eqApply(op)
+	case "fitTest":
+		// Args: seconds (optional, 5..60, default 30). Holds the connection
+		// for at most that long.
+		secs := 30.0
+		if v, ok := req.Args["seconds"].(float64); ok && v >= 5 && v <= 60 {
+			secs = v
+		}
+		res, err := d.fitTest(time.Duration(secs * float64(time.Second)))
+		if err != nil {
+			return nil, err
+		}
+		return res, nil
 	case "wear":
 		// Read 0x2C, set byte 0 (state 1 = on, 2 = off), keep the remaining
 		// bytes, write, confirm. Returns the confirmed payload.
@@ -973,6 +991,15 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 	if p, err := d.query(0x2D, 800*time.Millisecond); err == nil && len(p) >= 1 {
 		rep["spatial"] = bytesJSON(p)
 	}
+	// Wear-sensor sensitivity: only asked of a verified model that answered
+	// the capability probe, so a silent unit does not slow every status.
+	if snap := d.capabilitiesSnapshot(); snap["wearSensitivity"] {
+		if h := d.knownHandler(); h != nil && h.Capabilities().Verified {
+			if p, err := d.query(0x48, 800*time.Millisecond); err == nil && len(p) >= 1 && p[0] >= 1 && p[0] <= 3 {
+				rep["wearSensitivity"] = int(p[0])
+			}
+		}
+	}
 
 	// ANC
 	if p, err := d.query(0x17, 1500*time.Millisecond); err == nil && len(p) >= 3 {
@@ -1043,6 +1070,9 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 		// them; on units that stay silent the capability is false and the UI
 		// never offers the control.
 		"spatial": 0x2D, "fit": 0x11,
+		// Wear-sensor sensitivity: [1 medium, 2 normal, 3 high]. Read from the
+		// vendor app; not yet confirmed on hardware (PROTOCOL.md).
+		"wearSensitivity": 0x48,
 		// Find my earbuds = make the indicator LED blink. An audible tone is
 		// useless here: a lost earbud is by definition not in your ear, so it
 		// could never play anything you could hear. 0x05 is Quicky's
@@ -1062,10 +1092,9 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 	if action == "ldac" {
 		return nil, errors.New("ldac is disabled: writing it reboots this N70 and, unlike multipoint, the restart is not documented behaviour")
 	}
-	// Answering a query is not the same as honouring a write. promptVol is in
-	// this list because the earbuds report a perfectly plausible maximum and
-	// then discard every value sent to it; writing it would leave the user's
-	// volume changed on screen and unchanged in the hardware.
+	// Answering a query is not the same as honouring a write: readOnlyCmds
+	// lists what must not be driven (promptVol only while promptVolWritable is
+	// false).
 	if reason, readOnly := readOnlyCmds[action]; readOnly {
 		return nil, fmt.Errorf("%s is read-only on this device: %s", action, reason)
 	}
@@ -1076,6 +1105,17 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 	opcode, ok := opcodeMap[action]
 	if !ok {
 		return nil, fmt.Errorf("unknown action: %s", action)
+	}
+	// Setters whose frame shape and value set come from the vendor app:
+	// validate and normalise before anything is written.
+	params, expect, err := prepareSetter(action, params, expect)
+	if err != nil {
+		return nil, err
+	}
+	if n70OnlyActions[action] {
+		if h := d.knownHandler(); h == nil || !h.Capabilities().Verified {
+			return nil, fmt.Errorf("%s is only available on a verified model", action)
+		}
 	}
 
 	if !d.isConnected() {
@@ -1098,6 +1138,22 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 	//     direct client's setConfirm: keep re-querying until the device reports
 	//     the wanted value, because it often emits the pre-change state first.
 	if len(expect) > 0 {
+		if settle, ok := settleBeforeQuery[action]; ok {
+			// The vendor app waits before it reads back; asking at once gets
+			// the pre-change value.
+			d.sleep(settle)
+			if err := d.send(0xFE, []byte{opcode}); err != nil {
+				return nil, err
+			}
+			got, last, ok := d.awaitMatchLast(opcode, func(p []byte) bool { return bytes.HasPrefix(p, expect) }, 3*time.Second)
+			if !ok {
+				if len(last) == 0 {
+					return nil, fmt.Errorf("%s: escrito mas o aparelho não respondeu à leitura de confirmação", action)
+				}
+				return nil, fmt.Errorf("%s: escrito mas o aparelho reportou %x (esperado %x)", action, last, expect)
+			}
+			return got, nil
+		}
 		got, err := d.awaitValue(opcode, expect, 3*time.Second)
 		if err != nil {
 			return nil, err
@@ -1106,6 +1162,120 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 	}
 	_, _ = d.wait(opcode, 250*time.Millisecond)
 	return nil, nil
+}
+
+// promptVolWritable switches the 0x1D prompt-volume write on. The earlier
+// "ignores every value" measurement used a one-byte frame and values outside
+// the list the vendor app sends; the app's frame (FF 04 1D 02 <v> 00, v in
+// 4/6/8/10) is not yet confirmed on hardware. Set false to restore the
+// read-only behaviour.
+const promptVolWritable = true
+
+// n70PromptVolumeSteps is the value list the vendor server gives the N70
+// (Quieter / Medium / Louder / Maximum). Per-model spec, constant for now.
+var n70PromptVolumeSteps = []byte{4, 6, 8, 10}
+
+// n70OnlyActions are setters whose frames were read from the app for the N70
+// and are refused on any model that is not verified.
+var n70OnlyActions = map[string]bool{"promptVol": true, "wearSensitivity": true}
+
+// settleBeforeQuery is how long a confirmed setter waits before reading back.
+var settleBeforeQuery = map[string]time.Duration{
+	"promptVol":       200 * time.Millisecond,
+	"wearSensitivity": 200 * time.Millisecond,
+}
+
+// prepareSetter validates the value of the setters with a fixed value set and
+// returns the exact frame parameters and the readback expectation. Other
+// actions pass through unchanged.
+func prepareSetter(action string, params, expect []byte) ([]byte, []byte, error) {
+	switch action {
+	case "promptVol":
+		if len(params) < 1 || len(params) > 2 || (len(params) == 2 && params[1] != 0) {
+			return nil, nil, errors.New("promptVol: expected one value (4, 6, 8 or 10)")
+		}
+		v := params[0]
+		if !bytes.Contains(n70PromptVolumeSteps, []byte{v}) {
+			return nil, nil, fmt.Errorf("promptVol: %d is not one of %v", v, n70PromptVolumeSteps)
+		}
+		// Two parameter bytes, the second 0, as the vendor app writes it.
+		return []byte{v, 0}, []byte{v}, nil
+	case "wearSensitivity":
+		if len(params) != 1 || params[0] < 1 || params[0] > 3 {
+			return nil, nil, errors.New("wearSensitivity: expected 1 (medium), 2 (normal) or 3 (high)")
+		}
+		return params, []byte{params[0]}, nil
+	}
+	return params, expect, nil
+}
+
+// fitStart / fitStop are the frames the vendor app sends for the ear-tip fit
+// test (FF 05 11 03 01 01 01 / FF 05 11 03 00 00 00). Not yet confirmed on
+// hardware.
+var (
+	fitStart = []byte{1, 1, 1}
+	fitStop  = []byte{0, 0, 0}
+)
+
+// fitSeal is the per-ear result of the fit test.
+type fitResult struct {
+	Status int `json:"status"`
+	Left   int `json:"left"`
+	Right  int `json:"right"`
+}
+
+// fitTest starts the fit test and waits for the final notification
+// (<0x11> <status 2> <left> <right>). The stop frame is always sent at the end,
+// whatever the outcome. A concurrent fitStop request cancels the wait.
+func (d *daemon) fitTest(timeout time.Duration) (fitResult, error) {
+	d.txMu.Lock()
+	defer d.txMu.Unlock()
+	cancel := make(chan struct{})
+	d.mu.Lock()
+	d.fitCancel = cancel
+	d.mu.Unlock()
+	defer func() {
+		d.mu.Lock()
+		d.fitCancel = nil
+		d.mu.Unlock()
+		_ = d.send(0x11, fitStop)
+	}()
+
+	d.drain()
+	if err := d.send(0x11, fitStart); err != nil {
+		return fitResult{}, err
+	}
+	deadline := time.After(timeout)
+	for {
+		select {
+		case f := <-d.frames:
+			if f.cmd == 0x11 && len(f.params) >= 3 && f.params[0] == 2 {
+				return fitResult{Status: 2, Left: int(f.params[1]), Right: int(f.params[2])}, nil
+			}
+		case <-cancel:
+			return fitResult{}, errors.New("fit: cancelled")
+		case <-deadline:
+			return fitResult{}, fmt.Errorf("fit: no final result within %s", timeout)
+		}
+	}
+}
+
+// fitStopRequest cancels a running fit test, or just sends the stop frame.
+func (d *daemon) fitStopRequest() error {
+	d.mu.Lock()
+	c := d.fitCancel
+	d.fitCancel = nil
+	d.mu.Unlock()
+	if c != nil {
+		close(c)
+		return nil
+	}
+	if !d.isConnected() {
+		return nil
+	}
+	d.txMu.Lock()
+	defer d.txMu.Unlock()
+	return d.send(0x11, fitStop)
 }
 
 // awaitValue re-queries an opcode until the device reports the expected payload
@@ -1414,6 +1584,7 @@ var optionalCmds = []struct {
 	{"fit", 0x11, nil},
 	{"ancLevel", 0x07, nil},
 	{"promptVol", 0x1D, sanePromptVolume},
+	{"wearSensitivity", 0x48, func(p []byte) bool { return len(p) >= 1 && p[0] >= 1 && p[0] <= 3 }},
 }
 
 // readOnlyCmds are commands that answer a query yet must not be written.
@@ -1429,12 +1600,19 @@ var optionalCmds = []struct {
 // So writability is recorded here from the measured behaviour of this hardware
 // rather than inferred, and the query is left to answer the question it can
 // actually answer: does this unit have the command at all.
-var readOnlyCmds = map[string]string{
-	// 0x1D reads back 06 0f (value 6, max 15) for every value written. See
-	// PROTOCOL.md, "Prompt volume".
-	"promptVol": "reports a sane maximum but ignores every value written",
-	// 0x23 reboots the earbuds on write and nothing documents the restart.
-	"ldac": "writing it reboots the earbuds (undocumented firmware fault)",
+var readOnlyCmds = buildReadOnlyCmds()
+
+func buildReadOnlyCmds() map[string]string {
+	m := map[string]string{
+		// 0x23 reboots the earbuds on write and nothing documents the restart.
+		"ldac": "writing it reboots the earbuds (undocumented firmware fault)",
+	}
+	if !promptVolWritable {
+		// 0x1D read back 06 0f (value 6, max 15) for every one-byte value
+		// written. The app's two-byte frame is behind promptVolWritable.
+		m["promptVol"] = "reports a sane maximum but ignores every value written"
+	}
+	return m
 }
 
 // sanePromptVolume checks the 0x1D reply shape: [value, max]. This is NOT a
@@ -1465,7 +1643,7 @@ func (d *daemon) handlerHasFeature(f FeatureFlag) bool {
 
 // n70OnlyCmds are the daemon commands whose wire behaviour was only ever
 // established on the N70: they are refused on any model that is not verified.
-var n70OnlyCmds = map[string]bool{"eqApply": true, "eqMasterGain": true, "keysSet": true}
+var n70OnlyCmds = map[string]bool{"eqApply": true, "eqMasterGain": true, "keysSet": true, "fitTest": true}
 
 // gateCommand is the single gate between a request and the model-specific
 // commands. A model that is not Verified gets none of the N70-only commands,

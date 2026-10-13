@@ -39,11 +39,12 @@ answer a game-mode query with `0x02` when it is off.
 | `0x09` | game / low latency | `[1, 1|2]` | verified |
 | `0x0C` | ANC mode | `[1, mode]` | unverified |
 | `0x10` | sleep mode | `[1, 1|2]` | verified |
-| `0x11` | fit test | `[2, 1, 1]` start / `[2, 2, 2]` stop | unverified; no query reply on this model |
+| `0x11` | fit test | write `[1, 1, 1]` start / `[0, 0, 0]` stop; notification `[status, left, right]` (status 2 = final, 0 = ready; per ear 3 sealed, 2 good, 1 fair, 0 poor); never queried | read in the app; **verified on hardware 2026-10-13**: `[1,1,1]` plays the test sound and the final notification arrived as `[2, 1, 3]` (left poor, right sealed); the old `[2,1,1]` / `[2,2,2]` frames got no reply |
 | `0x14` | timed power-off | `[4, lo, hi, 0, 0]` | verified, 4 bytes not 2 |
 | `0x16` | L/R balance | `[1, value]` | verified |
 | `0x17` | ANC setting | `[3, mode, subScene, level]` | verified |
-| `0x1D` | prompt volume | `[1, value]` | verified read-only, writes ignored, max 15 |
+| `0x1D` | prompt volume | query reply `[value, max]`; write `FF 04 1D 02 <v> 00` (two parameter bytes), v in 4/6/8/10 (Quieter / Medium / Louder / Maximum) | read in the app; **verified on hardware 2026-10-13**: `FF 04 1D 02 v 00` for v = 4, 6, 8, 10 each read back as written; one-byte writes of 0/3/9/12/15 were ignored (see [Prompt volume](#prompt-volume)) |
+| `0x48` | wear-sensor sensitivity | write `FF 03 48 01 <p>`, p 1 medium / 2 normal / 3 high; query `FF 03 FE 01 48` -> `<p>` | read in the app; **verified on hardware 2026-10-13**: 1, 2 and 3 each read back as written (value was 2). Only meaningful with wear `0x2C` on |
 | `0x1E` | music control | `[1, action]` | unverified |
 | `0x20` | EQ v1 write | — | unverified |
 | `0x22` | EQ v2 read **and** write | see [EQ](#eq) | verified read and write; every write is read-modify-write with a backup |
@@ -78,9 +79,10 @@ Every wired setter was exercised through the daemon and read back with
 | sleep `0x10` | honours the write |
 | wind `0x2A` | honours the write |
 | wear `0x2C` | honours the write |
-| prompt volume `0x1D` | **ignores the write**, always reports 6 of 15 |
+| prompt volume `0x1D` | one-byte writes of 0, 3, 9, 12, 15 **ignored**, always reported 6 of 15; the app's two-byte frame with 4/6/8/10 is untested |
 | ANC `0x17` | not exercised — rejected unless both earbuds are worn |
-| spatial `0x2D`, fit `0x11` | no query reply on this model |
+| spatial `0x2D` | no query reply on this model |
+| fit `0x11` | no query reply (the app never queries it); start `[1,1,1]` / stop `[0,0,0]` untested |
 | eq `0x22` | honours the write; only written through a read-patch-backup-write transaction (see [EQ](#eq)) |
 | ldac `0x23` | reboots the earbuds; refused |
 
@@ -402,6 +404,16 @@ the state they would actually be lost in.
 
 ## Prompt volume
 
+**Update (read in the vendor app; verified on hardware 2026-10-13).** The app
+(`ToneVolumeManagerActivity`) writes `FF 04 1D 02 <v> 00` (two parameter bytes,
+the second 0) for every model but vendorId 16737, with v from the server list
+4, 6, 8, 10; the query `FF 03 FE 01 1D` answers `<value> <max>`. The
+measurement below used a one-byte frame and values outside that list. The
+daemon and `qcyctl prompt-vol <4|6|8|10|low|medium|high|max>` now write the
+app's frame and confirm by reading back (after ~200 ms) that byte 0 equals v;
+a mismatch is reported as "escrito mas o aparelho reportou X". The constant
+`promptVolWritable` (daemon and CLI) turns this back into read-only.
+
 `0x1D` reads and writes cleanly but the device keeps reporting 6 regardless of
 what is written. The CLI's readback confirmation therefore fails loudly rather
 than reporting a success it cannot back up.
@@ -410,7 +422,7 @@ Measured on this unit: writing 0, 3, 9, 12 and 15 all read back `06 0f` —
 value 6, max 15. The write is accepted and discarded; the reply is not an echo
 of the last value sent.
 
-This is why prompt volume is listed in `readOnlyCmds` in the daemon rather than
+While `promptVolWritable` is false, prompt volume is listed in `readOnlyCmds` in the daemon rather than
 being probed. A query cannot establish writability: this device answers with a
 perfectly plausible maximum and then ignores the write, so the reply is
 indistinguishable from a working setter that happens to sit at 6. Probing by
@@ -467,7 +479,12 @@ If the scan finds nothing and no cached address answers, the daemon replies `{"o
 | `eqApply` | optional `gains` (10 ints, centi-dB), `masterGain` (int, centi-dB), `slot` (int), `bands` (array of `{index, freq, gain (dB, number), q, type}`, exclusive with `gains`), `allowProtected` (bool), `allowFull` (bool). Nothing else: unknown keys and raw payloads (`payload`, `raw`, `hex`, ...) are rejected | the `eq` object plus `previous`, `fullLength`, `backupFirst`, `backupHistory` |
 | `eqMasterGain` | `masterGain` (int, centi-dB), required; optional `allowProtected`, `allowFull` | same as `eqApply` |
 | `wear` | `state`: 1 on / 2 off | confirmed `0x2C` payload (byte array) |
+| `fitTest` | optional `seconds` (5..60, default 30) | `{status, left, right}` once the notification with status 2 arrives; the stop frame is always sent at the end; N70 only; unconfirmed on hardware |
+| `fitStop` | none | cancels a running `fitTest` (which then fails with `fit: cancelled`), otherwise sends the stop frame |
 | `noise` | none | raw `0x17` payload `[mode, scene, level]` |
+
+`set` also accepts `promptVol` (`params` `[v]`, v in 4/6/8/10; sent as `[v, 0]`) and `wearSensitivity` (`params` `[1..3]`), both N70 only and read back after ~200 ms; `status` carries `wearSensitivity` (1..3) only when the unit answers `0x48`.
+
 | `find`, `keys`, `keysSet`, `disconnect` | as before | |
 
 `eqApply`, `eqMasterGain` and `wear` read, patch and write under a single
