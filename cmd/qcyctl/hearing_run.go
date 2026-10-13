@@ -41,6 +41,9 @@ import (
 // hearingLink is the daemon side: only the daemon speaks the hearing commands.
 type hearingLink interface {
 	status() (map[string]interface{}, error)
+	// capabilities is answered from the daemon's cache (no BLE sweep): it
+	// reports whether the connected model is a verified one.
+	capabilities() (verified bool, err error)
 	// hearingMode sends 0x45 (with confirm:true).
 	hearingMode(on bool) (*hearingCall, error)
 	hearingWrite(ear hearing.Ear, gains, other [hearing.Bands]int) (*hearingCall, error)
@@ -94,9 +97,10 @@ type hearingEnv struct {
 	// its id (the equivalent of `library import-device <name>`).
 	saveCurve func(name string, snap *qcycore.EqSnapshot) (string, error)
 	pingEvery time.Duration
-	// monitor reads ~0.4 s of the sink's monitor as s16le mono 8 kHz (read
-	// only). Nil/failing = not measurable (the conservative path).
-	monitor func(sink string) ([]byte, error)
+	// monitor reads ~0.4 s of ONE stream's monitor (parec --monitor-stream) as
+	// s16le mono 8 kHz, read only. Nil/failing = not measurable (the
+	// conservative path).
+	monitor func(sink, streamID string) ([]byte, error)
 }
 
 type hearingRunOpts struct {
@@ -496,50 +500,9 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	}()
 	defer close(watchDone)
 
-	link, err := env.link()
-	if err != nil {
-		return fmt.Errorf("hearing run needs the qcyctld daemon: %w", err)
-	}
-	defer link.Close()
-
-	// 1. Read-only checks first: nothing audible or persistent has happened.
-	st, err := link.status()
-	if err != nil {
-		return fmt.Errorf("status: %w", err)
-	}
-	if m, _ := st["model"].(map[string]interface{}); m == nil || m["verified"] != true {
-		return errors.New("hearing run is only for a verified model (this earbud is not)")
-	}
-	var eqBefore *qcycore.EqSnapshot
+	// 1. Instant, local checks only (pactl/busctl answer in milliseconds; the
+	// daemon is not touched yet): nothing audible or persistent has happened.
 	var restoreCmd, backupPath string
-	if o.apply && o.yes {
-		// The active curve, raw, before anything (test mode included) can
-		// change it: it is what the backup and the library entry hold.
-		if eqBefore, err = link.eqRead(); err != nil {
-			return fmt.Errorf("backup: cannot read the active EQ, nothing was done: %w", err)
-		}
-		// Persist the backup NOW, before anything audible and before 0x45:
-		// a failure here leaves the earbuds untouched.
-		cfg, e := env.configDir()
-		if e != nil {
-			return fmt.Errorf("backup: %w", e)
-		}
-		stamp := env.now().Format("20060102-150405")
-		libID, e := env.saveCurve("backup antes do teste auditivo "+stamp, eqBefore)
-		if e != nil {
-			return fmt.Errorf("backup: library entry failed, nothing was done: %w", e)
-		}
-		restoreCmd = "qcyctl library apply " + libID + " --yes"
-		dir := filepath.Join(cfg, "backups")
-		if e := os.MkdirAll(dir, 0o700); e != nil {
-			return fmt.Errorf("backup: %w", e)
-		}
-		backupPath = filepath.Join(dir, "hearing-before-"+stamp+".json")
-		if e := writeJSONFile(backupPath, hearingBackup{Timestamp: stamp, Status: st, Eq: eqBefore, Library: libID, Restore: restoreCmd}); e != nil {
-			return fmt.Errorf("backup failed, nothing was done: %w", e)
-		}
-		fmt.Fprintf(out, "backup: %s\nlibrary entry: %s (slot %d)\nto restore the previous state: %s\n", backupPath, libID, eqBefore.Slot, restoreCmd)
-	}
 	if !env.have("pactl") || !env.have("pw-cat") {
 		return errors.New("hearing run needs pactl and pw-cat (PipeWire) in PATH")
 	}
@@ -634,6 +597,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			}
 		}
 	})
+	fmt.Fprintln(out, "pausing music…")
 	players, err := mp.list()
 	if err != nil {
 		return fmt.Errorf("listing media players: %w", err)
@@ -667,19 +631,80 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	if len(paused) > 0 {
 		fmt.Fprintf(out, "paused: %s (resumed at the end)\n", strings.Join(paused, ", "))
 	}
+	// The daemon is only needed from here on. `capabilities` is answered from
+	// the daemon's cache (no BLE sweep, unlike `status`, which takes ~8 s).
+	fmt.Fprintln(out, "checking the earbuds…")
+	link, err := env.link()
+	if err != nil {
+		return fmt.Errorf("hearing run needs the qcyctld daemon: %w", err)
+	}
+	defer link.Close()
+	verified, err := link.capabilities()
+	if err != nil {
+		return fmt.Errorf("capabilities: %w", err)
+	}
+	if !verified {
+		return errors.New("hearing run is only for a verified model (this earbud is not)")
+	}
+	// The backup (full status + raw active EQ + library entry) is slow (BLE)
+	// and only needed with --apply --yes: it runs while the audio settles and
+	// is joined before anything audible changes. A failure aborts the run
+	// with nothing changed on the earbuds.
+	var backupCh chan error
+	if o.apply && o.yes {
+		fmt.Fprintln(out, "reading the earbuds' state for the backup…")
+		backupCh = make(chan error, 1)
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					backupCh <- fmt.Errorf("backup panicked: %v", r)
+				}
+			}()
+			backupCh <- func() error {
+				st, err := link.status()
+				if err != nil {
+					return fmt.Errorf("status: %w", err)
+				}
+				snap, err := link.eqRead()
+				if err != nil {
+					return fmt.Errorf("cannot read the active EQ: %w", err)
+				}
+				cfg, err := env.configDir()
+				if err != nil {
+					return err
+				}
+				stamp := env.now().Format("20060102-150405")
+				libID, err := env.saveCurve("backup antes do teste auditivo "+stamp, snap)
+				if err != nil {
+					return fmt.Errorf("library entry failed: %w", err)
+				}
+				dir := filepath.Join(cfg, "backups")
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					return err
+				}
+				bp := filepath.Join(dir, "hearing-before-"+stamp+".json")
+				rc := "qcyctl library apply " + libID + " --yes"
+				if err := writeJSONFile(bp, hearingBackup{Timestamp: stamp, Status: st, Eq: snap, Library: libID, Restore: rc}); err != nil {
+					return err
+				}
+				backupPath, restoreCmd = bp, rc
+				return nil
+			}()
+		}()
+	}
 	// A paused player's stream lingers for a few seconds. Wait (bounded) for
 	// the sink to stop RUNNING; a leftover non-corked stream on a sink that is
 	// IDLE/SUSPENDED carries no data and does not count. Still RUNNING at the
 	// timeout -> abort, naming who holds the stream.
 	var lastState, distrust string
-	var lastActive []string
-	var lastPeakDB float64
-	peakKnown, silentRuns, usedMonitor := false, 0, false
+	var lastActive []streamInfo
+	peaks := map[string]string{} // stream id -> "peak -X dBFS" / "peak not measured"
+	silentRuns, usedMonitor := 0, false
 	haveMonitor := env.monitor != nil && env.have("parec")
-	// readSink reads the sink state and the streams on it and decides whether
-	// a monitor reading can be trusted: the monitor is post-volume and
-	// post-mute, so it only proves silence while the sink is unmuted at
-	// >= 90% and no active stream is itself muted or turned down.
+	// readSink reads the sink state and the streams on it. why is non-empty
+	// when a stream cannot be judged from its own monitor: the per-stream
+	// reading is taken AFTER that stream's volume and mute (before the
+	// sink's), so a muted or turned-down stream proves nothing.
 	readSink := func() (state string, active []streamInfo, why string, err error) {
 		so, err := env.exec("pactl", "list", "sinks")
 		if err != nil {
@@ -689,17 +714,8 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		if err != nil {
 			return "", nil, "", fmt.Errorf("pactl list sink-inputs: %w", err)
 		}
-		props := parseSinkProps(so, sink)
-		state = strings.ToUpper(strings.TrimSpace(props["State"]))
+		state = strings.ToUpper(strings.TrimSpace(parseSinkProps(so, sink)["State"]))
 		active = streamsOn(in, sinkIdx)
-		switch pct := minPct(props["Volume"]); {
-		case props["Mute"] == "yes":
-			why = "the sink is muted: raise it to 100% or stop the app, then retry"
-		case props["Mute"] == "" || pct < 0:
-			why = "the sink's mute/volume could not be read, so a silent monitor proves nothing"
-		case pct < 90:
-			why = fmt.Sprintf("the sink is at %d%%: raise it to 100%% or stop the app, then retry", pct)
-		}
 		for _, st := range active {
 			switch {
 			case why != "":
@@ -713,47 +729,64 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		}
 		return state, active, why, nil
 	}
-	// measure reads the monitor once: (peak, dBFS, ok).
-	measure := func() (int, float64, bool) {
+	// measureStream reads one stream's own monitor (pre sink volume):
+	// (peak, dBFS, ok).
+	measureStream := func(id string) (int, float64, bool) {
 		if !haveMonitor {
 			return 0, 0, false
 		}
-		b, err := env.monitor(sink)
+		b, err := env.monitor(sink, id)
 		if err != nil || len(b) < 2*800 { // < 0.1 s of data is not a reading
 			return 0, 0, false
 		}
 		p, db := peakS16(b)
 		return p, db, true
 	}
+	// allSilent measures every active stream: silent only when every one was
+	// read and is below the silence threshold. It records what it saw.
+	allSilent := func(active []streamInfo) bool {
+		silent := len(active) > 0
+		for _, st := range active {
+			p, db, ok := measureStream(st.ID)
+			switch {
+			case !ok:
+				peaks[st.ID] = "peak not measured"
+				silent = false
+			case p >= silencePeak:
+				peaks[st.ID] = fmt.Sprintf("peak %.1f dBFS", db)
+				silent = false
+			default:
+				peaks[st.ID] = fmt.Sprintf("peak %.1f dBFS", db)
+			}
+		}
+		return silent
+	}
+	var measured []string // ids of the streams of the accepted readings
 	for poll := 0; ; poll++ {
 		state, active, why, err := readSink()
 		if err != nil {
 			return err
 		}
-		lastState, distrust = state, why
-		lastActive = nil
-		for _, st := range active {
-			lastActive = append(lastActive, st.String())
-		}
+		lastState, distrust, lastActive = state, why, active
 		quiet := len(active) == 0
 		if state != "" { // the state is authoritative when pactl reports it
 			quiet = state == "IDLE" || state == "SUSPENDED"
 		}
-		if !quiet && state == "RUNNING" && why == "" {
+		if !quiet && state == "RUNNING" && why == "" && len(active) > 0 {
 			// RUNNING does not prove sound: a browser may keep a stream open
-			// sending silence. Measure the monitor.
-			if p, db, ok := measure(); ok {
-				peakKnown, lastPeakDB = true, db
-				if p < silencePeak {
-					silentRuns++
-				} else {
-					silentRuns = 0
-				}
-				if silentRuns >= 2 {
-					quiet, usedMonitor = true, true
-				}
+			// sending silence. Measure each stream (a vanished stream fails
+			// its reading: the next poll lists again).
+			if allSilent(active) {
+				silentRuns++
 			} else {
-				peakKnown, silentRuns = false, 0
+				silentRuns = 0
+			}
+			if silentRuns >= 2 {
+				quiet, usedMonitor = true, true
+				measured = measured[:0]
+				for _, st := range active {
+					measured = append(measured, st.ID)
+				}
 			}
 		} else {
 			silentRuns = 0
@@ -764,18 +797,22 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		if poll >= audioStopPolls {
 			who := "no stream listed"
 			if len(lastActive) > 0 {
-				who = strings.Join(lastActive, ", ")
-			}
-			peak := "peak not measured"
-			if peakKnown {
-				peak = fmt.Sprintf("peak %.1f dBFS", lastPeakDB)
+				var parts []string
+				for _, st := range lastActive {
+					m := peaks[st.ID]
+					if m == "" {
+						m = "peak not measured"
+					}
+					parts = append(parts, fmt.Sprintf("%s (%s)", st, m))
+				}
+				who = strings.Join(parts, ", ")
 			}
 			reason := ""
 			if distrust != "" {
 				reason = ": " + distrust
 			}
-			return fmt.Errorf("audio is still playing into %s (state %s; %s; %s) after %s%s; the volume was not raised",
-				sink, lastState, peak, who, time.Duration(audioStopPolls)*audioStopPoll, reason)
+			return fmt.Errorf("audio is still playing into %s (state %s; %s) after %s%s; the volume was not raised",
+				sink, lastState, who, time.Duration(audioStopPolls)*audioStopPoll, reason)
 		}
 		if poll == 0 {
 			fmt.Fprintln(out, "waiting for the audio to stop…")
@@ -783,25 +820,47 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		env.sleep(audioStopPoll)
 	}
 	if usedMonitor {
-		// Shrink the window: re-check the trust conditions and measure again
-		// right before raising the volume.
-		_, _, why, err := readSink()
+		// Shrink the window: list again and measure again right before
+		// raising the volume. A stream that was not in the accepted readings
+		// (or a reading that fails) is not accepted.
+		_, active, why, err := readSink()
 		if err != nil {
 			return err
 		}
 		if why != "" {
 			return fmt.Errorf("audio may be playing on %s: %s; the volume was not raised", sink, why)
 		}
-		if p, db, ok := measure(); !ok || p >= silencePeak {
-			reason := "the monitor could not be read"
-			if ok {
-				reason = fmt.Sprintf("peak %.1f dBFS", db)
+		known := map[string]bool{}
+		for _, id := range measured {
+			known[id] = true
+		}
+		for _, st := range active {
+			if !known[st.ID] {
+				return fmt.Errorf("a new stream %s appeared on %s: the volume was not raised", st, sink)
 			}
-			return fmt.Errorf("audio started again on %s (%s): the volume was not raised", sink, reason)
+		}
+		if !allSilent(active) {
+			var parts []string
+			for _, st := range active {
+				parts = append(parts, fmt.Sprintf("%s (%s)", st, peaks[st.ID]))
+			}
+			return fmt.Errorf("audio started again on %s: %s; the volume was not raised", sink, strings.Join(parts, ", "))
 		}
 	}
 	if e := checkAbort(); e != nil {
 		return e
+	}
+
+	if backupCh != nil {
+		select {
+		case e := <-backupCh:
+			if e != nil {
+				return fmt.Errorf("backup failed, nothing was changed on the earbuds: %w", e)
+			}
+		case <-abortCh:
+			return checkAbort()
+		}
+		fmt.Fprintf(out, "backup: %s\nto restore the previous state: %s\n", backupPath, restoreCmd)
 	}
 
 	// Sink volume and mute.
@@ -1228,6 +1287,21 @@ func (l *liveHearingLink) status() (map[string]interface{}, error) {
 	return l.dc.status()
 }
 
+func (l *liveHearingLink) capabilities() (bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	data, err := l.dc.request("capabilities", nil)
+	if err != nil {
+		return false, err
+	}
+	m, ok := data.(map[string]interface{})
+	if !ok {
+		return false, errors.New("daemon returned a non-object capabilities reply")
+	}
+	v, _ := m["verified"].(bool)
+	return v, nil
+}
+
 func (l *liveHearingLink) hearingMode(on bool) (*hearingCall, error) {
 	return l.call("hearingMode", map[string]interface{}{"on": on, "confirm": true})
 }
@@ -1409,14 +1483,16 @@ func liveExec(name string, args ...string) (string, error) {
 	return string(b), err
 }
 
-// liveMonitor records ~0.4 s of the sink's monitor with parec (read only).
-func liveMonitor(sink string) ([]byte, error) {
+// liveMonitor records ~0.4 s of one sink-input with parec (read only).
+// --monitor-stream taps the stream before the sink's volume and mute, so a
+// quiet sink does not hide it; the stream's own volume still applies.
+func liveMonitor(sink, streamID string) ([]byte, error) {
 	if err := refuseHardware(); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "parec", "-d", sink+".monitor", "--format=s16le", "--rate=8000", "--channels=1", "--latency-msec=50")
+	cmd := exec.CommandContext(ctx, "parec", "-d", sink+".monitor", "--monitor-stream="+streamID, "--format=s16le", "--rate=8000", "--channels=1", "--latency-msec=50")
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	var buf bytes.Buffer
 	cmd.Stdout = &buf

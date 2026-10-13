@@ -125,6 +125,8 @@ type fakeLink struct {
 	snapPayload string
 	pingPanic   bool
 	onMode      func(on bool)
+	statusCalls int
+	eqCalls     int
 	modeOffErr  error
 	ack         bool
 	noReadback  bool
@@ -137,8 +139,12 @@ func (l *fakeLink) rec(s string) {
 	l.mu.Unlock()
 }
 func (l *fakeLink) status() (map[string]interface{}, error) {
+	l.mu.Lock()
+	l.statusCalls++
+	l.mu.Unlock()
 	return map[string]interface{}{"model": map[string]interface{}{"verified": l.verified}, "eq": map[string]interface{}{"slot": 6}}, nil
 }
+func (l *fakeLink) capabilities() (bool, error) { return l.verified, nil }
 func (l *fakeLink) hearingMode(on bool) (*hearingCall, error) {
 	if on {
 		l.rec("mode:on")
@@ -199,6 +205,9 @@ func toF(g [hearing.Bands]int) [hearing.Bands]float64 {
 	return o
 }
 func (l *fakeLink) eqRead() (*qcycore.EqSnapshot, error) {
+	l.mu.Lock()
+	l.eqCalls++
+	l.mu.Unlock()
 	if l.eqErr != nil {
 		return nil, l.eqErr
 	}
@@ -479,9 +488,8 @@ func TestHearingRunBackupFailureDirAbortsBeforeAnything(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	r.untouched(t)
-	if r.ex.count(" pause") != 0 {
-		t.Fatal("music paused before the backup")
-	}
+	r.ttyOptional = true
+	r.assertRestored(t) // the music paused first is resumed
 }
 
 func TestHearingRunAbortKeyRestoresEverything(t *testing.T) {
@@ -571,8 +579,64 @@ func TestHearingRunNoSinkTouchesNothing(t *testing.T) {
 func TestHearingRunUnverifiedModelRefused(t *testing.T) {
 	r := newRig(t, cycleKeys())
 	r.link.verified = false
-	if err := hearingRunLive(r.env, opts()); err == nil || r.link.list() != "" || r.ex.count("pause") != 0 {
-		t.Fatalf("%v %s", err, r.link.list())
+	err := hearingRunLive(r.env, opts())
+	if err == nil || !strings.Contains(err.Error(), "verified model") {
+		t.Fatalf("%v", err)
+	}
+	r.untouched(t)
+	r.ttyOptional = true
+	r.assertRestored(t) // the music paused first is resumed
+}
+
+// Startup order: the music is paused BEFORE the daemon is touched, and the
+// slow full status is neither read nor needed without --apply --yes.
+func TestHearingRunStartupOrderAndNoHeavyStatus(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	pausedBeforeDial := false
+	r.env.link = func() (hearingLink, error) {
+		pausedBeforeDial = r.ex.index(" pause") >= 0 && r.ex.index("set-sink-volume") < 0
+		return r.link, nil
+	}
+	if err := hearingRunLive(r.env, opts()); err != nil {
+		t.Fatal(err)
+	}
+	if !pausedBeforeDial {
+		t.Fatal("the daemon was dialled before the music was paused")
+	}
+	if r.link.statusCalls != 0 || r.link.eqCalls != 0 {
+		t.Fatalf("status/eqRead used without --apply: %d %d", r.link.statusCalls, r.link.eqCalls)
+	}
+	out := r.out.String()
+	i, j, k := strings.Index(out, "pausing music"), strings.Index(out, "checking the earbuds"), strings.Index(out, "sink:")
+	if i < 0 || j < 0 || !(k < i && i < j) {
+		t.Fatalf("progress order wrong (%d %d %d):\n%s", k, i, j, out)
+	}
+}
+
+// With --apply --yes the backup is read while the audio settles but is
+// complete (and on disk) before the volume is raised and before 0x45.
+func TestHearingRunBackupJoinedBeforeVolumeAndMode(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	var atVolume, atMode bool
+	r.ex.onCall = func(line string) {
+		if strings.Contains(line, "set-sink-volume bluez_output.AA_BB_CC_DD_EE_FF.1 100%") {
+			ents, _ := os.ReadDir(filepath.Join(r.cfg, "backups"))
+			atVolume = len(ents) == 1
+		}
+	}
+	r.link.onMode = func(on bool) {
+		if on {
+			ents, _ := os.ReadDir(filepath.Join(r.cfg, "backups"))
+			atMode = len(ents) == 1
+		}
+	}
+	o := opts()
+	o.apply, o.yes = true, true
+	if err := hearingRunLive(r.env, o); err != nil {
+		t.Fatal(err)
+	}
+	if !atVolume || !atMode || r.link.statusCalls != 1 || r.link.eqCalls < 1 {
+		t.Fatalf("volume %v mode %v status %d eq %d", atVolume, atMode, r.link.statusCalls, r.link.eqCalls)
 	}
 }
 
@@ -799,11 +863,11 @@ func TestHearingRunBackupFailuresAbortBeforeAnythingElse(t *testing.T) {
 			if err := hearingRunLive(r.env, o); err == nil {
 				t.Fatal("expected error")
 			}
-			// Neither 0x45, nor volume, nor music, nor a tone.
+			// Neither 0x45, nor volume, nor a tone; the music paused first is
+			// resumed.
 			r.untouched(t)
-			if r.ex.count(" pause") != 0 {
-				t.Fatal("music paused before the backup")
-			}
+			r.ttyOptional = true
+			r.assertRestored(t)
 		})
 	}
 }
@@ -1420,7 +1484,7 @@ func TestHearingRunRunningSinkWithSilenceProceeds(t *testing.T) {
 	r.ex.out["pactl list sink-inputs"] = activeInput
 	sinkState(r, "RUNNING")
 	reads := 0
-	r.env.monitor = func(string) ([]byte, error) { reads++; return pcm(0, 3, -4, 0), nil }
+	r.env.monitor = func(_, _ string) ([]byte, error) { reads++; return pcm(0, 3, -4, 0), nil }
 	if err := hearingRunLive(r.env, opts()); err != nil {
 		t.Fatal(err)
 	}
@@ -1435,7 +1499,7 @@ func TestHearingRunRunningSinkWithAudioAbortsAndReportsPeak(t *testing.T) {
 	r.ttyOptional = true
 	r.ex.out["pactl list sink-inputs"] = activeInput
 	sinkState(r, "RUNNING")
-	r.env.monitor = func(string) ([]byte, error) { return pcm(0, 3000, -3000), nil }
+	r.env.monitor = func(_, _ string) ([]byte, error) { return pcm(0, 3000, -3000), nil }
 	err := hearingRunLive(r.env, opts())
 	if err == nil || !strings.Contains(err.Error(), "still playing into") || !strings.Contains(err.Error(), "peak -20.8 dBFS") {
 		t.Fatal(err)
@@ -1449,14 +1513,16 @@ func TestHearingRunRunningSinkWithAudioAbortsAndReportsPeak(t *testing.T) {
 func TestHearingRunMonitorMissingOrFailingKeepsConservativeAbort(t *testing.T) {
 	for name, setup := range map[string]func(r *rig){
 		"parec absent": func(r *rig) { r.ex.have["parec"] = false },
-		"parec fails":  func(r *rig) { r.env.monitor = func(string) ([]byte, error) { return nil, errors.New("no monitor") } },
-		"short read":   func(r *rig) { r.env.monitor = func(string) ([]byte, error) { return []byte{0, 0}, nil } },
+		"parec fails": func(r *rig) {
+			r.env.monitor = func(_, _ string) ([]byte, error) { return nil, errors.New("no monitor") }
+		},
+		"short read": func(r *rig) { r.env.monitor = func(_, _ string) ([]byte, error) { return []byte{0, 0}, nil } },
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newRig(t, cycleKeys())
 			r.ex.out["pactl list sink-inputs"] = activeInput
 			sinkState(r, "RUNNING")
-			r.env.monitor = func(string) ([]byte, error) { return pcm(0), nil }
+			r.env.monitor = func(_, _ string) ([]byte, error) { return pcm(0), nil }
 			setup(r)
 			r.ttyOptional = true
 			err := hearingRunLive(r.env, opts())
@@ -1477,7 +1543,7 @@ func TestHearingRunAudioReturningBeforeVolumeAborts(t *testing.T) {
 	r.ex.out["pactl list sink-inputs"] = activeInput
 	sinkState(r, "RUNNING")
 	reads := 0
-	r.env.monitor = func(string) ([]byte, error) {
+	r.env.monitor = func(_, _ string) ([]byte, error) {
 		reads++
 		if reads == 3 {
 			return pcm(0, 5000), nil
@@ -1535,25 +1601,23 @@ func TestHearingRunNoFloorNoWarning(t *testing.T) {
 	}
 }
 
-// The monitor is post-volume and post-mute: a silent reading proves nothing
-// while the sink is muted/turned down or an active stream is.
-func TestHearingRunSilentMonitorNotTrustedWhenMutedOrTurnedDown(t *testing.T) {
+// The reading is per stream, taken after the STREAM's volume and mute: a
+// muted or turned-down stream proves nothing. The sink's own volume/mute do
+// not matter (the stream monitor is before them).
+func TestHearingRunSilentMonitorNotTrustedWhenStreamMutedOrTurnedDown(t *testing.T) {
 	cases := map[string]struct {
 		setup func(r *rig)
 		want  string
 	}{
-		"sink muted": {func(r *rig) {
-			r.ex.out["pactl list sinks"] = strings.Replace(r.ex.out["pactl list sinks"], "Mute: no", "Mute: yes", 1)
-		}, "the sink is muted"},
-		"sink at 30%": {func(r *rig) {
-			r.ex.out["pactl list sinks"] = strings.Replace(r.ex.out["pactl list sinks"], "65536 / 100%", "19661 / 30%", -1)
-		}, "the sink is at 30%"},
 		"stream muted": {func(r *rig) {
 			r.ex.out["pactl list sink-inputs"] = strings.Replace(r.ex.out["pactl list sink-inputs"], "Mute: no", "Mute: yes", 1)
 		}, "is muted"},
 		"stream at 20%": {func(r *rig) {
 			r.ex.out["pactl list sink-inputs"] = strings.Replace(r.ex.out["pactl list sink-inputs"], "65536 / 100%", "13107 / 20%", -1)
 		}, "is at 20%"},
+		"stream volume unreadable": {func(r *rig) {
+			r.ex.out["pactl list sink-inputs"] = strings.Replace(r.ex.out["pactl list sink-inputs"], "\tVolume: front-left: 65536 / 100% / 0.00 dB\n", "", 1)
+		}, "could not be read"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1563,13 +1627,13 @@ func TestHearingRunSilentMonitorNotTrustedWhenMutedOrTurnedDown(t *testing.T) {
 			sinkState(r, "RUNNING")
 			c.setup(r)
 			reads := 0
-			r.env.monitor = func(string) ([]byte, error) { reads++; return pcm(0), nil } // silent
+			r.env.monitor = func(_, _ string) ([]byte, error) { reads++; return pcm(0), nil } // silent
 			err := hearingRunLive(r.env, opts())
 			if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "the volume was not raised") {
 				t.Fatal(err)
 			}
 			if reads != 0 {
-				t.Fatalf("an untrustworthy monitor was read %d times", reads)
+				t.Fatalf("an untrustworthy stream was measured %d times", reads)
 			}
 			if r.ex.count("set-sink") != 0 {
 				t.Fatalf("volume/mute changed: %v", r.ex.calls)
@@ -1579,16 +1643,109 @@ func TestHearingRunSilentMonitorNotTrustedWhenMutedOrTurnedDown(t *testing.T) {
 	}
 }
 
-func TestHearingRunUnreadableSinkVolumeIsNotTrusted(t *testing.T) {
+func lowSink(r *rig) {
+	r.ex.out["pactl list sinks"] = strings.Replace(r.ex.out["pactl list sinks"], "65536 / 100%", "19661 / 30%", -1)
+}
+
+// Sink at 30% (the listener's own level) and a silent open stream: measured
+// per stream, so it is accepted.
+func TestHearingRunLowSinkWithSilentStreamProceeds(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	r.ex.out["pactl list sink-inputs"] = activeInput
+	sinkState(r, "RUNNING")
+	lowSink(r)
+	var asked []string
+	r.env.monitor = func(sink, id string) ([]byte, error) { asked = append(asked, id); return pcm(0), nil }
+	if err := hearingRunLive(r.env, opts()); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 3 || asked[0] != "1777" {
+		t.Fatalf("monitor-stream readings: %v", asked)
+	}
+	r.assertRestored(t)
+}
+
+func TestHearingRunLowSinkWithRealAudioAborts(t *testing.T) {
 	r := newRig(t, cycleKeys())
 	r.ttyOptional = true
 	r.ex.out["pactl list sink-inputs"] = activeInput
 	sinkState(r, "RUNNING")
-	r.ex.out["pactl list sinks"] = strings.Replace(r.ex.out["pactl list sinks"], "Mute: no", "", 1)
-	r.env.monitor = func(string) ([]byte, error) { return pcm(0), nil }
-	if err := hearingRunLive(r.env, opts()); err == nil || r.ex.count("set-sink") != 0 {
+	lowSink(r)
+	r.env.monitor = func(_, _ string) ([]byte, error) { return pcm(0, 15047, -15047), nil }
+	err := hearingRunLive(r.env, opts())
+	if err == nil || !strings.Contains(err.Error(), "#1777 Brave (peak -6.8 dBFS)") {
 		t.Fatal(err)
 	}
+	if r.ex.count("set-sink") != 0 || r.link.list() != "" {
+		t.Fatal("side effects")
+	}
+	r.assertRestored(t)
+}
+
+func TestHearingRunNewStreamAtReconfirmationAborts(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	r.ttyOptional = true
+	r.ex.out["pactl list sink-inputs"] = activeInput
+	sinkState(r, "RUNNING")
+	n := 0
+	r.ex.onCall = func(line string) {
+		if line == "pactl list sink-inputs" {
+			n++
+			if n == 3 { // 1, 2: the two silent polls; 3: the reconfirmation
+				r.ex.out["pactl list sink-inputs"] = activeInput +
+					"Sink Input #1800\n\tSink: 92\n\tCorked: no\n\tMute: no\n\tVolume: front-left: 65536 / 100% / 0.00 dB\n\t\tapplication.name = \"Mpv\"\n"
+			}
+		}
+	}
+	r.env.monitor = func(_, _ string) ([]byte, error) { return pcm(0), nil }
+	err := hearingRunLive(r.env, opts())
+	if err == nil || !strings.Contains(err.Error(), "new stream #1800 Mpv") || r.ex.count("set-sink") != 0 {
+		t.Fatal(err)
+	}
+	r.assertRestored(t)
+}
+
+// One reading per active stream: audio on the second one is not hidden by
+// silence on the first.
+func TestHearingRunEveryActiveStreamMustBeSilent(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	r.ttyOptional = true
+	r.ex.out["pactl list sink-inputs"] = activeInput +
+		"Sink Input #1800\n\tSink: 92\n\tCorked: no\n\tMute: no\n\tVolume: front-left: 65536 / 100% / 0.00 dB\n\t\tapplication.name = \"Mpv\"\n"
+	sinkState(r, "RUNNING")
+	r.env.monitor = func(_, id string) ([]byte, error) {
+		if id == "1800" {
+			return pcm(0, 900), nil
+		}
+		return pcm(0), nil
+	}
+	err := hearingRunLive(r.env, opts())
+	if err == nil || !strings.Contains(err.Error(), "#1800 Mpv (peak") || !strings.Contains(err.Error(), "#1777 Brave (peak") || r.ex.count("set-sink") != 0 {
+		t.Fatal(err)
+	}
+	r.assertRestored(t)
+}
+
+// The stream vanishes between the listing and the reading: the listing is
+// repeated, not accepted blindly.
+func TestHearingRunStreamVanishingBetweenListAndMeasureRelists(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	r.ex.out["pactl list sink-inputs"] = activeInput
+	sinkState(r, "RUNNING")
+	failed := false
+	r.env.monitor = func(_, id string) ([]byte, error) {
+		if !failed {
+			failed = true
+			r.ex.out["pactl list sink-inputs"] = "" // gone
+			sinkState(r, "IDLE")
+			return nil, errors.New("no such stream")
+		}
+		return pcm(0), nil
+	}
+	if err := hearingRunLive(r.env, opts()); err != nil {
+		t.Fatal(err)
+	}
+	r.assertRestored(t)
 }
 
 // Only h/Enter, n/space, r and q are keys; anything else is ignored: it is not
