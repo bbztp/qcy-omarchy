@@ -90,11 +90,33 @@ else
 fi
 
 echo "installing plugin -> ${plugin_dir}"
-rm -rf "${plugin_dir}"
+# Update in place and only what changed: the running shell watches this
+# directory and hot-reloads the plugin on every write, and removing then
+# recreating the whole tree made it reload against a half-copied plugin (the
+# shell has crashed during such reloads). Nothing changed -> nothing written.
+fresh=0
+[ -d "${plugin_dir}" ] || fresh=1
 mkdir -p "${plugin_dir}"
-cp -r "${repo_dir}/plugin/${plugin_id}/." "${plugin_dir}/"
+changed=0
+while IFS= read -r -d '' f; do
+  rel="${f#"${repo_dir}/plugin/${plugin_id}/"}"
+  if ! cmp -s "$f" "${plugin_dir}/${rel}"; then
+    mkdir -p "$(dirname "${plugin_dir}/${rel}")"
+    cp "$f" "${plugin_dir}/${rel}.tmp.$$" && mv -f "${plugin_dir}/${rel}.tmp.$$" "${plugin_dir}/${rel}"
+    changed=1
+  fi
+done < <(find "${repo_dir}/plugin/${plugin_id}" -type f -print0)
+# files that no longer exist in the repo
+while IFS= read -r -d '' f; do
+  rel="${f#"${plugin_dir}/"}"
+  if [ ! -e "${repo_dir}/plugin/${plugin_id}/${rel}" ]; then
+    rm -f "$f"
+    changed=1
+  fi
+done < <(find "${plugin_dir}" -type f -print0)
+[ "$changed" = 1 ] || echo "plugin already up to date"
 
-if command -v omarchy-shell >/dev/null 2>&1; then
+if [ "$fresh" = 1 ] && command -v omarchy-shell >/dev/null 2>&1; then
   omarchy-shell -q shell rescanPlugins || true
 fi
 
