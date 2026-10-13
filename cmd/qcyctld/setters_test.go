@@ -281,3 +281,155 @@ func TestN70DeclaresTheNewActionsProfileDoesNot(t *testing.T) {
 		}
 	}
 }
+
+func TestLdacWritesOnceAndConfirms(t *testing.T) {
+	d, s := scriptDaemon(t, func(s *scriptSession, op byte, p []byte) {
+		if op == 0x23 && len(p) >= 1 {
+			s.set(0x23, []byte{p[0]})
+		}
+	})
+	got, err := d.handleRequest(setReq("ldac", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := got.([]int); len(b) < 1 || b[0] != 1 {
+		t.Fatalf("confirmed payload %v", got)
+	}
+	var frames [][]byte
+	for _, p := range s.writesOf(0x23) {
+		if len(p) > 3 {
+			frames = append(frames, p)
+		}
+	}
+	if len(frames) != 1 || !bytes.Equal(frames[0], []byte{0xFF, 0x03, 0x23, 0x01, 0x01}) {
+		t.Fatalf("frames %x", frames)
+	}
+	for _, v := range []byte{0, 3} {
+		if _, err := d.handleRequest(setReq("ldac", v)); err == nil {
+			t.Errorf("%d accepted", v)
+		}
+	}
+	n := 0
+	for _, p := range s.writesOf(0x23) {
+		if len(p) > 3 {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d ldac frames after refused values, want 1", n)
+	}
+}
+
+func TestLdacLinkDropAfterAcceptedWriteIsNotAnError(t *testing.T) {
+	old := ldacConfirmTimeout
+	ldacConfirmTimeout = 600 * time.Millisecond
+	defer func() { ldacConfirmTimeout = old }()
+	var dd *daemon
+	d, s := scriptDaemon(t, func(s *scriptSession, op byte, p []byte) {
+		if op == 0x23 {
+			dd.markDisconnected() // the earbuds restart right after accepting
+		}
+	})
+	dd = d
+	got, err := d.handleRequest(setReq("ldac", 1))
+	if err != nil {
+		t.Fatalf("restart after an accepted write reported as error: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("payload %v, want none (applied, restarted)", got)
+	}
+	n := 0
+	for _, p := range s.writesOf(0x23) {
+		if len(p) > 3 {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("ldac written %d times, want exactly 1", n)
+	}
+}
+
+func TestLdacProbeCapabilityComesFromTheDevice(t *testing.T) {
+	d, s := scriptDaemon(t, nil)
+	s.set(0x23, []byte{2})
+	d.mu.Lock()
+	d.probed = false
+	d.mu.Unlock()
+	d.probeCapabilities()
+	if !d.capabilitiesSnapshot()["ldac"] {
+		t.Fatal("probe: ldac false although the device answered 2")
+	}
+	rep := mustStatus(t, d)
+	if c, _ := rep["capabilities"].(map[string]interface{}); c["ldac"] != true {
+		t.Fatalf("status capabilities.ldac = %v on a verified model", c["ldac"])
+	}
+}
+
+func TestAutoOffZeroIsNeverWritten(t *testing.T) {
+	d, s := scriptDaemon(t, nil)
+	before := len(s.writesOf(0x14))
+	for _, p := range [][]byte{{0, 0, 0, 0}, {0, 0}} {
+		if _, err := d.handleRequest(setReq("autoOff", p...)); err == nil {
+			t.Errorf("autoOff %x accepted", p)
+		}
+	}
+	if n := len(s.writesOf(0x14)); n != before {
+		t.Fatalf("%d frames written for a refused 0", n-before)
+	}
+}
+
+func TestWindOffByteAcceptsEitherOffByte(t *testing.T) {
+	for _, off := range []byte{0, 2} {
+		d, s := scriptDaemon(t, func(s *scriptSession, op byte, p []byte) {
+			if op == 0x2A && len(p) >= 1 {
+				s.set(0x2A, []byte{2}) // the firmware keeps 2 whatever was written
+			}
+		})
+		got, err := d.handleRequest(request{Cmd: "windOffByte", Args: map[string]interface{}{"byte": float64(off)}})
+		if err != nil {
+			t.Fatalf("off=%d: %v", off, err)
+		}
+		if b, _ := got.([]int); len(b) < 1 || b[0] != 2 {
+			t.Fatalf("raw readback %v", got)
+		}
+		var frame []byte
+		for _, p := range s.writesOf(0x2A) {
+			if len(p) > 3 {
+				frame = p
+			}
+		}
+		if !bytes.Equal(frame, []byte{0xFF, 0x03, 0x2A, 0x01, off}) {
+			t.Fatalf("frame %x", frame)
+		}
+	}
+	d, _ := scriptDaemon(t, nil)
+	if _, err := d.handleRequest(request{Cmd: "windOffByte", Args: map[string]interface{}{"byte": float64(1)}}); err == nil {
+		t.Error("byte 1 accepted")
+	}
+}
+
+func TestWearOffByteZeroConfirmsOnEitherOffByte(t *testing.T) {
+	d, s := scriptDaemon(t, func(s *scriptSession, op byte, p []byte) {
+		if op == 0x2C && len(p) >= 1 {
+			q := append([]byte{2}, p[1:]...) // the firmware normalises 0 to 2
+			s.set(0x2C, q)
+		}
+	})
+	s.set(0x2C, []byte{1, 5, 6})
+	got, err := d.handleRequest(request{Cmd: "wear", Args: map[string]interface{}{"state": float64(0)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := got.([]int); len(b) != 3 || b[0] != 2 || b[1] != 5 {
+		t.Fatalf("readback %v", got)
+	}
+	var frame []byte
+	for _, p := range s.writesOf(0x2C) {
+		if len(p) > 3 {
+			frame = p
+		}
+	}
+	if !bytes.Equal(frame, []byte{0xFF, 0x05, 0x2C, 0x03, 0x00, 0x05, 0x06}) {
+		t.Fatalf("frame %x", frame)
+	}
+}

@@ -52,7 +52,7 @@ answer a game-mode query with `0x02` when it is off.
 | `0x1E` | music control | `[1, action]` | unverified |
 | `0x20` | EQ v1 write | — | unverified |
 | `0x22` | EQ v2 read **and** write | see [EQ](#eq) | verified read and write; every write is read-modify-write with a backup |
-| `0x23` | LDAC | `[1, 1\|2]` | verified: reboots the earbuds |
+| `0x23` | LDAC | `[1, 1\|2]` | restarts the earbuds (the official panel declares it: "Turning on LDAC will restart the device"); write enabled on verified models only; **not verified on hardware**: the readback after the restart is unobserved |
 | `0x24` | multipoint | `[1, 1\|2]` | verified: reboots the earbuds, expected |
 | `0x2A` | wind noise reduction | `[1, 1\|2]` | verified (added — was missing from this table) |
 | `0x2A` | wind detection | `[1, 1\|2]` | verified |
@@ -89,7 +89,7 @@ Every wired setter was exercised through the daemon and read back with
 | spatial `0x2D` | no query reply on this model |
 | fit `0x11` | no query reply (the app never queries it); start `FF 05 11 03 01 01 01` / stop `FF 05 11 03 00 00 00` verified 2026-10-13: the final notification `[2, left, right]` arrives |
 | eq `0x22` | honours the write; only written through a read-patch-backup-write transaction (see [EQ](#eq)) |
-| ldac `0x23` | reboots the earbuds; refused |
+| ldac `0x23` | an earlier test rebooted the earbuds; the restart is declared by the official panel, so the write is now allowed on verified models (`qcyctl ldac <on\|off> --yes`); **not verified on hardware since this change** |
 
 Game, sleep and wind read back `false` after a reconnect and wind persisted
 across one, so treat their post-reconnect value as unsettled rather than as
@@ -391,13 +391,20 @@ qcyctl library compose --base <id|none> --gains g1,...,g10 [--master dB] --dry-r
 
 ## Restarts caused by writing
 
-Two writes restart the earbuds, for different reasons:
+Two writes restart the earbuds:
 
 - **Multipoint (`0x24`) — expected.** The product documentation states the
   earphones restart each time dual-device connection is toggled.
-- **LDAC (`0x23`) — a firmware fault.** Nothing documents this restart, so the
-  setter is refused rather than allowed to reset the user's hardware on a
-  click.
+- **LDAC (`0x23`) — expected, per the official panel.** The vendor server
+  declares the action with the text "Turning on LDAC will restart the device"
+  (see WEB_API.md), so the restart is documented behaviour, like multipoint.
+  The setter is therefore enabled on verified models only
+  (`qcyctl ldac <on|off> --yes`; the `ldac` capability comes from the `FE 01 23`
+  probe). The write is sent once and never repeated: if the link drops right
+  after the write was accepted, the daemon reports "applied, the earbuds
+  restarted" instead of an error. **Verified on hardware: NO** (not tested
+  since the write was enabled); treat the restart/readback behaviour as
+  unverified until it is.
 
 ## Find my earbuds
 

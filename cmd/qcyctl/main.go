@@ -432,6 +432,14 @@ func (dc *daemonClient) wearSet(state byte) ([]byte, error) {
 	return bytesOf(data), nil
 }
 
+func (dc *daemonClient) windOffByte(b byte) ([]byte, error) {
+	data, err := dc.request("windOffByte", map[string]interface{}{"byte": int(b)})
+	if err != nil {
+		return nil, err
+	}
+	return bytesOf(data), nil
+}
+
 // fitResult is the outcome of the ear-tip fit test: per ear 3 sealed, 2 good,
 // 1 fair, 0 poor.
 type fitResult struct {
@@ -497,6 +505,10 @@ type daemonAPI interface {
 	eqApply(op qcycore.EqOp) (*qcycore.EqResult, error)
 	// wearSet reads 0x2C, sets byte 0 to state (1 on / 2 off), writes, confirms.
 	wearSet(state byte) ([]byte, error)
+	// windOffByte is a diagnostic: writes wind detection "off" (0x2A) with
+	// the given byte (0 or 2), accepts 0x00 or 0x02 on readback and returns
+	// the raw payload read.
+	windOffByte(b byte) ([]byte, error)
 	// noiseRead returns the raw 0x17 payload.
 	noiseRead() ([]byte, error)
 	// fitTest starts the fit test, waits up to seconds for the final result and
@@ -613,10 +625,11 @@ func opcodeFor(action string) (byte, error) {
 		// daemon's opcodeMap for why this is not an audible tone.
 		"find": 0x05,
 	}
-	// Writing ldac (0x23) reboots the earbuds and, unlike multipoint, the restart
-	// is not documented behaviour. Mirrors the daemon's guard.
+	// ldac (0x23) restarts the earbuds and is writable on verified models
+	// only. Direct mode cannot tell the model, so it leaves the write to the
+	// daemon, which can.
 	if action == "ldac" {
-		return 0, errors.New("ldac is disabled: writing it reboots the earbuds and, unlike multipoint, the restart is not documented behaviour")
+		return 0, errors.New("ldac needs the daemon (qcyctld): it is only written on a verified model, and direct mode cannot check the model")
 	}
 	// 0x22 is only ever written through eqApply, which reads, patches and backs
 	// the payload up first. A raw write here would bypass all of that.
@@ -708,13 +721,26 @@ func (w *daemonClientWrapper) wearSet(state byte) ([]byte, error) {
 	}
 	set := append([]byte{state}, cur[1:]...)
 	got, ok, err := w.setConfirm(0x2C, set, 3*time.Second, func(p []byte) bool {
-		return len(p) >= len(set) && p[0] == state && bytes.Equal(p[1:len(set)], set[1:])
+		return len(p) >= len(set) && wearByteMatches(state, p[0]) && bytes.Equal(p[1:len(set)], set[1:])
 	})
 	if err != nil {
 		return nil, err
 	}
-	if !ok || len(got) < 1 || got[0] != state {
+	if !ok || len(got) < 1 || !wearByteMatches(state, got[0]) {
 		return nil, fmt.Errorf("wear readback mismatch: want 0x%02x got %x", state, got)
+	}
+	return got, nil
+}
+
+func (w *daemonClientWrapper) windOffByte(b byte) ([]byte, error) {
+	got, ok, err := w.setConfirm(0x2A, []byte{b}, 3*time.Second, func(p []byte) bool {
+		return len(p) >= 1 && (p[0] == 0 || p[0] == 2)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("wind: readback mismatch: want 00 or 02, got %x", got)
 	}
 	return got, nil
 }
@@ -858,8 +884,11 @@ func usage() {
   qcyctl battery [--json] [seconds]
   qcyctl noise [seconds]
   qcyctl anc <off|adaptive|indoor|commuting|noisy|antiwind|transparency> [seconds]  (anc = adaptive)
-  qcyctl <game|sleep|ldac|multipoint|wind> <on|off> [seconds]
+  qcyctl <game|sleep|multipoint|wind> <on|off> [seconds]
+  qcyctl ldac <on|off> --yes [seconds]   (restarts the earbuds; verified models only; not yet verified on hardware)
+  qcyctl wind off --off-byte <0|2> --yes [seconds]   (DIAGNOSTIC: which byte means "off"; default 2)
   qcyctl wear <on|off> [seconds]
+  qcyctl wear off --off-byte <0|2> --yes [seconds]   (DIAGNOSTIC: byte 0 of 0x2C; default 2)
   qcyctl find [seconds]
   qcyctl prompt-vol <4|6|8|10|low|medium|high|max> [seconds]
   qcyctl wear-sensitivity <medium|normal|high|1|2|3> [seconds]
@@ -894,6 +923,53 @@ func parseSeconds(args []string, def int) (int, error) {
 	}
 	return n, nil
 }
+
+// wearByteMatches: a read-back byte 0 of 0x2C confirms a write of state. 0x00
+// and 0x02 both mean "off" (the app writes 0x00, this tool 0x02).
+func wearByteMatches(state, got byte) bool {
+	if state == 0 || state == 2 {
+		return got == 0 || got == 2
+	}
+	return got == state
+}
+
+// diagArgs are the flags of the on/off commands that take --yes and, for
+// wear/wind, the diagnostic --off-byte.
+type diagArgs struct {
+	rest    []string
+	yes     bool
+	offByte int // -1 = not given (default 2)
+}
+
+func parseDiagArgs(args []string, allowOffByte bool) (diagArgs, error) {
+	out := diagArgs{offByte: -1}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--yes":
+			out.yes = true
+		case allowOffByte && (a == "--off-byte" || strings.HasPrefix(a, "--off-byte=")):
+			v := strings.TrimPrefix(a, "--off-byte=")
+			if a == "--off-byte" {
+				if i+1 >= len(args) {
+					return out, errors.New("--off-byte needs a value (0 or 2)")
+				}
+				i++
+				v = args[i]
+			}
+			if v != "0" && v != "2" {
+				return out, fmt.Errorf("--off-byte: invalid value %q (0 or 2)", v)
+			}
+			out.offByte = int(v[0] - '0')
+		default:
+			out.rest = append(out.rest, a)
+		}
+	}
+	return out, nil
+}
+
+// cmdRunner opens the link; tests substitute it.
+var cmdRunner = runViaDaemon
 
 func parseOnOff(s string) (byte, error) {
 	switch s {
@@ -1978,7 +2054,16 @@ func noiseSceneName(mode, scene byte) string {
 
 // ---------- toggles ----------
 
+func frameHex(opcode byte, params []byte) string {
+	return fmt.Sprintf("% X", buildFrame(opcode, params))
+}
+
 func cmdToggle(name string, args []string) error {
+	da, err := parseDiagArgs(args, name == "wind")
+	if err != nil {
+		return err
+	}
+	args = da.rest
 	if len(args) < 1 {
 		return fmt.Errorf("usage: qcyctl %s <on|off> [seconds]", name)
 	}
@@ -1990,7 +2075,42 @@ func cmdToggle(name string, args []string) error {
 	if err != nil {
 		return err
 	}
-	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+	if name == "ldac" && !da.yes {
+		return errors.New("ldac restarts the earbuds (the vendor app says so: turning on LDAC will restart the device); add --yes to proceed")
+	}
+	if da.offByte >= 0 {
+		if args[0] != "off" {
+			return errors.New("--off-byte only applies to `wind off`")
+		}
+		if !da.yes {
+			return errors.New("wind off --off-byte is a diagnostic write: add --yes to proceed")
+		}
+		b := byte(da.offByte)
+		return cmdRunner(scanSeconds, func(dc daemonAPI) error {
+			fmt.Printf("frame: %s\n", frameHex(0x2A, []byte{b}))
+			got, err := dc.windOffByte(b)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("wind=off read back raw=%x (0x00 and 0x02 both mean off)\n", got)
+			return nil
+		})
+	}
+	return cmdRunner(scanSeconds, func(dc daemonAPI) error {
+		if name == "ldac" {
+			// A single write, never repeated: the earbuds may restart right
+			// after accepting it, and then the readback has nothing to say.
+			got, err := dc.setActionExpect("ldac", []byte{state}, []byte{state})
+			if err != nil {
+				return err
+			}
+			if len(got) == 0 {
+				fmt.Printf("ldac=%s applied; the earbuds restarted (expected, not a failure; not yet verified on hardware)\n", args[0])
+			} else {
+				fmt.Printf("ldac=%s confirmed\n", args[0])
+			}
+			return nil
+		}
 		if err := dc.setAction(name, []byte{state}); err != nil {
 			return err
 		}
@@ -2000,6 +2120,11 @@ func cmdToggle(name string, args []string) error {
 }
 
 func cmdWear(args []string) error {
+	da, err := parseDiagArgs(args, true)
+	if err != nil {
+		return err
+	}
+	args = da.rest
 	if len(args) < 1 {
 		return errors.New("usage: qcyctl wear <on|off> [seconds]")
 	}
@@ -2011,10 +2136,30 @@ func cmdWear(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+	diag := da.offByte >= 0
+	if diag {
+		if args[0] != "off" {
+			return errors.New("--off-byte only applies to `wear off`")
+		}
+		if !da.yes {
+			return errors.New("wear off --off-byte is a diagnostic write: add --yes to proceed")
+		}
+		state = byte(da.offByte)
+	}
+	return cmdRunner(scanSeconds, func(dc daemonAPI) error {
 		got, err := dc.wearSet(state)
 		if err != nil {
 			return err
+		}
+		if len(got) < 1 {
+			return errors.New("wear: empty readback")
+		}
+		if diag {
+			// The rest of the payload is written back as read, so the frame
+			// sent is the written byte followed by the readback's tail.
+			fmt.Printf("frame: %s\n", frameHex(0x2C, append([]byte{state}, got[1:]...)))
+			fmt.Printf("wear=off read back raw byte0=0x%02x payload=%x (0x00 and 0x02 both mean off)\n", got[0], got)
+			return nil
 		}
 		fmt.Printf("wear=%s confirmed (enabled=0x%02x actions=%x)\n", args[0], got[0], got[1:])
 		return nil
@@ -2280,8 +2425,11 @@ func cmdAutoOff(args []string) error {
 	var want uint16 = 0xFFFF
 	if args[0] != "never" {
 		n, err := strconv.Atoi(args[0])
-		if err != nil || n < 0 || n > 0xFFFE {
-			return fmt.Errorf("auto-off: invalid value %q (0-65534 or never)", args[0])
+		if err == nil && n == 0 {
+			return errors.New("auto-off: 0 is refused: the app sends 0 to power the earbuds off right now, not to disable the timer (use `never`)")
+		}
+		if err != nil || n < 1 || n > 0xFFFE {
+			return fmt.Errorf("auto-off: invalid value %q (1-65534 minutes or never)", args[0])
 		}
 		want = uint16(n)
 	}
@@ -2289,7 +2437,7 @@ func cmdAutoOff(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+	return cmdRunner(scanSeconds, func(dc daemonAPI) error {
 		// The vendor app sends four bytes here — {lo, hi, 0, 0} — and the
 		// device echoes all four back (ffff0000 means "never"). This used to
 		// send only the two value bytes, which happened to confirm because

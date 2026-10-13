@@ -18,6 +18,8 @@
   "Pauses when an earbud is removed and resumes when put back": "Pausa ao tirar um fone e retoma ao recolocar",
   "Multipoint": "Multiponto",
   "Restarts the earbuds; this is expected, not a fault": "Reinicia os fones; é esperado, não é falha",
+  "LDAC": "LDAC",
+  "This restarts the earbuds. Continue?": "Isto reinicia os fones. Continuar?",
   "{name} (adjusted)": "{name} (ajustado)",
   "Custom": "Personalizado",
   "no effect": "sem efeito",

@@ -817,7 +817,7 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 	// before it must never be served as stale afterwards, whatever the outcome
 	// (a failed write may still have reached the device).
 	switch req.Cmd {
-	case "set", "find", "eqApply", "eqMasterGain", "wear", "keysSet", "hearingMode", "hearingWrite":
+	case "set", "find", "eqApply", "eqMasterGain", "wear", "keysSet", "hearingMode", "hearingWrite", "windOffByte":
 		defer d.invalidateCache()
 	}
 	d.mu.Lock()
@@ -944,13 +944,26 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 		}
 		return res, nil
 	case "wear":
-		// Read 0x2C, set byte 0 (state 1 = on, 2 = off), keep the remaining
-		// bytes, write, confirm. Returns the confirmed payload.
+		// Read 0x2C, set byte 0 (state 1 = on, 2 = off; 0 = off written as the
+		// vendor app does, diagnostic only), keep the remaining bytes, write,
+		// confirm. Returns the confirmed payload.
 		st, ok := req.Args["state"].(float64)
-		if !ok || (st != 1 && st != 2) {
-			return nil, errors.New("wear: state must be 1 (on) or 2 (off)")
+		if !ok || (st != 0 && st != 1 && st != 2) {
+			return nil, errors.New("wear: state must be 1 (on) or 2 (off); 0 is the diagnostic off byte")
 		}
 		got, err := d.wearSet(byte(st))
+		if err != nil {
+			return nil, err
+		}
+		return bytesJSON(got), nil
+	case "windOffByte":
+		// Diagnostic: write the wind-detection "off" with an explicit byte
+		// (0 as the vendor app, 2 as this tool) and report the raw readback.
+		b, ok := req.Args["byte"].(float64)
+		if !ok || (b != 0 && b != 2) {
+			return nil, errors.New("windOffByte: byte must be 0 or 2")
+		}
+		got, err := d.windOff(byte(b))
 		if err != nil {
 			return nil, err
 		}
@@ -1011,6 +1024,10 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 		}
 		// Model-dependent, derived from the handler of this connection.
 		caps["eq"] = d.handlerHasFeature(FeatureEQ)
+		// ldac restarts the earbuds and is only writable on a verified
+		// model, so the panel is told "available" only for those.
+		h := d.knownHandler()
+		caps["ldac"] = snap["ldac"] && h != nil && h.Capabilities().Verified
 		rep["capabilities"] = caps
 	}
 	if p, err := d.query(0x2D, 800*time.Millisecond); err == nil && len(p) >= 1 {
@@ -1118,19 +1135,12 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 		// NewLightFlashCommand and is what actually lets you spot them.
 		"find": 0x05,
 	}
-	// Refused on purpose — writing 0x23 REBOOTS the earbuds, and unlike
-	// multipoint below no documentation sanctions that restart, so it is a
-	// firmware fault rather than expected behaviour. Multipoint (0x24) also
-	// restarts the earbuds and that one is documented: the product notes state
-	// the earphones restart each time dual-device connection is toggled. Do not
-	// "fix" that.
-	//
-	// ldac stays out of optionalCmds too — probing it would advertise a control
-	// whose only effect is rebooting the user's hardware. It is pinned false by
-	// readOnlyCmds, while gatherStatus still reads its state for display.
-	if action == "ldac" {
-		return nil, errors.New("ldac is disabled: writing it reboots the earbuds and, unlike multipoint, the restart is not documented behaviour")
-	}
+	// ldac (0x23) restarts the earbuds: the vendor server declares the action
+	// with "Turning on LDAC will restart the device" (docs/WEB_API.md), so the
+	// restart is expected. It is writable on verified models only
+	// (verifiedOnlyActions), once per request, and the restart that follows an
+	// accepted write is not an error (see the ldac branch below). Multipoint
+	// (0x24) restarts the earbuds too and is documented the same way.
 	// Answering a query is not the same as honouring a write: readOnlyCmds
 	// lists what must not be driven (promptVol only while promptVolWritable is
 	// false).
@@ -1147,14 +1157,14 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 	}
 	// Setters whose frame shape and value set come from the vendor app:
 	// validate and normalise before anything is written.
-	params, expect, err := prepareSetter(action, params, expect)
-	if err != nil {
-		return nil, err
-	}
 	if verifiedOnlyActions[action] {
 		if h := d.knownHandler(); h == nil || !h.Capabilities().Verified {
 			return nil, fmt.Errorf("%s is only available on a verified model", action)
 		}
+	}
+	params, expect, err := prepareSetter(action, params, expect)
+	if err != nil {
+		return nil, err
 	}
 
 	if !d.isConnected() {
@@ -1164,6 +1174,21 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 	d.drain()
 	if err := d.send(opcode, params); err != nil {
 		return nil, err
+	}
+
+	if action == "ldac" {
+		// The write was accepted; it is never repeated. The earbuds may
+		// restart right after it, so a readback that fails because the link
+		// dropped (or stayed silent) is "applied, the earbuds restarted", not
+		// an error.
+		got, last, ok := d.awaitMatchLast(opcode, func(p []byte) bool { return bytes.HasPrefix(p, expect) }, ldacConfirmTimeout)
+		if ok {
+			return got, nil
+		}
+		if len(last) > 0 && d.isConnected() {
+			return nil, fmt.Errorf("ldac: escrito mas o aparelho reportou %x (esperado %x); o aparelho pode ter aplicado, leia o estado de novo", last, expect)
+		}
+		return nil, nil
 	}
 
 	// Two modes:
@@ -1215,7 +1240,11 @@ var verifiedPromptVolumeSteps = []byte{4, 6, 8, 10}
 
 // verifiedOnlyActions are setters whose frames were read from the app for the verified model
 // and are refused on any model that is not verified.
-var verifiedOnlyActions = map[string]bool{"promptVol": true, "wearSensitivity": true}
+var verifiedOnlyActions = map[string]bool{"promptVol": true, "wearSensitivity": true, "ldac": true}
+
+// ldacConfirmTimeout bounds the readback after an ldac write: the earbuds may
+// restart instead of answering.
+var ldacConfirmTimeout = 4 * time.Second
 
 // settleBeforeQuery is how long a confirmed setter waits before reading back.
 var settleBeforeQuery = map[string]time.Duration{
@@ -1238,6 +1267,18 @@ func prepareSetter(action string, params, expect []byte) ([]byte, []byte, error)
 		}
 		// Two parameter bytes, the second 0, as the vendor app writes it.
 		return []byte{v, 0}, []byte{v}, nil
+	case "autoOff":
+		// [lo, hi, 0, 0] minutes; ffff = never. 0 is "power off now" in the
+		// vendor app, never a timer value: nothing may send it.
+		if len(params) < 2 || (params[0] == 0 && params[1] == 0) {
+			return nil, nil, errors.New("autoOff: 0 is refused (it powers the earbuds off now); use 65535 for never")
+		}
+		return params, expect, nil
+	case "ldac":
+		if len(params) != 1 || (params[0] != 1 && params[0] != 2) {
+			return nil, nil, errors.New("ldac: expected 1 (on) or 2 (off)")
+		}
+		return params, []byte{params[0]}, nil
 	case "wearSensitivity":
 		if len(params) != 1 || params[0] < 1 || params[0] > 3 {
 			return nil, nil, errors.New("wearSensitivity: expected 1 (medium), 2 (normal) or 3 (high)")
@@ -1570,6 +1611,38 @@ func (d *daemon) eqApply(op qcycore.EqOp) (*qcycore.EqResult, error) {
 	}, nil
 }
 
+// windOff writes 0x2A with off as its only parameter and confirms by reading
+// it back, accepting 0x00 or 0x02 as "off". Returns the raw payload read.
+func (d *daemon) windOff(off byte) ([]byte, error) {
+	d.txMu.Lock()
+	defer d.txMu.Unlock()
+	if !d.isConnected() {
+		return nil, errors.New("not connected")
+	}
+	d.drain()
+	if err := d.send(0x2A, []byte{off}); err != nil {
+		return nil, err
+	}
+	d.sleep(200 * time.Millisecond)
+	if err := d.send(0xFE, []byte{0x2A}); err != nil {
+		return nil, err
+	}
+	return d.awaitMatch(0x2A, func(p []byte) bool {
+		return len(p) >= 1 && (p[0] == 0 || p[0] == 2)
+	}, "00 or 02 (off)", 3*time.Second)
+}
+
+// wearByteMatches reports whether a read-back byte 0 of 0x2C confirms a write
+// of state. 0x00 and 0x02 both mean "off": the vendor app writes 0x00, this
+// tool writes 0x02, and which one the firmware keeps is what `wear off
+// --off-byte` is meant to find out.
+func wearByteMatches(state, got byte) bool {
+	if state == 0 || state == 2 {
+		return got == 0 || got == 2
+	}
+	return got == state
+}
+
 // wearSet reads 0x2C, replaces byte 0 with state and writes the rest back
 // unchanged, under one txMu.
 func (d *daemon) wearSet(state byte) ([]byte, error) {
@@ -1594,7 +1667,7 @@ func (d *daemon) wearSet(state byte) ([]byte, error) {
 		return nil, err
 	}
 	return d.awaitMatch(0x2C, func(p []byte) bool {
-		return len(p) >= len(set) && p[0] == state && bytes.Equal(p[1:len(set)], set[1:])
+		return len(p) >= len(set) && wearByteMatches(state, p[0]) && bytes.Equal(p[1:len(set)], set[1:])
 	}, fmt.Sprintf("%x", set), 3*time.Second)
 }
 
@@ -1623,6 +1696,9 @@ var optionalCmds = []struct {
 	{"ancLevel", 0x07, nil},
 	{"promptVol", 0x1D, sanePromptVolume},
 	{"wearSensitivity", 0x48, func(p []byte) bool { return len(p) >= 1 && p[0] >= 1 && p[0] <= 3 }},
+	// FE 01 23 -> [1 on | 2 off]. The capability is further gated on a
+	// verified model in gatherStatus.
+	{"ldac", 0x23, func(p []byte) bool { return len(p) >= 1 && (p[0] == 1 || p[0] == 2) }},
 }
 
 // readOnlyCmds are commands that answer a query yet must not be written.
@@ -1641,10 +1717,9 @@ var optionalCmds = []struct {
 var readOnlyCmds = buildReadOnlyCmds()
 
 func buildReadOnlyCmds() map[string]string {
-	m := map[string]string{
-		// 0x23 reboots the earbuds on write and nothing documents the restart.
-		"ldac": "writing it reboots the earbuds (undocumented firmware fault)",
-	}
+	// ldac (0x23) is no longer here: it is a verified-only setter whose
+	// restart the vendor server declares (verifiedOnlyActions).
+	m := map[string]string{}
 	if !promptVolWritable {
 		// One-byte writes to 0x1D were ignored (read back 06 0f). The
 		// two-byte frame FF 04 1D 02 v 00 is verified on the test device (N70, 2026-10-13).
@@ -1682,7 +1757,7 @@ func (d *daemon) handlerHasFeature(f FeatureFlag) bool {
 // verifiedOnlyCmds are the daemon commands whose wire behaviour was only ever
 // established on the verified model: they are refused on any model that is not verified.
 var verifiedOnlyCmds = map[string]bool{"eqApply": true, "eqMasterGain": true, "keysSet": true, "fitTest": true,
-	"hearingMode": true, "hearingWrite": true}
+	"hearingMode": true, "hearingWrite": true, "windOffByte": true}
 
 // gateCommand is the single gate between a request and the model-specific
 // commands. A model that is not Verified gets none of the verified-only commands,

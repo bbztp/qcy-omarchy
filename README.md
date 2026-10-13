@@ -195,7 +195,8 @@ The backend is also usable on its own:
 qcyctl status --json          # full machine-readable snapshot
 qcyctl status                 # human-readable snapshot
 qcyctl anc noisy              # set ANC mode
-qcyctl ldac on                # toggles: game|sleep|ldac|multipoint|wind
+qcyctl game on                # toggles: game|sleep|multipoint|wind
+qcyctl ldac on --yes          # restarts the earbuds; verified models only; not yet verified on hardware
 qcyctl find                   # flash the earbuds
 qcyctl prompt-vol 8           # prompt volume: 4|6|8|10|low|medium|high|max (N70)
 qcyctl wear-sensitivity high  # medium|normal|high|1|2|3 (N70; needs wear detection on)

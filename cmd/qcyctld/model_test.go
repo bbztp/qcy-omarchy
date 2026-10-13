@@ -196,21 +196,24 @@ func TestDaemonUsesVendorIDAndKeepsProfileReadOnly(t *testing.T) {
 		t.Errorf("fitTest: %v", err)
 	}
 	_, err = d.handleRequest(request{Cmd: "set", Args: map[string]interface{}{"action": "ldac"}})
-	if err == nil || !strings.Contains(err.Error(), "ldac is disabled") {
+	if err == nil || !strings.Contains(err.Error(), "verified model") {
 		t.Errorf("ldac: %v", err)
 	}
 	if acts, _ := m["actions"].([]string); len(acts) == 0 {
 		t.Errorf("model.actions missing: %v", m)
 	}
-	// ldac and promptVol stay read-only whatever the profile says.
+	// ldac (verified models only) and promptVol are not writable here.
 	for _, a := range []string{"ldac", "promptVol"} {
 		_, err := d.handleRequest(request{Cmd: "set", Args: map[string]interface{}{"action": a}})
 		if err == nil {
 			t.Errorf("%s was writable", a)
 		}
 	}
-	if _, ro := readOnlyCmds["ldac"]; !ro {
-		t.Error("ldac must stay in readOnlyCmds")
+	if _, ro := readOnlyCmds["ldac"]; ro {
+		t.Error("ldac must not be in readOnlyCmds any more (verified-only instead)")
+	}
+	if !verifiedOnlyActions["ldac"] {
+		t.Error("ldac must be a verified-only action")
 	}
 	if _, ro := readOnlyCmds["promptVol"]; ro == promptVolWritable {
 		t.Errorf("promptVol read-only=%v with promptVolWritable=%v", ro, promptVolWritable)

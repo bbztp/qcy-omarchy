@@ -88,7 +88,7 @@ big-endian, company id `0x521c`) instead of by the Bluetooth name:
    `qcy-<vendorId>`, driven by a profile generated from the product entry
    (`Features`: ANC, channel balance, find, auto-off, settings by cmdid 9/16/35/36/42/44
    or by name). It offers only the actions of the shared command set that the product
-   declares; EQ is never offered or written, `ldac`/`promptVol` stay read-only.
+   declares; EQ is never offered or written, `promptVol` stays read-only; `ldac` is written on verified models only.
 3. otherwise the advertised name, then the firmware string, then `generic`.
 
 The vendorId is only visible in a scan, so it is stored as an extra last field of

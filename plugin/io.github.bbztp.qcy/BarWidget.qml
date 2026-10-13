@@ -75,10 +75,11 @@ Panel {
   ]
   readonly property var _cancelScenes: ["adaptive", "indoor", "commuting", "noisy", "antiwind"]
 
-  // LDAC is deliberately absent: writing 0x23 reboots the earbuds and, unlike
-  // multipoint below, the restart is not documented behaviour. Multipoint IS
-  // listed because the product notes state the earphones restart every time
-  // Dual Device Connection is toggled — that is expected, not a fault.
+  // LDAC is not in this list: it restarts the earbuds, so it has its own row
+  // below with a two-step confirmation, shown only when the daemon reports the
+  // `ldac` capability (verified models). Multipoint is listed because the
+  // product notes state the earphones restart every time Dual Device
+  // Connection is toggled — that is expected, not a fault.
   readonly property var toggleDefs: [
     { key: "game", label: Qcy.tr("Game mode"), hint: Qcy.tr("Lower latency") },
     { key: "sleep", label: Qcy.tr("Sleep mode"), hint: Qcy.tr("Disables the touch controls; no effect on the sound") },
@@ -713,8 +714,16 @@ Panel {
     var next = Object.assign({}, optimistic)
     next[key] = on
     optimistic = next
-    Qcy.set(label, [key, on ? "on" : "off"])
+    var args = [key, on ? "on" : "off"]
+    // LDAC restarts the earbuds: the CLI refuses it without --yes, which the
+    // panel passes only after its own two-step confirmation.
+    if (key === "ldac") args.push("--yes")
+    Qcy.set(label, args)
   }
+
+  // LDAC: only with the daemon's capability, never from the fallback `true`.
+  readonly property bool ldacVisible: !!(caps && caps.ldac === true) && has("ldac")
+  property bool ldacConfirming: false
 
   function setAnc(key) {
     var next = Object.assign({}, optimistic)
@@ -1624,6 +1633,46 @@ Panel {
                 hint: ""
                 checked: root.toggleState("spatial")
                 onToggled: root.setToggle("spatial", "Spatial audio", !root.toggleState("spatial"))
+              }
+
+              PanelSeparator {
+                visible: root.ldacVisible
+                foreground: root.foreground
+              }
+              ToggleRow {
+                width: parent.width
+                visible: root.ldacVisible
+                label: Qcy.tr("LDAC")
+                hint: Qcy.tr("Restarts the earbuds; this is expected, not a fault")
+                checked: root.toggleState("ldac")
+                onToggled: root.ldacConfirming = true
+              }
+              Column {
+                width: parent.width
+                visible: root.ldacVisible && root.ldacConfirming
+                spacing: Style.space(6)
+                Text {
+                  width: parent.width
+                  text: Qcy.tr("This restarts the earbuds. Continue?")
+                  color: root.foreground
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+                Row {
+                  spacing: Style.space(6)
+                  Chip {
+                    label: Qcy.tr("Yes")
+                    onClicked: {
+                      root.ldacConfirming = false
+                      root.setToggle("ldac", "LDAC", !root.toggleState("ldac"))
+                    }
+                  }
+                  Chip {
+                    label: Qcy.tr("No")
+                    onClicked: root.ldacConfirming = false
+                  }
+                }
               }
 
               PanelSeparator {
