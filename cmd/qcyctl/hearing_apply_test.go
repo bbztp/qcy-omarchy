@@ -1122,3 +1122,35 @@ func TestApplyBaselineFlagIsValidated(t *testing.T) {
 		}
 	}
 }
+
+func TestHearingApplyFileBaselineZeroNeedsTheExplicitFlag(t *testing.T) {
+	zeroFile := func(t *testing.T) string {
+		return resultFile(t, func(m map[string]interface{}) { m["baseline"] = "zero" })
+	}
+	r := newRig(t, nil)
+	err := hearingApplyFile(r.env, zeroFile(t), hearingApplyOpts{yes: true})
+	if err == nil || !strings.Contains(err.Error(), "pass --baseline zero to confirm") {
+		t.Fatalf("err %v", err)
+	}
+	if r.link.list() != "" || r.link.statusCalls != 0 || len(r.link.baselines) != 0 || len(r.saved) != 0 {
+		t.Fatal("something reached the daemon")
+	}
+	// explicit flag: 13 bands (baseline zero reaches the write).
+	r = newRig(t, nil)
+	if err := hearingApplyFile(r.env, zeroFile(t), hearingApplyOpts{yes: true, baseline: "zero"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.link.baselines) != 2 || r.link.baselines[0] != "zero" {
+		t.Fatalf("baselines %v", r.link.baselines)
+	}
+	// factory file + explicit zero: the user decides.
+	r = newRig(t, nil)
+	if err := hearingApplyFile(r.env, resultFile(t, nil), hearingApplyOpts{yes: true, baseline: "zero"}); err != nil || r.link.baselines[0] != "zero" {
+		t.Fatalf("%v %v", err, r.link.baselines)
+	}
+	// factory file, no flag: factory.
+	r = newRig(t, nil)
+	if err := hearingApplyFile(r.env, resultFile(t, nil), hearingApplyOpts{yes: true}); err != nil || r.link.baselines[0] != "factory" {
+		t.Fatalf("%v %v", err, r.link.baselines)
+	}
+}

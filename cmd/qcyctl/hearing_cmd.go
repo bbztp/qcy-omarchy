@@ -263,17 +263,24 @@ func hearingRunCmd(args []string, out io.Writer) error {
 			apply: *apply, yes: *yes, deviceMode: *devMode, acceptFloor: *acceptFloor, noSlot11Backup: *noS11,
 			outFile: *outFile, baseline: *baseline}
 		if *events {
+			defaulted := false
 			if o.outFile == "" {
 				p, err := defaultHearingOut(time.Now())
 				if err != nil {
 					return fmt.Errorf("--out: %w", err)
 				}
-				o.outFile = p
+				o.outFile, defaulted = p, true
 			}
 			o.events = out
 			env, done := liveHearingEventsEnv()
 			defer done()
-			return hearingRunLive(env, o)
+			err := hearingRunLive(env, o)
+			if defaulted { // an aborted run leaves the pre-created file empty
+				if st, e := os.Stat(o.outFile); e == nil && st.Size() == 0 {
+					_ = os.Remove(o.outFile)
+				}
+			}
+			return err
 		}
 		env, done := liveHearingEnv(out)
 		defer done()

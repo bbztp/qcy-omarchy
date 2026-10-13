@@ -654,9 +654,11 @@ func hearingApplyFile(env hearingEnv, path string, o hearingApplyOpts) (err erro
 		return fmt.Errorf("refused to write: %d band(s) were still heard at the lowest level, so the result is only relative; rerun the test with a lower --sink-volume, or pass --accept-floor; nothing was sent", nFloor)
 	}
 
-	if o.baseline == "" { // not given on the command line: what the run recorded
-		o.baseline = baselineOrFactory(f.Baseline)
+	// The file only informs: it never selects the experiment by itself.
+	if o.baseline == "" && f.Baseline == "zero" {
+		return errors.New("the result file asks for baseline zero (experiment); pass --baseline zero to confirm; nothing was sent")
 	}
+	o.baseline = baselineOrFactory(o.baseline)
 	record := env.recorder(l, r, f.SinkVolume, f.Timestamp, o.baseline)
 	_, _, err = hearingWriteGains(env, l, r, o, record)
 	return err

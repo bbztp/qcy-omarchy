@@ -444,3 +444,98 @@ func TestHearingRunEventsRejectsWriteFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestEventsPanicInTheRunStillCleansUpAndStops(t *testing.T) {
+	r := newEventsRig(t)
+	var once sync.Once
+	r.ex.onCall = func(line string) {
+		if strings.HasPrefix(line, "pactl set-sink-volume") && strings.HasSuffix(line, "100%") {
+			once.Do(func() { panic("boom in pactl") })
+		}
+	}
+	err := hearingRunLive(r.env, r.opts)
+	if err == nil || !strings.Contains(err.Error(), "panic") {
+		t.Fatalf("err %v", err)
+	}
+	r.assertStoppedAfterCleanup(t)
+	evs := r.list(t)
+	if last := evs[len(evs)-1]; last["event"] != "stopped" || last["reason"] != "error" {
+		t.Fatalf("%v", evNames(evs))
+	}
+	if r.ex.index("set-sink-mute bluez_output.AA_BB_CC_DD_EE_FF.1 1") < 0 {
+		t.Error("mute not restored after the panic")
+	}
+}
+
+func TestEventKeysIndexAndLongLines(t *testing.T) {
+	long := strings.Repeat("x", maxEventLine+10)
+	k := newEventKeys(strings.NewReader("heard 7\n" + long + "\nheard x\nheard 1 2\nrepeat 3\nnot-heard\nabort\n"))
+	type kv struct {
+		b   byte
+		idx int
+	}
+	var got []kv
+	for {
+		b, err := k.ReadKey()
+		if err != nil {
+			break
+		}
+		got = append(got, kv{b, k.LastIndex()})
+	}
+	want := []kv{{'h', 7}, {'n', 0}, {'q', 0}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestEventsAnswerForAnotherToneIsDiscarded(t *testing.T) {
+	r := newEventsRig(t)
+	go func() {
+		for r.pl.startedCount() < 1 {
+			time.Sleep(time.Millisecond)
+		}
+		io.WriteString(r.stdinW, "heard 5\n")     // not the current tone
+		io.WriteString(r.stdinW, "not-heard 1\n") // the current one
+		for r.pl.startedCount() < 2 {
+			time.Sleep(time.Millisecond)
+		}
+		io.WriteString(r.stdinW, "abort\n")
+	}()
+	if err := hearingRunLive(r.env, r.opts); err != nil {
+		t.Fatal(err)
+	}
+	answers := 0
+	for _, e := range r.list(t) {
+		if e["event"] == "answer" {
+			answers++
+			if e["heard"] != false {
+				t.Errorf("the stale answer was applied: %v", e)
+			}
+		}
+	}
+	if answers != 1 {
+		t.Errorf("answers %d", answers)
+	}
+}
+
+func TestDefaultHearingOutIsPrivateAndExclusive(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", base)
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	p1, err := defaultHearingOut(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := defaultHearingOut(now)
+	if err != nil || p1 == p2 {
+		t.Fatalf("%v %s %s", err, p1, p2)
+	}
+	st, _ := os.Stat(p1)
+	ds, _ := os.Stat(filepath.Dir(p1))
+	if st.Mode().Perm() != 0o600 || ds.Mode().Perm() != 0o700 {
+		t.Errorf("%v %v", st.Mode(), ds.Mode())
+	}
+	if !strings.HasPrefix(p1, base) {
+		t.Errorf("%s", p1)
+	}
+}

@@ -683,11 +683,20 @@ the human progress text on stderr. It never writes to the earbuds (`--apply`,
 `--yes`, `--accept-floor`, `--dry-run` are refused): the result is saved to
 `--out` (default `~/.cache/qcy-omarchy/hearing-<timestamp>.json`, mode 0600)
 and written later with `qcyctl hearing apply <out.json> --yes [--accept-floor]
-[--baseline factory|zero]`. `--baseline zero` is recorded in the file and used
-by `hearing apply` when its own `--baseline` is not given.
+[--baseline factory|zero]`. `--baseline zero` is recorded in the file only as
+information: `hearing apply` refuses such a file ("the result file asks for
+baseline zero (experiment); pass --baseline zero to confirm") unless
+`--baseline zero` is given explicitly, so the plugin must pass the flag itself
+when it applies a result of a run made with `--baseline zero`. Without `--out`
+the file is created (exclusively, mode 0600, in a 0700 directory) as
+`~/.cache/qcy-omarchy/hearing-<date>-<time.ms>.json`. `--device-mode` only
+allows the test-mode frame (0x45) to be sent; curves are never sent in this
+mode.
 
 Commands, one per line on stdin: `heard`, `not-heard`, `repeat`, `abort`
-(case-insensitive; anything else is ignored). EOF is an abort. A command that
+(case-insensitive; anything else, and any line over 1 MiB, is ignored and does
+not abort). `heard <index>` / `not-heard <index>` answer only the tone with that
+`index`: any other index is discarded. EOF is an abort. A command that
 arrives while no tone is playing is discarded, as a key is in the terminal run;
 a tone that died is replayed (at most twice per band, then the run fails).
 

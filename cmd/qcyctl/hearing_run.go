@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -480,12 +481,19 @@ type hearingBackup struct {
 // hearingRunLive runs the whole test. Cleanup runs on every return path. With
 // o.events set it also writes the JSON-lines events (hearing_events.go); the
 // terminal event "stopped" is written only after the cleanup.
-func hearingRunLive(env hearingEnv, o hearingRunOpts) error {
+func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	if o.events == nil {
 		return hearingRunCore(env, o, func(string, map[string]interface{}) {})
 	}
 	emit := newEventEmitter(o.events)
-	err := hearingRunCore(env, o, emit)
+	// A panic on this goroutine has already run the core's cleanup (deferred
+	// undo chain) when it gets here: report it and still close the stream.
+	defer func() {
+		if r := recover(); r != nil {
+			err = finishEvents(emit, fmt.Errorf("panic: %v", r))
+		}
+	}()
+	err = hearingRunCore(env, o, emit)
 	return finishEvents(emit, err)
 }
 
@@ -540,6 +548,9 @@ func hearingRunCore(env hearingEnv, o hearingRunOpts, emit func(string, map[stri
 	// silence wait included, and nothing is raised after it.
 	keyCh := make(chan byte, 16)
 	keyErr := make(chan error, 1)
+	// curTone is the index of the tone being presented (events mode: a command
+	// "heard N" / "not-heard N" for another tone is discarded).
+	var curTone int64
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -560,6 +571,11 @@ func hearingRunCore(env hearingEnv, o hearingRunOpts, emit func(string, map[stri
 				if k == 'q' {
 					ab.abort(errStopRequested)
 					return
+				}
+				if ik, ok := keys.(interface{ LastIndex() int }); ok {
+					if n := ik.LastIndex(); n > 0 && int64(n) != atomic.LoadInt64(&curTone) {
+						continue // an answer to a tone that is not the current one
+					}
 				}
 				select { // never block: an "abort" behind a full queue must be read
 				case keyCh <- k:
@@ -804,6 +820,7 @@ func hearingRunCore(env hearingEnv, o hearingRunOpts, emit func(string, map[stri
 				return e
 			}
 			drainKeys() // the window of sinkAlive and of the previous tone's stop
+			atomic.StoreInt64(&curTone, int64(len(answers)+1))
 			stop, dead, e := env.player.Start(sink, t.Ear, t.Freq, t.LevelDB)
 			if e != nil {
 				return fmt.Errorf("play tone: %w", e)
