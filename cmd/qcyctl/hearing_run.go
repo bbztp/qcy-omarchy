@@ -176,6 +176,9 @@ func parseSinkProps(long, name string) map[string]string {
 				found = strings.TrimPrefix(t, "Name: ") == name
 				continue
 			}
+			if strings.HasPrefix(t, "State: ") {
+				props["State"] = strings.TrimPrefix(t, "State: ")
+			}
 			if strings.HasPrefix(t, "Description: ") {
 				props["Description"] = strings.TrimPrefix(t, "Description: ")
 			}
@@ -324,6 +327,13 @@ func mprisFor(env hearingEnv) (*mprisCtl, error) {
 // ---------- the run ----------
 
 var errInterrupted = errors.New("interrupted")
+
+// How long the run waits for the sink to go quiet after the players were
+// paused: audioStopPolls polls, audioStopPoll apart (8 s).
+const (
+	audioStopPoll  = 250 * time.Millisecond
+	audioStopPolls = 32
+)
 
 // errToneDead: the tone stopped playing while waiting for the answer.
 var errToneDead = errors.New("tone died")
@@ -577,13 +587,42 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	if len(paused) > 0 {
 		fmt.Fprintf(out, "paused: %s (resumed at the end)\n", strings.Join(paused, ", "))
 	}
-	env.sleep(200 * time.Millisecond)
-	inputs, err := env.exec("pactl", "list", "sink-inputs")
-	if err != nil {
-		return fmt.Errorf("pactl list sink-inputs: %w", err)
-	}
-	if act := activeStreamsOn(inputs, sinkIdx); len(act) > 0 {
-		return fmt.Errorf("audio is still playing into %s (%s): stop it and run again; the volume was not raised", sink, strings.Join(act, ", "))
+	// A paused player's stream lingers for a few seconds. Wait (bounded) for
+	// the sink to stop RUNNING; a leftover non-corked stream on a sink that is
+	// IDLE/SUSPENDED carries no data and does not count. Still RUNNING at the
+	// timeout -> abort, naming who holds the stream.
+	var lastState string
+	var lastActive []string
+	for poll := 0; ; poll++ {
+		sinksOut, err := env.exec("pactl", "list", "sinks")
+		if err != nil {
+			return fmt.Errorf("pactl list sinks: %w", err)
+		}
+		inputs, err := env.exec("pactl", "list", "sink-inputs")
+		if err != nil {
+			return fmt.Errorf("pactl list sink-inputs: %w", err)
+		}
+		lastState = strings.ToUpper(strings.TrimSpace(parseSinkProps(sinksOut, sink)["State"]))
+		lastActive = activeStreamsOn(inputs, sinkIdx)
+		quiet := len(lastActive) == 0
+		if lastState != "" { // the state is authoritative when pactl reports it
+			quiet = lastState == "IDLE" || lastState == "SUSPENDED"
+		}
+		if quiet {
+			break
+		}
+		if poll >= audioStopPolls {
+			who := "no stream listed"
+			if len(lastActive) > 0 {
+				who = strings.Join(lastActive, ", ")
+			}
+			return fmt.Errorf("audio is still playing into %s (state %s; %s) after %s: stop it and run again; the volume was not raised",
+				sink, lastState, who, time.Duration(audioStopPolls)*audioStopPoll)
+		}
+		if poll == 0 {
+			fmt.Fprintln(out, "waiting for the audio to stop…")
+		}
+		env.sleep(audioStopPoll)
 	}
 	if e := checkAbort(); e != nil {
 		return e
@@ -1019,6 +1058,17 @@ const (
 	toneStopGrace     = 600 * time.Millisecond
 )
 
+// pwcatArgs are the arguments of pw-cat: stdin ("-") carries RAW s16le stereo
+// 44.1 kHz PCM, not an audio file, so --raw is required; without it pw-cat
+// tries to sniff a container with libsndfile and dies with "Format not
+// recognised". The properties keep the stream on the earbuds' sink (no
+// fallback to another device, no reconnect elsewhere).
+func pwcatArgs(sink string) []string {
+	return []string{"--playback", "--raw", "--target", sink,
+		"-P", "node.dont-fallback=true node.dont-reconnect=true",
+		"--format", "s16", "--rate", "44100", "--channels", "2", "-"}
+}
+
 func (p pwcatPlayer) Start(sink string, ear hearing.Ear, freq int, levelDB float64) (func() error, <-chan struct{}, error) {
 	bin := p.bin
 	if bin == "" {
@@ -1029,9 +1079,7 @@ func (p pwcatPlayer) Start(sink string, ear hearing.Ear, freq int, levelDB float
 		return nil, nil, err
 	}
 	shrinkPipe(pw)
-	cmd := exec.Command(bin, "--playback", "--target", sink,
-		"-P", "node.dont-fallback=true node.dont-reconnect=true",
-		"--format", "s16", "--rate", "44100", "--channels", "2", "-")
+	cmd := exec.Command(bin, pwcatArgs(sink)...)
 	cmd.Stdin = pr
 	if err := cmd.Start(); err != nil {
 		pr.Close()

@@ -49,7 +49,7 @@ func newFakeExec() *fakeExec {
 			"playerctl --player=firefox.instance123 status":        "Paused\n",
 			"playerctl --player=mpv status":                        "Playing\n",
 			"pactl get-sink-mute bluez_output.AA_BB_CC_DD_EE_FF.1": "Mute: yes\n",
-			"pactl list sinks":                                     "Sink #47\n\tName: alsa_output.pci.analog-stereo\n\tDescription: Built-in\n\nSink #92\n\tState: RUNNING\n\tName: bluez_output.AA_BB_CC_DD_EE_FF.1\n\tDescription: QCY MeloBuds N70\n\tProperties:\n\t\tapi.bluez5.address = \"AA:BB:CC:DD:EE:FF\"\n\t\tdevice.description = \"QCY MeloBuds N70\"\n",
+			"pactl list sinks":                                     "Sink #47\n\tName: alsa_output.pci.analog-stereo\n\tDescription: Built-in\n\nSink #92\n\tState: IDLE\n\tName: bluez_output.AA_BB_CC_DD_EE_FF.1\n\tDescription: QCY MeloBuds N70\n\tProperties:\n\t\tapi.bluez5.address = \"AA:BB:CC:DD:EE:FF\"\n\t\tdevice.description = \"QCY MeloBuds N70\"\n",
 			"pactl list sink-inputs":                               "Sink Input #5\n\tSink: 47\n\tCorked: no\n\nSink Input #6\n\tSink: 92\n\tCorked: yes\n",
 		},
 		vol: "Volume: front-left: 39321 /  60% / -13.30 dB,   front-right: 36044 /  55% / -15.00 dB\n        balance -0.08\n",
@@ -711,6 +711,7 @@ func TestHearingRunStillPlayingAfterPauseAborts(t *testing.T) {
 func TestHearingRunActiveStreamOnSinkAborts(t *testing.T) {
 	r := newRig(t, cycleKeys())
 	r.ex.out["pactl list sink-inputs"] = "Sink Input #9\n\tSink: 92\n\tCorked: no\n\t\tapplication.name = \"Firefox\"\n"
+	r.ex.out["pactl list sinks"] = strings.Replace(r.ex.out["pactl list sinks"], "State: IDLE", "State: RUNNING", 1)
 	err := hearingRunLive(r.env, opts())
 	if err == nil || !strings.Contains(err.Error(), "still playing into") || !strings.Contains(err.Error(), "Firefox") {
 		t.Fatal(err)
@@ -1294,5 +1295,106 @@ func TestHearingRunRetryCountResetsAfterAnswer(t *testing.T) {
 	o.outFile = filepath.Join(t.TempDir(), "r.json")
 	if err := hearingRunLive(r.env, o); err != nil {
 		t.Fatal(err)
+	}
+}
+
+const activeInput = "Sink Input #1777\n\tSink: 92\n\tCorked: no\n\t\tapplication.name = \"Brave\"\n"
+
+func sinkState(r *rig, st string) {
+	o := r.ex.out["pactl list sinks"]
+	for _, old := range []string{"State: IDLE", "State: RUNNING", "State: SUSPENDED"} {
+		o = strings.Replace(o, old, "State: "+st, 1)
+	}
+	r.ex.out["pactl list sinks"] = o
+}
+
+// The sink is RUNNING for a few polls after the pause, then goes IDLE: the run
+// waits, says so, and carries on.
+func TestHearingRunWaitsForSinkToStopRunning(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	r.ex.out["pactl list sink-inputs"] = activeInput
+	sinkState(r, "RUNNING")
+	n := 0
+	r.ex.onCall = func(line string) {
+		if line == "pactl list sinks" {
+			n++
+			if n == 6 { // 1 = identity check, 2..5 = still running
+				sinkState(r, "IDLE")
+			}
+		}
+	}
+	slept := 0
+	r.env.sleep = func(time.Duration) { slept++ }
+	if err := hearingRunLive(r.env, opts()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.out.String(), "waiting for the audio to stop") || slept < 4 {
+		t.Fatalf("slept %d\n%s", slept, r.out.String())
+	}
+	if r.ex.index("set-sink-volume bluez_output.AA_BB_CC_DD_EE_FF.1 100%") < 0 {
+		t.Fatal("did not carry on")
+	}
+	r.assertRestored(t)
+}
+
+func TestHearingRunAlwaysRunningAbortsAtTimeoutWithoutTouchingVolume(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	r.ex.out["pactl list sink-inputs"] = activeInput
+	sinkState(r, "RUNNING")
+	var slept time.Duration
+	r.env.sleep = func(d time.Duration) { slept += d }
+	err := hearingRunLive(r.env, opts())
+	if err == nil || !strings.Contains(err.Error(), "still playing into") || !strings.Contains(err.Error(), "Brave") || !strings.Contains(err.Error(), "RUNNING") {
+		t.Fatal(err)
+	}
+	if slept < 7*time.Second || slept > 9*time.Second {
+		t.Fatalf("waited %s, want ~8s", slept)
+	}
+	if r.ex.count("set-sink") != 0 || r.link.list() != "" || r.pl.startedCount() != 0 {
+		t.Fatalf("side effects: %v", r.ex.calls)
+	}
+	if r.ex.count(" play") != 2 {
+		t.Fatal("paused players must be resumed")
+	}
+}
+
+// A browser stream that lingers (not corked) on a SUSPENDED/IDLE sink carries
+// no data: the run goes on without waiting.
+func TestHearingRunLingeringInputOnSuspendedSinkIsFine(t *testing.T) {
+	for _, st := range []string{"SUSPENDED", "IDLE"} {
+		r := newRig(t, cycleKeys())
+		r.ex.out["pactl list sink-inputs"] = activeInput
+		sinkState(r, st)
+		if err := hearingRunLive(r.env, opts()); err != nil {
+			t.Fatalf("%s: %v", st, err)
+		}
+		if strings.Contains(r.out.String(), "waiting for the audio") {
+			t.Fatalf("%s: waited for nothing", st)
+		}
+		r.assertRestored(t)
+	}
+}
+
+// stdin is raw PCM: pw-cat needs --raw or it fails with "Format not recognised".
+func TestPwcatArgsAreRawPCM(t *testing.T) {
+	a := pwcatArgs("bluez_output.X.1")
+	has := func(x string) int {
+		for i, v := range a {
+			if v == x {
+				return i
+			}
+		}
+		return -1
+	}
+	if has("--raw") < 0 && has("-a") < 0 {
+		t.Fatalf("no --raw: %v", a)
+	}
+	if a[len(a)-1] != "-" || has("--target") < 0 || a[has("--target")+1] != "bluez_output.X.1" ||
+		a[has("--format")+1] != "s16" || a[has("--rate")+1] != "44100" || a[has("--channels")+1] != "2" {
+		t.Fatalf("%v", a)
+	}
+	// and --raw must come before the "-" input, as an option.
+	if has("--raw") > len(a)-2 {
+		t.Fatalf("%v", a)
 	}
 }
