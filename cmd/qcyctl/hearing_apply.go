@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/bbztp/qcy-omarchy/internal/hearing"
@@ -31,7 +32,23 @@ type slot11Backup struct {
 	Name string
 	Note string
 	Live bool // read from the active slot 11 now; false = clone of the last known copy
+	// Warnings: library entries that could not be read although a usable copy
+	// was found.
+	Warnings []string
 }
+
+// slot11LibraryError: the library could not be read completely and no usable
+// copy of slot 11 was found. It is NOT waived by --no-slot11-backup: a copy may
+// exist in an entry that failed to load.
+type slot11LibraryError struct{ Failed []string }
+
+func (e *slot11LibraryError) Error() string {
+	return "no usable copy of slot 11 was found and these library entries could not be read, so one may exist among them: " + strings.Join(e.Failed, "; ")
+}
+
+// slot11BackupPrefix marks the entries this tool creates: they are never the
+// source of a later backup (after an apply, slot 11 holds the test result).
+const slot11BackupPrefix = "slot11-backup-"
 
 // slot11BackupName is the visible name of the backup card.
 func slot11BackupName(now time.Time) string {
@@ -98,36 +115,59 @@ func hearingSlot11Backup(snap *qcycore.EqSnapshot, now time.Time) (slot11Backup,
 		return b, err
 	}
 
-	curves, _ := qcycore.ListCurves()
+	curves, listErrs := qcycore.ListCurves()
+	var failed []string
+	for _, e := range listErrs {
+		failed = append(failed, e.Error())
+	}
+	// The source is the OLDEST known device read of slot 11 (the entry
+	// "experiencia-auditiva" first): once a test result has been written, slot
+	// 11 holds that result and later copies would be stale. Backups made by
+	// this tool are never sources.
 	var src *qcycore.Curve
+	rank := func(c *qcycore.Curve) int {
+		switch {
+		case c.ID == "experiencia-auditiva":
+			return 0
+		case c.Source == qcycore.SourceDeviceImport:
+			return 1
+		}
+		return 2
+	}
 	for i := range curves {
 		c := &curves[i]
-		if c.Slot != 11 || c.Payload == "" {
+		if c.Slot != 11 || c.Payload == "" || strings.HasPrefix(c.ID, slot11BackupPrefix) {
 			continue
 		}
 		if ok, _ := c.Applyable(); !ok {
 			continue
 		}
-		switch {
-		case src == nil:
-			src = c
-		case c.ID == "experiencia-auditiva" && src.ID != "experiencia-auditiva":
-			src = c
-		case src.ID != "experiencia-auditiva" && c.CreatedAt > src.CreatedAt:
+		if src == nil || rank(c) < rank(src) || (rank(c) == rank(src) && c.CreatedAt < src.CreatedAt) {
 			src = c
 		}
 	}
 	if src == nil {
+		if len(failed) > 0 {
+			return slot11Backup{}, &slot11LibraryError{Failed: failed}
+		}
 		return slot11Backup{}, errNoSlot11Copy
 	}
 	clone := *src
-	return create(func(name string) (qcycore.Curve, error) {
+	when := src.CreatedAt
+	if when == "" {
+		when = "data desconhecida"
+	}
+	b, err := create(func(name string) (qcycore.Curve, error) {
 		c := clone
 		c.Name, c.Source, c.CreatedAt = name, qcycore.SourceUser, stamp
-		c.Note = "Última leitura do slot 11 feita no aparelho em " + src.CreatedAt +
-			" (entrada " + src.ID + "); o aparelho não permite ler o slot 11 enquanto inativo."
+		c.Note = "Última leitura do slot 11 feita no aparelho em " + when + " (entrada " + src.ID +
+			"); o aparelho não permite ler o slot 11 enquanto inativo. Depois de gravar um resultado do teste auditivo o slot 11 contém esse resultado; esta é a leitura mais antiga conhecida."
 		return c, nil
 	})
+	if err == nil && len(failed) > 0 {
+		b.Warnings = append(b.Warnings, "some library entries could not be read (the copy used may not be the best one): "+strings.Join(failed, "; "))
+	}
+	return b, err
 }
 
 // ---------- backup ----------
@@ -137,6 +177,9 @@ type hearingBackupInfo struct {
 	Path, Restore                 string // JSON file; command that restores the active curve
 	Slot11, Slot11Name, Slot11Cmd string // library entry preserving slot 11 ("" when waived)
 	Slot11Live                    bool
+	// Warnings are printed by the caller's goroutine (printBackup), never from
+	// the backup goroutine.
+	Warnings []string
 }
 
 // hearingTakeBackup reads the full status and the raw active EQ, preserves
@@ -163,8 +206,9 @@ func hearingTakeBackup(env hearingEnv, link hearingLink, noSlot11 bool) (info he
 	case err == nil:
 		info.Slot11, info.Slot11Name, info.Slot11Live = b.ID, b.Name, b.Live
 		info.Slot11Cmd = "qcyctl library apply " + b.ID + " --yes"
+		info.Warnings = append(info.Warnings, b.Warnings...)
 	case errors.Is(err, errNoSlot11Copy) && noSlot11:
-		fmt.Fprintf(env.out, "WARNING: --no-slot11-backup: slot 11 (your hearing-test curve) will be overwritten and cannot be restored from this tool: %v\n", err)
+		info.Warnings = append(info.Warnings, fmt.Sprintf("--no-slot11-backup: slot 11 (your hearing-test curve) will be overwritten and cannot be restored from this tool: %v", err))
 	default:
 		return info, fmt.Errorf("slot 11 backup: %w", err)
 	}
@@ -188,6 +232,9 @@ func hearingTakeBackup(env hearingEnv, link hearingLink, noSlot11 bool) (info he
 
 // printBackup tells where the backups are and how to restore them.
 func printBackup(out io.Writer, in hearingBackupInfo) {
+	for _, w := range in.Warnings {
+		fmt.Fprintf(out, "WARNING: %s\n", w)
+	}
 	fmt.Fprintf(out, "backup: %s\nto restore the previous state: %s\n", in.Path, in.Restore)
 	if in.Slot11 != "" {
 		how := "clone of the last known copy"
@@ -255,7 +302,8 @@ type hearingResultFile struct {
 	Timestamp  string            `json:"timestamp"`
 	Sink       string            `json:"sink"`
 	SinkVolume int               `json:"sinkVolume"`
-	Answers    []json.RawMessage `json:"answers"`
+	SoundDB    []float64         `json:"soundDb"`
+	Answers    []heardRec        `json:"answers"`
 	Left       []int             `json:"left"`
 	Right      []int             `json:"right"`
 	Floor      map[string][]bool `json:"floor"`
@@ -269,10 +317,45 @@ type hearingApplyOpts struct {
 	noSlot11Backup               bool
 }
 
+const (
+	// maxResultFile bounds what `hearing apply` reads; a real result is ~100 KB.
+	maxResultFile = 1 << 20
+	// maxResultAnswers bounds the replay (a full test is ~100 answers).
+	maxResultAnswers = 5000
+)
+
+// readResultFile reads a regular file of at most maxResultFile bytes without
+// following a symlink at path.
+func readResultFile(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxResultFile+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxResultFile {
+		return nil, fmt.Errorf("%s is larger than %d bytes: not a hearing result", path, maxResultFile)
+	}
+	return b, nil
+}
+
 // loadHearingResult reads and validates a `hearing run --out` file. A dry-run
-// file (no sink/answers/floor) or an incomplete one is rejected.
+// file (no sink/answers/floor) or an incomplete one is rejected. The floor
+// flags of the file are NOT trusted: the answers are replayed through the
+// staircase engine and the gains and the flags it produces must be the ones
+// stored; nFloor comes from the replay.
 func loadHearingResult(path string) (l, r [hearing.Bands]int, f *hearingResultFile, nFloor int, err error) {
-	b, err := os.ReadFile(path)
+	b, err := readResultFile(path)
 	if err != nil {
 		return l, r, nil, 0, err
 	}
@@ -281,13 +364,20 @@ func loadHearingResult(path string) (l, r [hearing.Bands]int, f *hearingResultFi
 		return l, r, nil, 0, fmt.Errorf("%s: not a hearing result: %w", path, err)
 	}
 	bad := func(why string) error {
-		return fmt.Errorf("%s: not a complete result of `hearing run --out` (%s)", path, why)
+		return fmt.Errorf("%s: not a complete result of 'hearing run --out' (%s)", path, why)
 	}
 	if f.Sink == "" || f.SinkVolume <= 0 || len(f.Answers) == 0 {
 		return l, r, nil, 0, bad("no sink/sinkVolume/answers: a dry run or an aborted test cannot be applied")
 	}
+	if len(f.Answers) > maxResultAnswers {
+		return l, r, nil, 0, bad(fmt.Sprintf("%d answers (at most %d)", len(f.Answers), maxResultAnswers))
+	}
 	if len(f.Left) != hearing.Bands || len(f.Right) != hearing.Bands {
 		return l, r, nil, 0, bad(fmt.Sprintf("need %d gains per ear, got %d and %d", hearing.Bands, len(f.Left), len(f.Right)))
+	}
+	fl, fr := f.Floor["left"], f.Floor["right"]
+	if len(fl) != hearing.Bands || len(fr) != hearing.Bands {
+		return l, r, nil, 0, bad("the floor flags are missing")
 	}
 	for i := 0; i < hearing.Bands; i++ {
 		for _, g := range []int{f.Left[i], f.Right[i]} {
@@ -296,17 +386,8 @@ func loadHearingResult(path string) (l, r [hearing.Bands]int, f *hearingResultFi
 			}
 		}
 		l[i], r[i] = f.Left[i], f.Right[i]
-	}
-	fl, fr := f.Floor["left"], f.Floor["right"]
-	if len(fl) != hearing.Bands || len(fr) != hearing.Bands {
-		return l, r, nil, 0, bad("the floor flags are missing")
-	}
-	for i := 0; i < hearing.Bands; i++ {
-		if fl[i] {
-			nFloor++
-		}
-		if fr[i] {
-			nFloor++
+		if (f.Left[i] == hearing.MinStep && !fl[i]) || (f.Right[i] == hearing.MinStep && !fr[i]) {
+			return l, r, nil, 0, bad(fmt.Sprintf("band %d sits at the staircase floor (%d) but is not flagged floor", i, hearing.MinStep))
 		}
 	}
 	var gl, gr [hearing.Bands]float64
@@ -315,6 +396,48 @@ func loadHearingResult(path string) (l, r [hearing.Bands]int, f *hearingResultFi
 	}
 	if d := computeResult(gl, gr).MasterGain - f.Result.MasterGain; d > 0.05 || d < -0.05 {
 		return l, r, nil, 0, bad(fmt.Sprintf("the stored master gain %.2f dB does not match the gains (%.2f dB)", f.Result.MasterGain, computeResult(gl, gr).MasterGain))
+	}
+
+	// Replay the answers through the engine.
+	if len(f.SoundDB) != hearing.Bands {
+		return l, r, nil, 0, bad("soundDb is missing: the answers cannot be replayed")
+	}
+	var sdb [hearing.Bands]float64
+	for i, v := range f.SoundDB {
+		if v != v || v > 1e6 || v < -1e6 {
+			return l, r, nil, 0, bad("soundDb has an invalid value")
+		}
+		sdb[i] = v
+	}
+	mod := fmt.Errorf("%s: the file was modified or produced by another version (its answers do not give its gains/floor flags)", path)
+	sess := hearing.NewSession(sdb)
+	for i, a := range f.Answers {
+		if sess.Done() {
+			return l, r, nil, 0, mod
+		}
+		t := sess.Current()
+		if a.Tone.Ear != t.Ear || a.Tone.Band != t.Band || a.Tone.Gain != t.Gain {
+			return l, r, nil, 0, fmt.Errorf("%w (answer %d)", mod, i+1)
+		}
+		if e := sess.Answer(a.Heard); e != nil {
+			return l, r, nil, 0, mod
+		}
+	}
+	if !sess.Done() {
+		return l, r, nil, 0, bad("the answers do not complete the test")
+	}
+	rl, rr := sess.Result()
+	rfl, rfr := sess.Floor()
+	for i := 0; i < hearing.Bands; i++ {
+		if rl[i] != l[i] || rr[i] != r[i] || rfl[i] != fl[i] || rfr[i] != fr[i] {
+			return l, r, nil, 0, mod
+		}
+		if rfl[i] {
+			nFloor++
+		}
+		if rfr[i] {
+			nFloor++
+		}
 	}
 	return l, r, f, nFloor, nil
 }

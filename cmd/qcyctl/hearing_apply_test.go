@@ -17,18 +17,32 @@ import (
 	"github.com/bbztp/qcy-omarchy/internal/qcycore"
 )
 
-// resultFile writes a `hearing run --out` style file and returns its path.
+// resultFile writes a `hearing run --out` style file (genuine answers from the
+// staircase engine, pattern n,n,h,...) and returns its path.
 func resultFile(t *testing.T, mut func(m map[string]interface{})) string {
 	t.Helper()
-	l := [hearing.Bands]int{0, 1, -2, -3, 0, 1, 0, 2}
-	r := [hearing.Bands]int{1, 0, -1, -2, 0, 0, 1, 1}
+	return resultFileFrom(t, func(i int) bool { return i%3 == 2 }, mut)
+}
+
+func resultFileFrom(t *testing.T, heard func(i int) bool, mut func(m map[string]interface{})) string {
+	t.Helper()
+	sess := hearing.NewSession(hearing.DefaultSoundDB)
+	var answers []heardRec
+	for i := 0; !sess.Done(); i++ {
+		h := heard(i)
+		answers = append(answers, heardRec{Tone: sess.Current(), Heard: h})
+		if err := sess.Answer(h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l, r := sess.Result()
+	fl, fr := sess.Floor()
 	res := computeResult(toF(l), toF(r))
-	z := make([]bool, hearing.Bands)
 	m := map[string]interface{}{
 		"timestamp": "2026-10-13T14:00:00Z", "sink": "bluez_output.AA_BB_CC_DD_EE_FF.1", "sinkVolume": 90,
-		"answers": []interface{}{map[string]interface{}{"heard": true}},
-		"left":    l[:], "right": r[:],
-		"floor":  map[string]interface{}{"left": z, "right": z},
+		"soundDb": hearing.DefaultSoundDB[:], "answers": answers,
+		"left": l[:], "right": r[:],
+		"floor":  map[string]interface{}{"left": fl[:], "right": fr[:]},
 		"result": map[string]interface{}{"masterGain": res.MasterGain},
 	}
 	if mut != nil {
@@ -108,11 +122,7 @@ func TestHearingApplyWithoutYesSendsNothing(t *testing.T) {
 
 func TestHearingApplyFloorNeedsAcceptFloor(t *testing.T) {
 	floorFile := func(t *testing.T) string {
-		return resultFile(t, func(m map[string]interface{}) {
-			f := make([]bool, hearing.Bands)
-			f[2] = true
-			m["floor"] = map[string]interface{}{"left": f, "right": make([]bool, hearing.Bands)}
-		})
+		return resultFileFrom(t, func(int) bool { return true }, nil) // always heard: all floor
 	}
 	r := newRig(t, nil)
 	err := hearingApplyFile(r.env, floorFile(t), hearingApplyOpts{yes: true})
@@ -125,6 +135,90 @@ func TestHearingApplyFloorNeedsAcceptFloor(t *testing.T) {
 	}
 	if !strings.Contains(r2.link.list(), "write:right") {
 		t.Fatal(r2.link.list())
+	}
+}
+
+// The floor flags and the gains of the file are not trusted: the answers are
+// replayed through the engine.
+func TestHearingApplyReplaysTheAnswers(t *testing.T) {
+	allHeard := func(int) bool { return true }
+	cases := map[string]string{
+		"floor flags cleared": resultFileFrom(t, allHeard, func(m map[string]interface{}) {
+			z := make([]bool, hearing.Bands)
+			m["floor"] = map[string]interface{}{"left": z, "right": z}
+		}),
+		"a gain at -8 without the flag": resultFileFrom(t, allHeard, func(m map[string]interface{}) {
+			z := make([]bool, hearing.Bands)
+			m["left"] = []int{-8, -8, -8, -8, -8, -8, -8, -8}
+			m["floor"] = map[string]interface{}{"left": z, "right": z}
+		}),
+		"gains edited against the answers": resultFile(t, func(m map[string]interface{}) {
+			g := m["left"].([]int)
+			g[0] = g[0] - 1
+			m["left"] = g
+			m["result"] = map[string]interface{}{"masterGain": -10.0}
+		}),
+		"an answer flipped": resultFile(t, func(m map[string]interface{}) {
+			a := m["answers"].([]heardRec)
+			a[3].Heard = !a[3].Heard
+		}),
+		"answers truncated": resultFile(t, func(m map[string]interface{}) {
+			a := m["answers"].([]heardRec)
+			m["answers"] = a[:len(a)-3]
+		}),
+		"extra answers": resultFile(t, func(m map[string]interface{}) {
+			a := m["answers"].([]heardRec)
+			m["answers"] = append(a, a[0])
+		}),
+	}
+	for name, p := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t, nil)
+			err := hearingApplyFile(r.env, p, hearingApplyOpts{yes: true, acceptFloor: true})
+			if err == nil || r.link.list() != "" || r.link.statusCalls != 0 || len(r.saved) != 0 {
+				t.Fatalf("accepted: %v", err)
+			}
+		})
+	}
+	// a genuine file with --accept-floor still goes through
+	r := newRig(t, nil)
+	if err := hearingApplyFile(r.env, resultFileFrom(t, allHeard, nil), hearingApplyOpts{yes: true, acceptFloor: true}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHearingApplyFileLimits(t *testing.T) {
+	r := newRig(t, nil)
+	dir := t.TempDir()
+	big := filepath.Join(dir, "big.json")
+	os.WriteFile(big, bytes.Repeat([]byte(" "), maxResultFile+10), 0o600)
+	if err := hearingApplyFile(r.env, big, hearingApplyOpts{yes: true}); err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("%v", err)
+	}
+	real := resultFile(t, nil)
+	link := filepath.Join(dir, "link.json")
+	os.Symlink(real, link)
+	if err := hearingApplyFile(r.env, link, hearingApplyOpts{yes: true}); err == nil {
+		t.Fatal("a symlink was followed")
+	}
+	if err := hearingApplyFile(r.env, dir, hearingApplyOpts{yes: true}); err == nil {
+		t.Fatal("a directory was read")
+	}
+	if err := hearingApplyFile(r.env, "/dev/zero", hearingApplyOpts{yes: true}); err == nil {
+		t.Fatal("a device file was read")
+	}
+	many := resultFile(t, func(m map[string]interface{}) {
+		a := m["answers"].([]heardRec)
+		for len(a) <= maxResultAnswers {
+			a = append(a, a[0])
+		}
+		m["answers"] = a
+	})
+	if err := hearingApplyFile(r.env, many, hearingApplyOpts{yes: true}); err == nil || !strings.Contains(err.Error(), "answers") {
+		t.Fatalf("%v", err)
+	}
+	if r.link.list() != "" || len(r.saved) != 0 {
+		t.Fatal("the daemon was touched")
 	}
 }
 
@@ -403,7 +497,7 @@ func TestSlot11BackupClonesTheLastKnownCopy(t *testing.T) {
 	if b.Live || c.Source != qcycore.SourceUser || c.Name != "Experiência auditiva (backup 2026-10-13 14:05)" || c.Slot != 11 {
 		t.Fatalf("%+v", c)
 	}
-	// the "experiencia-auditiva" entry wins over a more recent slot 11 copy
+	// the "experiencia-auditiva" entry wins over any other slot 11 copy
 	if !strings.Contains(c.Note, "2026-10-01T10:00:00Z") || !strings.Contains(c.Note, "não permite ler o slot 11 enquanto inativo") {
 		t.Fatalf("note: %q", c.Note)
 	}
@@ -417,17 +511,70 @@ func TestSlot11BackupClonesTheLastKnownCopy(t *testing.T) {
 	}
 }
 
-func TestSlot11BackupUsesTheMostRecentWhenThereIsNoNamedEntry(t *testing.T) {
+func TestSlot11BackupPrefersTheOldestDeviceReadAndSkipsOwnBackups(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	sandboxCurve(t, "velho", "Velho", qcycore.SourceDeviceImport, 11, "2026-09-01T10:00:00Z")
-	sandboxCurve(t, "novo", "Novo", qcycore.SourceUser, 11, "2026-10-10T10:00:00Z")
+	sandboxCurve(t, "novo", "Novo", qcycore.SourceDeviceImport, 11, "2026-10-10T10:00:00Z")
+	sandboxCurve(t, "meu", "Meu", qcycore.SourceUser, 11, "2026-08-01T10:00:00Z")
+	sandboxCurve(t, "slot11-backup-20260801-000000", "Backup antigo", qcycore.SourceUser, 11, "2026-07-01T10:00:00Z")
 	b, err := hearingSlot11Backup(&qcycore.EqSnapshot{Slot: 255, Payload: slot11Payload}, time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
 	c, _ := qcycore.LoadCurve(b.ID)
-	if !strings.Contains(c.Note, "2026-10-10T10:00:00Z") {
+	if !strings.Contains(c.Note, "2026-09-01T10:00:00Z") || !strings.Contains(c.Note, "(entrada velho)") ||
+		!strings.Contains(c.Note, "contém esse resultado") {
 		t.Fatalf("note: %q", c.Note)
+	}
+	// Only our own backups in the library: not a source.
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	sandboxCurve(t, "slot11-backup-20260801-000000", "Backup antigo", qcycore.SourceUser, 11, "2026-07-01T10:00:00Z")
+	if _, err := hearingSlot11Backup(&qcycore.EqSnapshot{Slot: 255}, time.Now()); !errors.Is(err, errNoSlot11Copy) {
+		t.Fatalf("%v", err)
+	}
+}
+
+// An unreadable library entry may hide the copy: with no usable copy that is
+// an error the waiver does not cover; with a usable copy it is a warning.
+func TestSlot11BackupLibraryReadErrors(t *testing.T) {
+	brokenSibling := func(t *testing.T, id string) {
+		var dir string
+		filepath.WalkDir(os.Getenv("XDG_DATA_HOME"), func(p string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() && filepath.Base(p) == id+".json" {
+				dir = filepath.Dir(p)
+			}
+			return nil
+		})
+		if dir == "" {
+			t.Fatal("library directory not found")
+		}
+		os.WriteFile(filepath.Join(dir, "quebrada.json"), []byte("{not json"), 0o600)
+	}
+	// no usable copy + a failing entry: not errNoSlot11Copy
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	sandboxCurve(t, "slot0", "Slot 0", qcycore.SourceDeviceImport, 0, "2026-10-12T10:00:00Z")
+	brokenSibling(t, "slot0")
+	_, err := hearingSlot11Backup(&qcycore.EqSnapshot{Slot: 255}, time.Now())
+	var le *slot11LibraryError
+	if !errors.As(err, &le) || errors.Is(err, errNoSlot11Copy) || !strings.Contains(err.Error(), "quebrada.json") {
+		t.Fatalf("%v", err)
+	}
+	// ... and the waiver does not cover it (through hearingTakeBackup)
+	r := newRig(t, nil)
+	r.env.slot11 = func(*qcycore.EqSnapshot) (slot11Backup, error) {
+		return hearingSlot11Backup(&qcycore.EqSnapshot{Slot: 255}, time.Now()) // slot 11 is not the active one
+	}
+	err = hearingApplyFile(r.env, resultFile(t, nil), hearingApplyOpts{yes: true, noSlot11Backup: true})
+	if err == nil || !strings.Contains(err.Error(), "quebrada.json") || r.link.list() != "" || len(r.saved) != 0 {
+		t.Fatalf("%v %s", err, r.link.list())
+	}
+	// usable copy + a failing entry: a warning
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	sandboxCurve(t, "experiencia-auditiva", "Experiência auditiva", qcycore.SourceDeviceImport, 11, "2026-10-01T10:00:00Z")
+	brokenSibling(t, "experiencia-auditiva")
+	b, err := hearingSlot11Backup(&qcycore.EqSnapshot{Slot: 255}, time.Now())
+	if err != nil || len(b.Warnings) != 1 || !strings.Contains(b.Warnings[0], "quebrada.json") {
+		t.Fatalf("%v %+v", err, b)
 	}
 }
 
