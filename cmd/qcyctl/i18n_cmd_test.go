@@ -312,7 +312,7 @@ func TestQmlKeysMatchPtBR(t *testing.T) {
 	re := regexp.MustCompile(`\btr\(\s*("(?:[^"\\]|\\.)*")`)
 	used := map[string]bool{}
 	for _, f := range []string{"BarWidget.qml", "Qcy.qml"} {
-		b, err := os.ReadFile(filepath.Join("..", "..", "plugin", "io.github.bbztp.qcy", f))
+		b, err := os.ReadFile(filepath.Join("..", "..", f))
 		if err != nil {
 			t.Skipf("plugin sources not available: %v", err)
 		}

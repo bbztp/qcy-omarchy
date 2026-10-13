@@ -235,7 +235,7 @@ cmd/qcyctld/                Go source for the qcyctld daemon
 internal/                   Go packages shared by both (qcycore, hearing)
 docs/                       PROTOCOL.md, WEB_API.md
 packaging/qcyctld.service   systemd user unit
-plugin/io.github.bbztp.qcy/ the Omarchy bar widget (QML)
+manifest.json, *.qml, qmldir, assets/  the Omarchy bar widget (QML plugin, at the repo root)
 scripts/install.sh          build + install
 ```
 

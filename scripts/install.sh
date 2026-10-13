@@ -94,22 +94,28 @@ echo "installing plugin -> ${plugin_dir}"
 # directory and hot-reloads the plugin on every write, and removing then
 # recreating the whole tree made it reload against a half-copied plugin (the
 # shell has crashed during such reloads). Nothing changed -> nothing written.
+# The plugin lives at the repository root; only its own files are installed
+# (never the Go sources, docs, scripts or .git).
+plugin_files() {
+  find "${repo_dir}" -maxdepth 1 -type f \( -name manifest.json -o -name qmldir -o -name '*.qml' \) -print0
+  find "${repo_dir}/assets" -type f -print0
+}
 fresh=0
 [ -d "${plugin_dir}" ] || fresh=1
 mkdir -p "${plugin_dir}"
 changed=0
 while IFS= read -r -d '' f; do
-  rel="${f#"${repo_dir}/plugin/${plugin_id}/"}"
+  rel="${f#"${repo_dir}/"}"
   if ! cmp -s "$f" "${plugin_dir}/${rel}"; then
     mkdir -p "$(dirname "${plugin_dir}/${rel}")"
     cp "$f" "${plugin_dir}/${rel}.tmp.$$" && mv -f "${plugin_dir}/${rel}.tmp.$$" "${plugin_dir}/${rel}"
     changed=1
   fi
-done < <(find "${repo_dir}/plugin/${plugin_id}" -type f -print0)
+done < <(plugin_files)
 # files that no longer exist in the repo
 while IFS= read -r -d '' f; do
   rel="${f#"${plugin_dir}/"}"
-  if [ ! -e "${repo_dir}/plugin/${plugin_id}/${rel}" ]; then
+  if [ ! -e "${repo_dir}/${rel}" ]; then
     rm -f "$f"
     changed=1
   fi
