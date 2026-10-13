@@ -1651,6 +1651,7 @@ Panel {
                 maximum: 100
                 step: 1
                 suffix: "%"
+                centered: true
                 value: root.sliderValue("balance", 50)
                 onReleased: function (v) { root.commitSlider("balance", "Balance", function (n) { return ["balance", String(Math.round(n))] }, Math.round(v)) }
               }
@@ -2179,7 +2180,10 @@ Panel {
 
   // A labelled slider with its current value on the right. The value only
   // follows the thumb while dragging, so releasing it and letting the setter
-  // finish does not yank the knob backwards.
+  // finish does not yank the knob backwards. `centered` turns it into a
+  // balance bar: the zero is the middle mark, the fill runs from the middle
+  // to the knob, the header reads "L n% · R m%" (minimum = all left, maximum =
+  // all right), dragging snaps to the middle within +-2 and right-click resets.
   component SliderRow: Item {
     id: srow
     required property string label
@@ -2190,8 +2194,18 @@ Panel {
     property bool integer: true
     property string suffix: ""
     property string busyLabel: ""
+    property bool centered: false
+    readonly property real mid: (srow.minimum + srow.maximum) / 2
+    readonly property real centerSnap: 2
+    readonly property real shown: srowSlider.dragging ? srowSlider.liveValue : srow.value
+    readonly property int rightPct: Math.round(Math.max(0, Math.min(1,
+      (srow.shown - srow.minimum) / Math.max(0.0001, srow.maximum - srow.minimum))) * 100)
     signal moved(real v)
     signal released(real v)
+
+    function snapped(v) {
+      return srow.centered && Math.abs(v - srow.mid) <= srow.centerSnap ? srow.mid : v
+    }
 
     implicitHeight: srowLabel.implicitHeight + Style.space(10) + Style.spacing.controlHeight
 
@@ -2206,7 +2220,9 @@ Panel {
     }
     Text {
       id: srowValue
-      text: (srow.integer ? Math.round(srow.value) : srow.value.toFixed(2)) + srow.suffix
+      text: srow.centered
+        ? Qcy.tr("L") + " " + (100 - srow.rightPct) + "% · " + Qcy.tr("R") + " " + srow.rightPct + "%"
+        : (srow.integer ? Math.round(srow.value) : srow.value.toFixed(2)) + srow.suffix
       color: root.accent
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
@@ -2226,11 +2242,52 @@ Panel {
       step: srow.step
       integer: srow.integer
       bar: root.bar
-      fillColor: root.accent
+      fillColor: srow.centered ? "transparent" : root.accent
       knobColor: root.foreground
-      trackColor: root.trackFill
-      onMoved: function (v) { srow.moved(v) }
+      trackColor: srow.centered ? "transparent" : root.trackFill
+      onMoved: function (v) {
+        var s = dragging ? srow.snapped(v) : v
+        if (s !== v) liveValue = s
+        srow.moved(s)
+      }
       onReleased: function (v) { srow.released(v) }
+      onRightClicked: if (srow.centered) {
+        liveValue = srow.mid
+        srow.moved(srow.mid)
+        srow.released(srow.mid)
+      }
+
+      // Centered mode draws its own track, fill and middle mark underneath
+      // the knob (z < 0 keeps them below the slider's own knob).
+      Item {
+        visible: srow.centered
+        anchors.fill: parent
+        z: -1
+
+        Rectangle {
+          id: cTrack
+          anchors.verticalCenter: parent.verticalCenter
+          width: parent.width
+          height: srowSlider.trackHeight
+          radius: height / 2
+          color: root.trackFill
+        }
+        Rectangle {
+          readonly property real p: cTrack.width * srowSlider.progress
+          anchors.verticalCenter: cTrack.verticalCenter
+          x: Math.min(p, cTrack.width / 2)
+          width: Math.abs(p - cTrack.width / 2)
+          height: cTrack.height
+          color: root.accent
+        }
+        Rectangle {
+          anchors.verticalCenter: cTrack.verticalCenter
+          x: cTrack.width / 2 - width / 2
+          width: Math.max(2, Style.space(2))
+          height: srowSlider.knobSize
+          color: root.muted
+        }
+      }
     }
   }
 
