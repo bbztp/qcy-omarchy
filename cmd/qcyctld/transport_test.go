@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/bbztp/qcy-omarchy/internal/protocol"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -183,4 +185,27 @@ func TestHangingOrphanDisconnectDoesNotBlockGet(t *testing.T) {
 		defer g2.mu.Unlock()
 		return g2.disc == nil
 	})
+}
+
+// The daemon's framing is protocol.Block: bytes identical to the hand-built
+// envelope it used before, for every opcode it writes.
+func TestBuildFrameMatchesLegacyEnvelope(t *testing.T) {
+	cases := []struct {
+		op     byte
+		params []byte
+	}{
+		{protocol.OpANC, []byte{3, 1, 0}}, {protocol.OpGame, []byte{1}}, {protocol.OpSleep, []byte{2}},
+		{protocol.OpFit, []byte{1, 1, 1}}, {protocol.OpAutoOff, []byte{4, 60, 0, 0, 0}},
+		{protocol.OpBalance, []byte{50}}, {protocol.OpPromptVolume, []byte{8, 0}},
+		{protocol.OpLDAC, []byte{1}}, {protocol.OpMultipoint, []byte{2}}, {protocol.OpWind, []byte{0}},
+		{protocol.OpWear, []byte{1, 2, 3}}, {protocol.OpSpatial, []byte{1}},
+		{protocol.OpHearingMode, []byte{1}}, {protocol.OpWearSensitivity, []byte{3}},
+		{protocol.OpQuery, []byte{protocol.OpANC}},
+	}
+	for _, c := range cases {
+		want := append([]byte{0xff, byte(len(c.params) + 2), c.op, byte(len(c.params))}, c.params...)
+		if got := buildFrame(c.op, c.params); !bytes.Equal(got, want) {
+			t.Errorf("0x%02x: got %x want %x", c.op, got, want)
+		}
+	}
 }

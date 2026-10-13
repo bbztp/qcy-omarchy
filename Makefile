@@ -27,3 +27,8 @@ uninstall:
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+.PHONY: protocol
+# Regenerate the embedded protocol registry from docs/reference/protocol.json.
+protocol:
+	python3 scripts/gen_protocol.py

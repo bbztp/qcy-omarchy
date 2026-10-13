@@ -453,3 +453,36 @@ func TestWriteFrameBandsZeroBaseline(t *testing.T) {
 		t.Fatal("WriteFrameBands(8 bands) != WriteFrame")
 	}
 }
+
+// legacyFrame is the envelope the package built by hand before the framing
+// moved to internal/protocol; the registry framing must stay byte-identical.
+func legacyFrame(cmd byte, params []byte) []byte {
+	out := []byte{0xff, byte(len(params) + 2), cmd, byte(len(params))}
+	return append(out, params...)
+}
+
+func TestFramesMatchLegacyEnvelope(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		v := byte(0)
+		if on {
+			v = 1
+		}
+		if got, want := FlagFrame(on), []byte{0xff, 0x03, 0x45, 0x01, v}; !bytes.Equal(got, want) {
+			t.Errorf("FlagFrame(%v) = %x want %x", on, got, want)
+		}
+	}
+	var gains [Bands]float64
+	for i := range gains {
+		gains[i] = float64(i) - 3.5
+	}
+	for ear, cmd := range map[Ear]byte{Left: 0x46, Right: 0x47} {
+		f := WriteFrame(ear, gains, -2.25)
+		if !bytes.Equal(f, legacyFrame(cmd, f[4:])) || f[2] != cmd || int(f[3]) != 7*Bands+3 {
+			t.Errorf("ear %v: %x", ear, f)
+		}
+		fb := WriteFrameBands(ear, ZeroBaselineBands(gains), -2.25)
+		if !bytes.Equal(fb, legacyFrame(cmd, fb[4:])) || fb[3] != 0x5e || fb[1] != 0x60 {
+			t.Errorf("ear %v bands: %x", ear, fb)
+		}
+	}
+}

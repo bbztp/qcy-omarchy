@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bbztp/qcy-omarchy/internal/protocol"
 	"github.com/bbztp/qcy-omarchy/internal/qcycore"
 	quicky "github.com/hui1601/Quicky/lib"
 	"tinygo.org/x/bluetooth"
@@ -46,11 +47,11 @@ var (
 
 	// Toggle opcodes: param [0x01]=on, [0x02]=off.
 	toggles = map[string]byte{
-		"game":       0x09,
-		"sleep":      0x10,
-		"ldac":       0x23,
-		"multipoint": 0x24,
-		"wind":       0x2A,
+		"game":       protocol.OpGame,
+		"sleep":      protocol.OpSleep,
+		"ldac":       protocol.OpLDAC,
+		"multipoint": protocol.OpMultipoint,
+		"wind":       protocol.OpWind,
 	}
 )
 
@@ -636,20 +637,8 @@ func (w *daemonClientWrapper) setActionExpect(action string, params, expect []by
 // opcodeFor maps a CLI action name to its opcode, refusing the ones that are
 // known-bad on this hardware. The daemon carries the same guard.
 func opcodeFor(action string) (byte, error) {
-	opcodeMap := map[string]byte{
-		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
-		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
-		// 0x11 starts/stops the ear-tip fit check (verified on the test device, an N70
-		// 2026-10-13). 0x2D is spatial audio, not yet exercised.
-		"fit":     0x11,
-		"spatial": 0x2D,
-		// Wear-sensor sensitivity 1..3 (1 medium, 2 normal, 3 high): frame
-		// FF 03 48 01 p, verified on a QCY MeloBuds N70 (the test device), 2026-10-13.
-		"wearSensitivity": 0x48,
-		// Indicator blink — how you spot a lost earbud. See the note in the
-		// daemon's opcodeMap for why this is not an audible tone.
-		"find": 0x05,
-	}
+	// 0x11 (fit) starts/stops the ear-tip fit check, verified on the test device
+	// (an N70, 2026-10-13); find maps to the indicator blink, see the daemon.
 	// ldac (0x23) restarts the earbuds and is writable on verified models
 	// only. Direct mode cannot tell the model, so it leaves the write to the
 	// daemon, which can.
@@ -667,7 +656,7 @@ func opcodeFor(action string) (byte, error) {
 	if action == "promptVol" && !promptVolWritable {
 		return 0, errors.New("prompt-vol is read-only on this device: promptVolWritable is false")
 	}
-	opcode, ok := opcodeMap[action]
+	opcode, ok := protocol.ActionOpcodes[action]
 	if !ok {
 		return 0, fmt.Errorf("unknown action: %s", action)
 	}
@@ -734,7 +723,7 @@ func eqApplyVia(l eqLink, op qcycore.EqOp) (*qcycore.EqResult, error) {
 }
 
 func (w *daemonClientWrapper) wearSet(state byte) ([]byte, error) {
-	cur, err := w.query(0x2C, 2*time.Second)
+	cur, err := w.query(protocol.OpWear, 2*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("wear: read current: %w", err)
 	}
@@ -745,7 +734,7 @@ func (w *daemonClientWrapper) wearSet(state byte) ([]byte, error) {
 		return nil, fmt.Errorf("wear: device returned an all-0xFF payload; nothing was written")
 	}
 	set := append([]byte{state}, cur[1:]...)
-	got, ok, err := w.setConfirm(0x2C, set, 3*time.Second, func(p []byte) bool {
+	got, ok, err := w.setConfirm(protocol.OpWear, set, 3*time.Second, func(p []byte) bool {
 		return len(p) >= len(set) && wearByteMatches(state, p[0]) && bytes.Equal(p[1:len(set)], set[1:])
 	})
 	if err != nil {
@@ -772,7 +761,7 @@ func (w *daemonClientWrapper) windOffByte(b byte) ([]byte, error) {
 	if b == 0 {
 		return nil, errOffByteZeroDirect
 	}
-	got, ok, err := w.setConfirm(0x2A, []byte{b}, 3*time.Second, func(p []byte) bool {
+	got, ok, err := w.setConfirm(protocol.OpWind, []byte{b}, 3*time.Second, func(p []byte) bool {
 		return len(p) >= 1 && (p[0] == 0 || p[0] == 2)
 	})
 	if err != nil {
@@ -785,14 +774,14 @@ func (w *daemonClientWrapper) windOffByte(b byte) ([]byte, error) {
 }
 
 func (w *daemonClientWrapper) fitTest(seconds int) (fitResult, error) {
-	defer func() { _ = w.send(0x11, fitStopParams) }()
+	defer func() { _ = w.send(protocol.OpFit, fitStopParams) }()
 	w.drain()
-	if err := w.send(0x11, fitStartParams); err != nil {
+	if err := w.send(protocol.OpFit, fitStartParams); err != nil {
 		return fitResult{}, err
 	}
 	deadline := time.Now().Add(time.Duration(seconds) * time.Second)
 	for time.Now().Before(deadline) {
-		p, err := w.wait(0x11, time.Until(deadline))
+		p, err := w.wait(protocol.OpFit, time.Until(deadline))
 		if err != nil {
 			break
 		}
@@ -804,11 +793,11 @@ func (w *daemonClientWrapper) fitTest(seconds int) (fitResult, error) {
 }
 
 func (w *daemonClientWrapper) fitStop() error {
-	return w.send(0x11, fitStopParams)
+	return w.send(protocol.OpFit, fitStopParams)
 }
 
 func (w *daemonClientWrapper) noiseRead() ([]byte, error) {
-	return w.query(0x17, 3*time.Second)
+	return w.query(protocol.OpANC, 3*time.Second)
 }
 
 func (w *daemonClientWrapper) keys() ([]byte, error) {
@@ -1041,10 +1030,7 @@ func parseByte(s string) (byte, error) {
 // ---------- framing ----------
 
 func buildFrame(opcode byte, params []byte) []byte {
-	p := make([]byte, 0, 4+len(params))
-	p = append(p, 0xff, byte(len(params)+2), opcode, byte(len(params)))
-	p = append(p, params...)
-	return p
+	return protocol.Block(opcode, params...)
 }
 
 type frame struct {
@@ -1052,44 +1038,17 @@ type frame struct {
 	params []byte
 }
 
-// parseFrames parses one or more FF-framed blocks. A single buffer may contain
-// several frames: FF <bodyLen> <opcode> <paramLen> <params...> [ <opcode> ... ]
+// parseFrames parses one or more FF-framed blocks (protocol.ParseBlocks).
 func parseFrames(p []byte) ([]frame, error) {
-	var out []frame
-	off := 0
-	for off < len(p) {
-		if p[off] != 0xff {
-			return out, fmt.Errorf("bad SOF 0x%02x at offset %d", p[off], off)
-		}
-		if off+2 > len(p) {
-			return out, errors.New("truncated header")
-		}
-		bodyLen := int(p[off+1])
-		end := off + 2 + bodyLen
-		if end > len(p) {
-			return out, errors.New("truncated body")
-		}
-		body := p[off+2 : end]
-		bo := 0
-		for bo < len(body) {
-			if bo+2 > len(body) {
-				return out, errors.New("truncated block header")
-			}
-			op := body[bo]
-			n := int(body[bo+1])
-			bo += 2
-			if bo+n > len(body) {
-				return out, errors.New("truncated block params")
-			}
-			out = append(out, frame{cmd: op, params: append([]byte(nil), body[bo:bo+n]...)})
-			bo += n
-		}
-		off = end
+	blocks, err := protocol.ParseBlocks(p)
+	if len(blocks) == 0 {
+		return nil, err
 	}
-	if len(out) == 0 {
-		return nil, errors.New("no frames")
+	out := make([]frame, 0, len(blocks))
+	for _, b := range blocks {
+		out = append(out, frame{cmd: b.Cmd, params: b.Params})
 	}
-	return out, nil
+	return out, err
 }
 
 func u16le(b []byte, off int) uint16 {
@@ -1467,7 +1426,7 @@ func (c *client) wait(opcode byte, timeout time.Duration) ([]byte, error) {
 // query sends FF 03 FE 01 <opcode> and waits for the opcode response.
 func (c *client) query(opcode byte, timeout time.Duration) ([]byte, error) {
 	c.drain()
-	if err := c.send(0xFE, []byte{opcode}); err != nil {
+	if err := c.send(protocol.OpQuery, []byte{opcode}); err != nil {
 		return nil, err
 	}
 	return c.wait(opcode, timeout)
@@ -1498,7 +1457,7 @@ func (c *client) setConfirm(opcode byte, params []byte, timeout time.Duration, m
 			}
 		case <-requery:
 			if queries < 5 {
-				_ = c.send(0xFE, []byte{opcode})
+				_ = c.send(protocol.OpQuery, []byte{opcode})
 				queries++
 				requery = time.After(500 * time.Millisecond)
 			}
@@ -1780,7 +1739,7 @@ func gatherStatus(c *client) *statusReport {
 
 	q16 := func(op byte) ([]byte, error) { return c.query(op, 1500*time.Millisecond) }
 
-	if p, err := q16(0x17); err != nil {
+	if p, err := q16(protocol.OpANC); err != nil {
 		addErr(fmt.Errorf("anc: %w", err))
 	} else if len(p) >= 3 {
 		rep.Noise = &noiseReport{
@@ -1798,7 +1757,7 @@ func gatherStatus(c *client) *statusReport {
 		rep.Toggles[name] = len(p) >= 1 && p[0] == 0x01
 	}
 
-	if p, err := q16(0x1D); err != nil {
+	if p, err := q16(protocol.OpPromptVolume); err != nil {
 		addErr(fmt.Errorf("prompt-vol: %w", err))
 	} else if len(p) >= 1 {
 		pr := &promptReport{Value: int(p[0])}
@@ -1808,7 +1767,7 @@ func gatherStatus(c *client) *statusReport {
 		rep.PromptVol = pr
 	}
 
-	if p, err := q16(0x14); err != nil {
+	if p, err := q16(protocol.OpAutoOff); err != nil {
 		addErr(fmt.Errorf("auto-off: %w", err))
 	} else if len(p) >= 2 {
 		ao := &autoOffReport{}
@@ -1819,20 +1778,20 @@ func gatherStatus(c *client) *statusReport {
 		rep.AutoOff = ao
 	}
 
-	if p, err := q16(0x2C); err != nil {
+	if p, err := q16(protocol.OpWear); err != nil {
 		addErr(fmt.Errorf("wear: %w", err))
 	} else if len(p) >= 1 {
 		rep.Wear = &wearReport{Enabled: p[0] == 0x01}
 	}
 
-	if p, err := q16(0x16); err != nil {
+	if p, err := q16(protocol.OpBalance); err != nil {
 		addErr(fmt.Errorf("balance: %w", err))
 	} else if len(p) >= 1 {
 		b := int(p[0])
 		rep.Balance = &b
 	}
 
-	if p, err := q16(0x22); err != nil {
+	if p, err := q16(protocol.OpEQ); err != nil {
 		addErr(fmt.Errorf("eq: %w", err))
 	} else if eq, perr := eqReportFrom(p); perr != nil {
 		addErr(fmt.Errorf("eq: %w", perr))
@@ -1840,7 +1799,7 @@ func gatherStatus(c *client) *statusReport {
 		rep.EQ = eq
 	}
 
-	if p, err := q16(0x2D); err != nil {
+	if p, err := q16(protocol.OpSpatial); err != nil {
 		addErr(fmt.Errorf("spatial: %w", err))
 	} else if len(p) >= 1 {
 		rep.Spatial = &spatialReport{Enabled: p[0] == 0x01}
@@ -2127,7 +2086,7 @@ func cmdToggle(name string, args []string) error {
 		}
 		b := byte(da.offByte)
 		return cmdRunner(scanSeconds, func(dc daemonAPI) error {
-			fmt.Printf("frame: %s\n", frameHex(0x2A, []byte{b}))
+			fmt.Printf("frame: %s\n", frameHex(protocol.OpWind, []byte{b}))
 			got, err := dc.windOffByte(b)
 			if err != nil {
 				return err
@@ -2208,7 +2167,7 @@ func cmdWear(args []string) error {
 		if diag {
 			// The rest of the payload is written back as read, so the frame
 			// sent is the written byte followed by the readback's tail.
-			fmt.Printf("frame: %s\n", frameHex(0x2C, append([]byte{state}, got[1:]...)))
+			fmt.Printf("frame: %s\n", frameHex(protocol.OpWear, append([]byte{state}, got[1:]...)))
 			fmt.Printf("wear=off read back raw byte0=0x%02x payload=%x (0x00 and 0x02 both mean off)\n", got[0], got)
 			return nil
 		}

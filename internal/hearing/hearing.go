@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+
+	"github.com/bbztp/qcy-omarchy/internal/protocol"
 )
 
 // Bands is the number of test bands per ear.
@@ -322,9 +324,9 @@ func ClampMaster(mg float64) (float64, bool) {
 const (
 	// EffectID is the sound effect id of the personalised listening experience.
 	EffectID = 11
-	cmdLeft  = 0x46
-	cmdRight = 0x47
-	cmdFlag  = 0x45
+	cmdLeft  = protocol.OpHearingLeft
+	cmdRight = protocol.OpHearingRight
+	cmdFlag  = protocol.OpHearingMode
 	qCenti   = 70 // Q 0.7 * 100
 	bandType = 2
 )
@@ -356,8 +358,7 @@ func WriteFrame(ear Ear, gains [Bands]float64, masterGain float64) []byte {
 	if ear == Right {
 		cmd = cmdRight
 	}
-	out := []byte{0xff, byte(len(params) + 2), cmd, byte(len(params))}
-	return append(out, params...)
+	return protocol.Block(cmd, params...)
 }
 
 // FactoryBaseline are the 5 bands of the default effect (50/200/900/2800/8000
@@ -396,8 +397,7 @@ func WriteFrameBands(ear Ear, bands []FrameBand, masterGain float64) []byte {
 	if ear == Right {
 		cmd = cmdRight
 	}
-	out := []byte{0xff, byte(len(params) + 2), cmd, byte(len(params))}
-	return append(out, params...)
+	return protocol.Block(cmd, params...)
 }
 
 // ZeroBaselineBands is the band list of the "zero baseline" experiment: the 5
@@ -421,7 +421,7 @@ func FlagFrame(on bool) []byte {
 	if on {
 		v = 1
 	}
-	return []byte{0xff, 0x03, cmdFlag, 0x01, v}
+	return protocol.Block(cmdFlag, v)
 }
 
 // ---------- tone generator ----------

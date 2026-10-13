@@ -11,6 +11,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/bbztp/qcy-omarchy/internal/protocol"
 )
 
 // EQ payload (opcode 0x22), as observed on a QCY MeloBuds N70 (the test device):
@@ -33,7 +35,7 @@ import (
 // itself writes its "Personalizado" curves there with up to 143 bytes, so
 // ApplyEq allows the 143-byte format for that target without the flag.
 const (
-	EqOpcode = 0x22
+	EqOpcode = protocol.OpEQ
 	// EqLen is the proven write length; EqReadLen the length the device reports.
 	EqLen      = 73
 	EqReadLen  = 143

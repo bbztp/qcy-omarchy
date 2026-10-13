@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bbztp/qcy-omarchy/internal/protocol"
 	"github.com/bbztp/qcy-omarchy/internal/qcycore"
 	"tinygo.org/x/bluetooth"
 )
@@ -231,15 +232,15 @@ func (GenericHandler) Capabilities() Capabilities {
 			FeatureFind, FeatureBatteryCase,
 		},
 		Actions: []ActionSpec{
-			{ID: "anc", Label: "ANC", Type: "enum", Opcode: 0x17},
-			{ID: "gameMode", Label: "Game Mode", Type: "toggle", Opcode: 0x09},
-			{ID: "sleepMode", Label: "Sleep Mode", Type: "toggle", Opcode: 0x10},
-			{ID: "ldac", Label: "LDAC", Type: "toggle", Opcode: 0x23},
-			{ID: "multipoint", Label: "Multipoint", Type: "toggle", Opcode: 0x24},
-			{ID: "windNoise", Label: "Wind Noise Reduction", Type: "toggle", Opcode: 0x2A},
-			{ID: "wearDetect", Label: "Wear Detection", Type: "toggle", Opcode: 0x2C},
-			{ID: "autoOff", Label: "Auto Off", Type: "slider", Opcode: 0x14},
-			{ID: "balance", Label: "Balance", Type: "slider", Opcode: 0x16},
+			{ID: "anc", Label: "ANC", Type: "enum", Opcode: protocol.OpANC},
+			{ID: "gameMode", Label: "Game Mode", Type: "toggle", Opcode: protocol.OpGame},
+			{ID: "sleepMode", Label: "Sleep Mode", Type: "toggle", Opcode: protocol.OpSleep},
+			{ID: "ldac", Label: "LDAC", Type: "toggle", Opcode: protocol.OpLDAC},
+			{ID: "multipoint", Label: "Multipoint", Type: "toggle", Opcode: protocol.OpMultipoint},
+			{ID: "windNoise", Label: "Wind Noise Reduction", Type: "toggle", Opcode: protocol.OpWind},
+			{ID: "wearDetect", Label: "Wear Detection", Type: "toggle", Opcode: protocol.OpWear},
+			{ID: "autoOff", Label: "Auto Off", Type: "slider", Opcode: protocol.OpAutoOff},
+			{ID: "balance", Label: "Balance", Type: "slider", Opcode: protocol.OpBalance},
 		},
 		BatteryChars: []string{"left", "right", "case"},
 	}
@@ -316,25 +317,25 @@ func (meloBudsN70Handler) Capabilities() Capabilities {
 			{
 				ID: "anc", Label: "ANC Mode", Type: "enum",
 				Options: []string{"off", "adaptive", "indoor", "commuting", "noisy", "antiwind", "transparency"},
-				Opcode:  0x17,
+				Opcode:  protocol.OpANC,
 				ParamMap: map[string]byte{
 					"off": 0x00, "adaptive": 0x01, "indoor": 0x01, "commuting": 0x02,
 					"noisy": 0x03, "antiwind": 0x04, "transparency": 0x01,
 				},
-				ReadOpcode: 0x17, ReadParser: "anc",
+				ReadOpcode: protocol.OpANC, ReadParser: "anc",
 			},
-			{ID: "gameMode", Label: "Game Mode", Type: "toggle", Opcode: 0x09, ReadOpcode: 0x09},
-			{ID: "sleepMode", Label: "Sleep Mode", Type: "toggle", Opcode: 0x10, ReadOpcode: 0x10},
-			{ID: "ldac", Label: "LDAC", Type: "toggle", Opcode: 0x23, ReadOpcode: 0x23},
-			{ID: "multipoint", Label: "Multipoint", Type: "toggle", Opcode: 0x24, ReadOpcode: 0x24},
-			{ID: "windNoise", Label: "Wind Noise Reduction", Type: "toggle", Opcode: 0x2A, ReadOpcode: 0x2A},
-			{ID: "wearDetect", Label: "Wear Detection", Type: "toggle", Opcode: 0x2C, ReadOpcode: 0x2C},
-			{ID: "autoOff", Label: "Auto Off", Type: "slider", Min: 0, Max: 180, Step: 5, Opcode: 0x14, ReadOpcode: 0x14},
-			{ID: "balance", Label: "Balance", Type: "slider", Min: 0, Max: 100, Step: 1, Opcode: 0x16, ReadOpcode: 0x16},
+			{ID: "gameMode", Label: "Game Mode", Type: "toggle", Opcode: protocol.OpGame, ReadOpcode: protocol.OpGame},
+			{ID: "sleepMode", Label: "Sleep Mode", Type: "toggle", Opcode: protocol.OpSleep, ReadOpcode: protocol.OpSleep},
+			{ID: "ldac", Label: "LDAC", Type: "toggle", Opcode: protocol.OpLDAC, ReadOpcode: protocol.OpLDAC},
+			{ID: "multipoint", Label: "Multipoint", Type: "toggle", Opcode: protocol.OpMultipoint, ReadOpcode: protocol.OpMultipoint},
+			{ID: "windNoise", Label: "Wind Noise Reduction", Type: "toggle", Opcode: protocol.OpWind, ReadOpcode: protocol.OpWind},
+			{ID: "wearDetect", Label: "Wear Detection", Type: "toggle", Opcode: protocol.OpWear, ReadOpcode: protocol.OpWear},
+			{ID: "autoOff", Label: "Auto Off", Type: "slider", Min: 0, Max: 180, Step: 5, Opcode: protocol.OpAutoOff, ReadOpcode: protocol.OpAutoOff},
+			{ID: "balance", Label: "Balance", Type: "slider", Min: 0, Max: 100, Step: 1, Opcode: protocol.OpBalance, ReadOpcode: protocol.OpBalance},
 			// Max is the measured ceiling (0x1D reports max=15), not the byte
 			// width — the payload is one byte but the scale is 0..15.
-			{ID: "promptVolume", Label: "Prompt Volume", Type: "slider", Min: 4, Max: 10, Step: 2, Opcode: 0x1D, ReadOpcode: 0x1D},
-			{ID: "wearSensitivity", Label: "Wear Sensitivity", Type: "slider", Min: 1, Max: 3, Step: 1, Opcode: 0x48, ReadOpcode: 0x48},
+			{ID: "promptVolume", Label: "Prompt Volume", Type: "slider", Min: 4, Max: 10, Step: 2, Opcode: protocol.OpPromptVolume, ReadOpcode: protocol.OpPromptVolume},
+			{ID: "wearSensitivity", Label: "Wear Sensitivity", Type: "slider", Min: 1, Max: 3, Step: 1, Opcode: protocol.OpWearSensitivity, ReadOpcode: protocol.OpWearSensitivity},
 		},
 		BatteryChars: []string{"left", "right", "case"},
 		Verified:     true,
@@ -632,58 +633,24 @@ func dbg(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, format, args...)
 }
 
-// parseFrames decodes a notification payload into frames. Layout per block is
-// <opcode> <paramLen> <params...>, where the block body (opcode onwards) is
-// bodyLen bytes long. A single notification may carry several blocks, so this
-// loops until the buffer is consumed.
+// parseFrames decodes a notification payload into frames (see
+// protocol.ParseBlocks: a payload may carry several blocks).
 func parseFrames(buf []byte) ([]frame, error) {
-	var out []frame
-	off := 0
-	for off < len(buf) {
-		if buf[off] != 0xff {
-			return out, fmt.Errorf("bad SOF 0x%02x at offset %d", buf[off], off)
-		}
-		if off+2 > len(buf) {
-			return out, errors.New("truncated header")
-		}
-		bodyLen := int(buf[off+1])
-		end := off + 2 + bodyLen
-		if end > len(buf) {
-			return out, errors.New("truncated body")
-		}
-		body := buf[off+2 : end]
-		bo := 0
-		for bo < len(body) {
-			if bo+2 > len(body) {
-				return out, errors.New("truncated block header")
-			}
-			op := body[bo]
-			n := int(body[bo+1])
-			bo += 2
-			if bo+n > len(body) {
-				return out, errors.New("truncated block params")
-			}
-			out = append(out, frame{cmd: op, params: append([]byte(nil), body[bo:bo+n]...)})
-			bo += n
-		}
-		off = end
+	blocks, err := protocol.ParseBlocks(buf)
+	out := make([]frame, 0, len(blocks))
+	for _, b := range blocks {
+		out = append(out, frame{cmd: b.Cmd, params: b.Params})
 	}
 	if len(out) == 0 {
-		return nil, errors.New("no frames")
+		return nil, err
 	}
-	return out, nil
+	return out, err
 }
 
-// buildFrame encodes a command as FF <bodyLen> <opcode> <paramLen> <params...>.
-// A query is simply a command carrying the reserved 0xFE opcode whose single
-// parameter is the opcode being asked about — the same encoding the proven
-// direct client uses. This must stay byte-identical to parseFrames above and to
-// the client in the qcyctl backend.
+// buildFrame encodes a command as FF <bodyLen> <opcode> <paramLen> <params...>
+// (protocol.Block). A query is the same frame with the reserved 0xFE opcode.
 func buildFrame(opcode byte, params []byte) []byte {
-	p := make([]byte, 0, 4+len(params))
-	p = append(p, 0xff, byte(len(params)+2), opcode, byte(len(params)))
-	p = append(p, params...)
-	return p
+	return protocol.Block(opcode, params...)
 }
 
 func (d *daemon) send(opcode byte, params []byte) error {
@@ -730,7 +697,7 @@ func (d *daemon) query(opcode byte, timeout time.Duration) ([]byte, error) {
 // transactions). Go mutexes are not reentrant, so they must not call query.
 func (d *daemon) queryLocked(opcode byte, timeout time.Duration) ([]byte, error) {
 	d.drain()
-	if err := d.send(0xFE, []byte{opcode}); err != nil {
+	if err := d.send(protocol.OpQuery, []byte{opcode}); err != nil {
 		return nil, err
 	}
 	deadline := time.After(timeout)
@@ -752,7 +719,7 @@ func (d *daemon) queryLocked(opcode byte, timeout time.Duration) ([]byte, error)
 			}
 		case <-requery:
 			if queries < 5 {
-				_ = d.send(0xFE, []byte{opcode})
+				_ = d.send(protocol.OpQuery, []byte{opcode})
 				queries++
 				requery = time.After(500 * time.Millisecond)
 			}
@@ -985,7 +952,7 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 		return bytesJSON(got), nil
 	case "noise":
 		// Raw 0x17 payload [mode, scene, level].
-		p, err := d.query(0x17, 3*time.Second)
+		p, err := d.query(protocol.OpANC, 3*time.Second)
 		if err != nil {
 			return nil, err
 		}
@@ -1045,26 +1012,26 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 		caps["ldac"] = snap["ldac"] && h != nil && h.Capabilities().Verified
 		rep["capabilities"] = caps
 	}
-	if p, err := d.query(0x2D, 800*time.Millisecond); err == nil && len(p) >= 1 {
+	if p, err := d.query(protocol.OpSpatial, 800*time.Millisecond); err == nil && len(p) >= 1 {
 		rep["spatial"] = bytesJSON(p)
 	}
 	// Wear-sensor sensitivity: only asked of a verified model that answered
 	// the capability probe, so a silent unit does not slow every status.
 	if snap := d.capabilitiesSnapshot(); snap["wearSensitivity"] {
 		if h := d.knownHandler(); h != nil && h.Capabilities().Verified {
-			if p, err := d.query(0x48, 800*time.Millisecond); err == nil && len(p) >= 1 && p[0] >= 1 && p[0] <= 3 {
+			if p, err := d.query(protocol.OpWearSensitivity, 800*time.Millisecond); err == nil && len(p) >= 1 && p[0] >= 1 && p[0] <= 3 {
 				rep["wearSensitivity"] = int(p[0])
 			}
 		}
 	}
 
 	// ANC
-	if p, err := d.query(0x17, 1500*time.Millisecond); err == nil && len(p) >= 3 {
+	if p, err := d.query(protocol.OpANC, 1500*time.Millisecond); err == nil && len(p) >= 3 {
 		rep["anc"] = map[string]interface{}{"modeRaw": int(p[0]), "sceneRaw": int(p[1]), "value": int(p[2])}
 	}
 
 	// Toggles
-	toggles := map[string]byte{"game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24, "wind": 0x2A}
+	toggles := map[string]byte{"game": protocol.OpGame, "sleep": protocol.OpSleep, "ldac": protocol.OpLDAC, "multipoint": protocol.OpMultipoint, "wind": protocol.OpWind}
 	togRep := map[string]bool{}
 	for name, op := range toggles {
 		if p, err := d.query(op, 1500*time.Millisecond); err == nil && len(p) >= 1 {
@@ -1077,7 +1044,7 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 
 	// Other queries (prompt-vol, auto-off, wear, balance, EQ)
 	other := map[string]byte{
-		"promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16, "eq": 0x22,
+		"promptVol": protocol.OpPromptVolume, "autoOff": protocol.OpAutoOff, "wear": protocol.OpWear, "balance": protocol.OpBalance, "eq": protocol.OpEQ,
 	}
 	for name, op := range other {
 		if p, err := d.query(op, 1500*time.Millisecond); err == nil {
@@ -1134,22 +1101,11 @@ func (d *daemon) readBattery() (map[string]interface{}, error) {
 func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error) {
 	d.txMu.Lock()
 	defer d.txMu.Unlock()
-	opcodeMap := map[string]byte{
-		"anc": 0x17, "game": 0x09, "sleep": 0x10, "ldac": 0x23, "multipoint": 0x24,
-		"wind": 0x2A, "promptVol": 0x1D, "autoOff": 0x14, "wear": 0x2C, "balance": 0x16,
-		// Wired so a model whose probe answers these can actually be driven by
-		// them; on units that stay silent the capability is false and the UI
-		// never offers the control.
-		"spatial": 0x2D, "fit": 0x11,
-		// Wear-sensor sensitivity: [1 medium, 2 normal, 3 high]. Frame
-		// FF 03 48 01 p, verified on the test device (N70) 2026-10-13 (PROTOCOL.md).
-		"wearSensitivity": 0x48,
-		// Find my earbuds = make the indicator LED blink. An audible tone is
-		// useless here: a lost earbud is by definition not in your ear, so it
-		// could never play anything you could hear. 0x05 is Quicky's
-		// NewLightFlashCommand and is what actually lets you spot them.
-		"find": 0x05,
-	}
+	// Find my earbuds maps to the LED flash opcode here; qcyctl plays a local
+	// tone instead (an earbud that is lost cannot be heard from the ear).
+	// spatial and fit are wired so a model whose probe answers them can be
+	// driven; on units that stay silent the capability is false and the UI
+	// never offers the control.
 	// ldac (0x23) restarts the earbuds: the vendor server declares the action
 	// with "Turning on LDAC will restart the device" (docs/WEB_API.md), so the
 	// restart is expected. It is writable on verified models only
@@ -1166,7 +1122,7 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 	if action == "eq" {
 		return nil, errors.New("eq cannot be written as a raw action: use eqApply, which reads, patches and backs the payload up first")
 	}
-	opcode, ok := opcodeMap[action]
+	opcode, ok := protocol.ActionOpcode(action)
 	if !ok {
 		return nil, fmt.Errorf("unknown action: %s", action)
 	}
@@ -1241,7 +1197,7 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 			// The vendor app waits before it reads back; asking at once gets
 			// the pre-change value.
 			d.sleep(settle)
-			if err := d.send(0xFE, []byte{opcode}); err != nil {
+			if err := d.send(protocol.OpQuery, []byte{opcode}); err != nil {
 				return nil, err
 			}
 			got, last, ok := d.awaitMatchLast(opcode, func(p []byte) bool { return bytes.HasPrefix(p, expect) }, 3*time.Second)
@@ -1358,18 +1314,18 @@ func (d *daemon) fitTest(timeout time.Duration) (fitResult, error) {
 		d.mu.Lock()
 		d.fitCancel = nil
 		d.mu.Unlock()
-		_ = d.send(0x11, fitStop)
+		_ = d.send(protocol.OpFit, fitStop)
 	}()
 
 	d.drain()
-	if err := d.send(0x11, fitStart); err != nil {
+	if err := d.send(protocol.OpFit, fitStart); err != nil {
 		return fitResult{}, err
 	}
 	deadline := time.After(timeout)
 	for {
 		select {
 		case f := <-d.frames:
-			if f.cmd == 0x11 && len(f.params) >= 3 && f.params[0] == 2 {
+			if f.cmd == protocol.OpFit && len(f.params) >= 3 && f.params[0] == 2 {
 				return fitResult{Status: 2, Left: int(f.params[1]), Right: int(f.params[2])}, nil
 			}
 		case <-cancel:
@@ -1395,7 +1351,7 @@ func (d *daemon) fitStopRequest() error {
 	}
 	d.txMu.Lock()
 	defer d.txMu.Unlock()
-	return d.send(0x11, fitStop)
+	return d.send(protocol.OpFit, fitStop)
 }
 
 // awaitValue re-queries an opcode until the device reports the expected payload
@@ -1437,7 +1393,7 @@ func (d *daemon) awaitMatchLast(opcode byte, match func([]byte) bool, timeout ti
 			}
 		case <-requery:
 			if queries < 5 {
-				_ = d.send(0xFE, []byte{opcode})
+				_ = d.send(protocol.OpQuery, []byte{opcode})
 				queries++
 				requery = time.After(400 * time.Millisecond)
 			}
@@ -1661,14 +1617,14 @@ func (d *daemon) windOff(off byte) ([]byte, error) {
 		return nil, errors.New("not connected")
 	}
 	d.drain()
-	if err := d.send(0x2A, []byte{off}); err != nil {
+	if err := d.send(protocol.OpWind, []byte{off}); err != nil {
 		return nil, err
 	}
 	d.sleep(200 * time.Millisecond)
-	if err := d.send(0xFE, []byte{0x2A}); err != nil {
+	if err := d.send(protocol.OpQuery, []byte{protocol.OpWind}); err != nil {
 		return nil, err
 	}
-	return d.awaitMatch(0x2A, func(p []byte) bool {
+	return d.awaitMatch(protocol.OpWind, func(p []byte) bool {
 		return len(p) >= 1 && (p[0] == 0 || p[0] == 2)
 	}, "00 or 02 (off)", 3*time.Second)
 }
@@ -1692,7 +1648,7 @@ func (d *daemon) wearSet(state byte) ([]byte, error) {
 	if !d.isConnected() {
 		return nil, errors.New("not connected")
 	}
-	cur, err := d.queryLocked(0x2C, 2*time.Second)
+	cur, err := d.queryLocked(protocol.OpWear, 2*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("wear: read current: %w", err)
 	}
@@ -1704,10 +1660,10 @@ func (d *daemon) wearSet(state byte) ([]byte, error) {
 	}
 	set := append([]byte{state}, cur[1:]...)
 	d.drain()
-	if err := d.send(0x2C, set); err != nil {
+	if err := d.send(protocol.OpWear, set); err != nil {
 		return nil, err
 	}
-	return d.awaitMatch(0x2C, func(p []byte) bool {
+	return d.awaitMatch(protocol.OpWear, func(p []byte) bool {
 		return len(p) >= len(set) && wearByteMatches(state, p[0]) && bytes.Equal(p[1:len(set)], set[1:])
 	}, fmt.Sprintf("%x", set), 3*time.Second)
 }
@@ -1731,15 +1687,15 @@ var optionalCmds = []struct {
 	opcode   byte
 	validate func([]byte) bool
 }{
-	{"spatial", 0x2D, nil},
-	{"wear", 0x2C, nil},
-	{"fit", 0x11, nil},
-	{"ancLevel", 0x07, nil},
-	{"promptVol", 0x1D, sanePromptVolume},
-	{"wearSensitivity", 0x48, func(p []byte) bool { return len(p) >= 1 && p[0] >= 1 && p[0] <= 3 }},
+	{"spatial", protocol.OpSpatial, nil},
+	{"wear", protocol.OpWear, nil},
+	{"fit", protocol.OpFit, nil},
+	{"ancLevel", protocol.OpANCStrength, nil},
+	{"promptVol", protocol.OpPromptVolume, sanePromptVolume},
+	{"wearSensitivity", protocol.OpWearSensitivity, func(p []byte) bool { return len(p) >= 1 && p[0] >= 1 && p[0] <= 3 }},
 	// FE 01 23 -> [1 on | 2 off]. The capability is further gated on a
 	// verified model in gatherStatus.
-	{"ldac", 0x23, func(p []byte) bool { return len(p) >= 1 && (p[0] == 1 || p[0] == 2) }},
+	{"ldac", protocol.OpLDAC, func(p []byte) bool { return len(p) >= 1 && (p[0] == 1 || p[0] == 2) }},
 }
 
 // readOnlyCmds are commands that answer a query yet must not be written.

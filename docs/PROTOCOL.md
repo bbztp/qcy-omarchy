@@ -30,6 +30,15 @@ the buffer rather than assuming one block. `buildFrame` and `parseFrames` must
 stay byte-identical to each other; an earlier off-by-one in `parseFrames` read
 the `paramLen` byte as data and decoded balance as 1 instead of 50.
 
+## Registry in code
+
+The command table is also embedded in the binaries as `internal/protocol`:
+opcode constants (`protocol.OpANC`, ...), the single frame envelope
+(`protocol.Block`, `protocol.Query`, `protocol.ParseBlocks`) and the reference
+table (`protocol.Lookup`, `ByName`, `All`). `internal/protocol/table.json` is
+generated from `docs/reference/protocol.json` by `scripts/gen_protocol.py`
+(`make protocol` or `go generate ./internal/protocol`); do not edit it by hand.
+
 ## Command table
 
 Payloads marked verified were confirmed by reading the value back. The on/off
@@ -630,7 +639,7 @@ subset a given unit answers**. So a capability-driven plugin does not need a
 hard-coded list per model: probe the candidate cmdIds once, keep the ones that
 reply, and drive the UI from that.
 
-Two probes already exist for exactly this: `cmd-constant` asks the device
+Two probes already exist for exactly this: opcode `0x44` (max EQ band count) asks the device
 how many EQ slots it has, and the ANC level range differs by model.
 
 ## Debug switches
