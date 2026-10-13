@@ -3,6 +3,9 @@
 Notes on the QCY BLE protocol as observed on this hardware — a MeloBuds N70,
 LE address `AA:BB:CC:DD:EE:FF`.
 
+Which model a unit is comes from the advertised `vendorId`, not from this
+protocol: see [Model detection](#model-detection) and `WEB_API.md`.
+
 Anything marked **verified** was read back from the earbuds. Anything marked
 **unverified** exists in the device's command space but has not been exercised,
 and its name is provisional until it is.
@@ -79,10 +82,11 @@ Every wired setter was exercised through the daemon and read back with
 | sleep `0x10` | honours the write |
 | wind `0x2A` | honours the write |
 | wear `0x2C` | honours the write |
-| prompt volume `0x1D` | one-byte writes of 0, 3, 9, 12, 15 **ignored**, always reported 6 of 15; the app's two-byte frame with 4/6/8/10 is untested |
+| prompt volume `0x1D` | one-byte writes of 0, 3, 9, 12, 15 were **ignored** (always 6 of 15); the app's two-byte frame `FF 04 1D 02 v 00` with v = 4, 6, 8, 10 **honours the write** (verified 2026-10-13) |
+| wear sensitivity `0x48` | `FF 03 48 01 p` with p = 1, 2, 3 honours the write (verified 2026-10-13) |
 | ANC `0x17` | not exercised — rejected unless both earbuds are worn |
 | spatial `0x2D` | no query reply on this model |
-| fit `0x11` | no query reply (the app never queries it); start `[1,1,1]` / stop `[0,0,0]` untested |
+| fit `0x11` | no query reply (the app never queries it); start `FF 05 11 03 01 01 01` / stop `FF 05 11 03 00 00 00` verified 2026-10-13: the final notification `[2, left, right]` arrives |
 | eq `0x22` | honours the write; only written through a read-patch-backup-write transaction (see [EQ](#eq)) |
 | ldac `0x23` | reboots the earbuds; refused |
 
@@ -404,7 +408,8 @@ the state they would actually be lost in.
 
 ## Prompt volume
 
-**Update (read in the vendor app; verified on hardware 2026-10-13).** The app
+**Update (read in the vendor app; verified on hardware 2026-10-13).** The
+rest of this section records the earlier one-byte measurement. The app
 (`ToneVolumeManagerActivity`) writes `FF 04 1D 02 <v> 00` (two parameter bytes,
 the second 0) for every model but vendorId 16737, with v from the server list
 4, 6, 8, 10; the query `FF 03 FE 01 1D` answers `<value> <max>`. The
@@ -412,7 +417,22 @@ measurement below used a one-byte frame and values outside that list. The
 daemon and `qcyctl prompt-vol <4|6|8|10|low|medium|high|max>` now write the
 app's frame and confirm by reading back (after ~200 ms) that byte 0 equals v;
 a mismatch is reported as "escrito mas o aparelho reportou X". The constant
-`promptVolWritable` (daemon and CLI) turns this back into read-only.
+`promptVolWritable` (daemon and CLI, currently `true`) turns this back into
+read-only. The write is N70 only: a model that is not verified refuses it.
+
+The two other N70-only controls read from the same app:
+
+| Control | Write | Query | Values |
+|---|---|---|---|
+| Prompt volume `0x1D` | `FF 04 1D 02 v 00` | `FF 03 FE 01 1D` -> `<value> <max>` | v 4 / 6 / 8 / 10 |
+| Wear-sensor sensitivity `0x48` | `FF 03 48 01 p` | `FF 03 FE 01 48` -> `<p>` | 1 medium, 2 normal, 3 high |
+| Fit (seal) test `0x11` | start `FF 05 11 03 01 01 01`, stop `FF 05 11 03 00 00 00` | none | notification `[status, left, right]`; the daemon waits for status 2; per ear 3 sealed, 2 good, 1 fair, 0 poor |
+
+All three were verified on the N70 on 2026-10-13. The daemon and `qcyctl`
+wait ~200 ms and read back before reporting a prompt-volume or sensitivity
+write as confirmed. CLI: `qcyctl prompt-vol`, `qcyctl wear-sensitivity`,
+`qcyctl fit start|stop|begin`. Sensitivity only matters with wear detection
+`0x2C` on.
 
 `0x1D` reads and writes cleanly but the device keeps reporting 6 regardless of
 what is written. The CLI's readback confirmation therefore fails loudly rather
@@ -422,7 +442,7 @@ Measured on this unit: writing 0, 3, 9, 12 and 15 all read back `06 0f` —
 value 6, max 15. The write is accepted and discarded; the reply is not an echo
 of the last value sent.
 
-While `promptVolWritable` is false, prompt volume is listed in `readOnlyCmds` in the daemon rather than
+Historical, from the one-byte measurement: while `promptVolWritable` is false, prompt volume is listed in `readOnlyCmds` in the daemon rather than
 being probed. A query cannot establish writability: this device answers with a
 perfectly plausible maximum and then ignores the write, so the reply is
 indistinguishable from a working setter that happens to sit at 6. Probing by
@@ -479,13 +499,18 @@ If the scan finds nothing and no cached address answers, the daemon replies `{"o
 | `eqApply` | optional `gains` (10 ints, centi-dB), `masterGain` (int, centi-dB), `slot` (int), `bands` (array of `{index, freq, gain (dB, number), q, type}`, exclusive with `gains`), `allowProtected` (bool), `allowFull` (bool). Nothing else: unknown keys and raw payloads (`payload`, `raw`, `hex`, ...) are rejected | the `eq` object plus `previous`, `fullLength`, `backupFirst`, `backupHistory` |
 | `eqMasterGain` | `masterGain` (int, centi-dB), required; optional `allowProtected`, `allowFull` | same as `eqApply` |
 | `wear` | `state`: 1 on / 2 off | confirmed `0x2C` payload (byte array) |
-| `fitTest` | optional `seconds` (5..60, default 30) | `{status, left, right}` once the notification with status 2 arrives; the stop frame is always sent at the end; N70 only; unconfirmed on hardware |
+| `fitTest` | optional `seconds` (5..60, default 30) | `{status, left, right}` once the notification with status 2 arrives; the stop frame is always sent at the end; N70 only; verified on the N70 |
 | `fitStop` | none | cancels a running `fitTest` (which then fails with `fit: cancelled`), otherwise sends the stop frame |
 | `noise` | none | raw `0x17` payload `[mode, scene, level]` |
+| `find`, `keys`, `keysSet`, `disconnect` | as before | |
 
 `set` also accepts `promptVol` (`params` `[v]`, v in 4/6/8/10; sent as `[v, 0]`) and `wearSensitivity` (`params` `[1..3]`), both N70 only and read back after ~200 ms; `status` carries `wearSensitivity` (1..3) only when the unit answers `0x48`.
 
-| `find`, `keys`, `keysSet`, `disconnect` | as before | |
+`eqApply`, `eqMasterGain`, `keysSet` and `fitTest` are refused on a model that
+is not verified (`<cmd> is disabled: <model> is not a verified model`), and so
+are the `promptVol` and `wearSensitivity` setters. `wear` is refused unless the
+model's profile declares wear detection. `status` carries a `model` object:
+`{modelId, displayName, verified, actions, features, vendorId?, productTitle?}`.
 
 `eqApply`, `eqMasterGain` and `wear` read, patch and write under a single
 transaction lock, so a concurrent status sweep cannot interleave. `eqApply` is
@@ -530,6 +555,23 @@ in-call gestures) and the high byte a function (`0x00` none, `0x01` play/pause,
 `0x02` previous, `0x03` next, `0x04` voice assistant, `0x05`/`0x06` volume,
 `0x07` game mode, `0x08`–`0x0a` call handling, `0x0b` redial). Ids outside
 those ranges are shown as raw hex rather than guessed at.
+
+## Model detection
+
+The protocol carries no model name, so the daemon picks the model in this order
+(`detectModel` in `cmd/qcyctld/main.go`):
+
+1. `vendorId` from the advertisement (manufacturer data, bytes 0-1,
+   big-endian): **23872 or 23877 -> `melobuds-n70`**, the only verified model;
+2. any other `vendorId` in the product database (Quicky list, then the embedded
+   snapshot) -> `qcy-<vendorId>`, a conservative profile (`cmd/qcyctld/profile.go`)
+   that offers only the shared commands the product declares and never EQ;
+3. otherwise the advertised name (`n70`), then the firmware string, then
+   `generic`.
+
+The vendorId is stored as the last field of `~/.cache/qcyctl/le-address` so
+the fast path (no scan) keeps it. Source of the product data, the embedded
+snapshot and its limits: `WEB_API.md`.
 
 ## Supporting more than one model
 

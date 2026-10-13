@@ -4,14 +4,17 @@ A bar widget for the [Omarchy](https://omarchy.org) shell that controls QCY
 earbuds (developed against the **MeloBuds N70 / HT18**, but written to the
 vendor's low-energy GATT protocol) and shows their state:
 
-- **Battery** in the bar (glyph), with per-ear and case
-  levels plus charging flags in the panel.
+- **Battery** in the panel: the earbuds' pictures (left, right, case) with a
+  level bar under each (red below 20%, amber to 49%, green from 50%) and
+  charging flags. The bar button shows the QCY wordmark.
 - **Active noise control** — Off, Adaptive, Indoor, Commuting, Noisy,
   Anti-wind, Transparency.
 - **Toggles** — LDAC (hi-res audio), Multipoint, Game mode (low latency),
   Sleep mode, Wind noise reduction.
 - **Readout** — firmware, EQ preset + curve, balance, auto power-off, prompt
   volume.
+- **Settings (MeloBuds N70)** — prompt volume (4/6/8/10), wear-sensor
+  sensitivity (medium/normal/high), ear-tip fit test with a result per ear.
 
 It talks to the earbuds directly over Bluetooth Low Energy — no phone, no
 vendor app. A small user daemon, `qcyctld`, holds the BLE connection so
@@ -60,16 +63,24 @@ or move it into place with `omarchy bar move io.github.bbztp.qcy --section right
 
 - **Left click** the bar button — open the panel.
 - **Right click** — refresh.
-- In the panel — **Esc** closes, **r** refreshes.
+- In the panel — **Esc** closes, **r** refreshes, **1** / **2** / **3** switch
+  tabs.
 
 The full state is read on connect and when the panel opens; the panel shows
 `Reading…` while it does.
 
-The panel has three tabs: **Status** (battery, connection state, noise mode),
-**Som** (live EQ curve and the curve library: clicking a card runs
-`qcyctl library apply <id> --yes`; it is disabled while slot 6 or 11 is active; the panel names the active
-effect, e.g. `Experiência auditiva (slot 11)`)
-and **Ajustes** (noise scenes, toggles, balance, touch controls, device info).
+The panel has three tabs (named in the active language; the pt-BR names are
+Status / Som / Ajustes):
+
+| Tab | Content |
+| --- | --- |
+| **Status** | Earbuds picture and connection state, battery (left, right, case) as pictures with a level bar, noise mode. |
+| **Sound** | The effect library (click a card to apply it) and the 10-bar equalizer (31 Hz to 16 kHz, ±12 dB). The bars show the curve of the chosen effect; drag a bar and release to apply (the sound changes right away), double-click to zero it. **Start from scratch** drops the base effect so the bars are the whole curve; **Save as…** stores what you see in the curve library. Bars are written on top of the effect as a curve in slot 255. |
+| **Settings** | Noise scenes, toggles, balance, auto power-off, prompt volume, sensor sensitivity, fit test, touch controls, device info, language. |
+
+On a model that is not a verified MeloBuds N70 the Sound tab only says that
+the equalizer is unavailable, and the Settings tab offers only what the
+product declares (see [Supported models](#supported-models)).
 
 EQ slot -> effect map (MeloBuds N70, read from the device; the phone app's own
 curves are always slot 255):
@@ -84,6 +95,20 @@ curves are always slot 255):
 | 7, 8, 9, 12, 13 | ? | não observado |
 
 Slot 0 is the old test curve of this tool. Details in `backend/PROTOCOL.md`.
+
+## Supported models
+
+The daemon identifies the model by the 16-bit `vendorId` in the earbuds'
+advertisement, not by the Bluetooth name.
+
+| vendorId | Model | Profile |
+| --- | --- | --- |
+| 23872, 23877 | MeloBuds N70 | **verified**: everything above, including EQ and touch keys |
+| any other id in the embedded QCY product list | `qcy-<vendorId>` | conservative: only the common controls the product declares (noise control, balance, find, auto power-off, wear detection, game/sleep/LDAC/multipoint/wind toggles); **EQ, touch keys, fit test, prompt volume and sensor sensitivity are blocked**; the panel says "Unverified model" |
+| unknown | name, then firmware string, then `generic` | |
+
+Only the N70 was tried on real hardware. Where the product data comes from
+and how the profile is derived: `backend/WEB_API.md`.
 
 ## Languages
 
@@ -123,6 +148,9 @@ downloads them again. The colour comes from `--color`, or from the file
 `~/.config/qcy-omarchy/color` (a colour name or index, e.g. `Purple` or `2`),
 otherwise it is the product's default colour; the colour the earbuds advertise
 is not used because the scanner does not report it reliably.
+
+Print the paths without the panel: `qcyctl model image [--vendor N]
+[--color <name|index>] [--refresh] [--no-network] [--json]`.
 
 To stop all downloads run `qcyctl model images off` (`on` re-enables,
 `status` shows); the panel then uses only what is already cached, or its drawn
@@ -169,6 +197,11 @@ qcyctl status                 # human-readable snapshot
 qcyctl anc noisy              # set ANC mode
 qcyctl ldac on                # toggles: game|sleep|ldac|multipoint|wind
 qcyctl find                   # flash the earbuds
+qcyctl prompt-vol 8           # prompt volume: 4|6|8|10|low|medium|high|max (N70)
+qcyctl wear-sensitivity high  # medium|normal|high|1|2|3 (N70; needs wear detection on)
+qcyctl fit start              # ear-tip fit test (N70): plays a sound, waits and prints left/right (stop|begin also exist)
+qcyctl i18n list|bundle|template|set   # languages, offline (see Languages)
+qcyctl model image            # device pictures, downloaded on demand (see Device images)
 qcyctl library seed           # the 8 factory effects (embedded) + Experiência auditiva, offline, idempotent
 qcyctl library list [--all]   # saved EQ curves (offline): factory in the app's order, Experiência auditiva, then yours; --all also shows older seeds
 qcyctl library apply <id> --yes [--slot 255|0]   # write a saved curve to slot 255 (default: the app's "Personalizado" buffer, the only safe target while a factory effect 6/11 is active) or 0
