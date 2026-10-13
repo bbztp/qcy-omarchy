@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore"
+	"github.com/bbztp/qcy-omarchy/internal/qcycore"
 )
 
 // payload11 is a 73-byte 0x22 payload (the written form): slot 11, master +1.50 dB, band 1 at

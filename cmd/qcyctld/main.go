@@ -20,7 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore"
+	"github.com/bbztp/qcy-omarchy/internal/qcycore"
 	"tinygo.org/x/bluetooth"
 )
 

@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bbztp/qcy-omarchy/backend/internal/hearing"
+	"github.com/bbztp/qcy-omarchy/internal/hearing"
 )
 
 // `qcyctl hearing ...`: the app's hearing test. plan, result and run --dry-run

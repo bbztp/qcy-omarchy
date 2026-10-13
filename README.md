@@ -94,7 +94,7 @@ curves are always slot 255):
 | 255 | Personalizado (any custom curve made in the app) | medido |
 | 7, 8, 9, 12, 13 | ? | não observado |
 
-Slot 0 is the old test curve of this tool. Details in `backend/PROTOCOL.md`.
+Slot 0 is the old test curve of this tool. Details in `docs/PROTOCOL.md`.
 
 ## Supported models
 
@@ -108,7 +108,7 @@ advertisement, not by the Bluetooth name.
 | unknown | name, then firmware string, then `generic` | |
 
 Only the N70 was tried on real hardware. Where the product data comes from
-and how the profile is derived: `backend/WEB_API.md`.
+and how the profile is derived: `docs/WEB_API.md`.
 
 ## Languages
 
@@ -216,7 +216,7 @@ library applies and composes any curve to slot 255: every seeded curve is
 applyable (band types 0, 2, 3 and 255 are accepted, positions 0-19). `compose`
 puts the non-zero bars of `--gains` (ISO 31..16000 Hz, Q 100, type 255) first and
 the base effect's bands after them, up to 20 bands, with the base's master
-gain (or `--master`, default -12). See `backend/PROTOCOL.md`.
+gain (or `--master`, default -12). See `docs/PROTOCOL.md`.
 
 Run `qcyctl` with no arguments for the full command list. Set `QCY_DEBUG=1` to
 trace the GATT traffic of the CLI on stderr; for the daemon set `QCYCTL_DEBUG=1`
@@ -227,8 +227,10 @@ window.
 ## Layout
 
 ```
-backend/                    Go source for qcyctl
-backend/cmd/qcyctld/        Go source for the qcyctld daemon
+cmd/qcyctl/                 Go source for qcyctl
+cmd/qcyctld/                Go source for the qcyctld daemon
+internal/                   Go packages shared by both (qcycore, hearing)
+docs/                       PROTOCOL.md, WEB_API.md
 packaging/qcyctld.service   systemd user unit
 plugin/io.github.bbztp.qcy/ the Omarchy bar widget (QML)
 scripts/install.sh          build + install

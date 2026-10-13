@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbztp/qcy-omarchy/backend/internal/hearing"
-	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore"
+	"github.com/bbztp/qcy-omarchy/internal/hearing"
+	"github.com/bbztp/qcy-omarchy/internal/qcycore"
 )
 
 const pactlSinks = "47\talsa_output.pci-0000_00_1f.3.analog-stereo\tPipeWire\ts32le 2ch 48000Hz\tSUSPENDED\n" +

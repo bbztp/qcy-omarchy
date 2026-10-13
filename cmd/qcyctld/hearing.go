@@ -8,8 +8,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/bbztp/qcy-omarchy/backend/internal/hearing"
-	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore"
+	"github.com/bbztp/qcy-omarchy/internal/hearing"
+	"github.com/bbztp/qcy-omarchy/internal/qcycore"
 )
 
 // Hearing test (phase 2): two raw-frame commands, only for verified models.

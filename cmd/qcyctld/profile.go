@@ -7,7 +7,7 @@ import (
 
 	quicky "github.com/hui1601/Quicky/lib"
 
-	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore/models"
+	"github.com/bbztp/qcy-omarchy/internal/qcycore/models"
 )
 
 // quickyProduct resolves a vendorId against the Quicky product database. The

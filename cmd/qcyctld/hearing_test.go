@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbztp/qcy-omarchy/backend/internal/hearing"
+	"github.com/bbztp/qcy-omarchy/internal/hearing"
 )
 
 // hearSession records every raw packet and optionally echoes 0x45/0x46/0x47.

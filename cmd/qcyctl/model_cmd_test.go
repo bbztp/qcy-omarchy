@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore/models"
+	"github.com/bbztp/qcy-omarchy/internal/qcycore/models"
 )
 
 var webpBytes = append([]byte("RIFF\x10\x00\x00\x00WEBP"), bytes.Repeat([]byte{1}, 32)...)

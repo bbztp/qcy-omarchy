@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate backend/internal/qcycore/models/models.json from the QCY web data.
+"""Generate internal/qcycore/models/models.json from the QCY web data.
 
 Usage: python3 scripts/gen_models.py [product_list.json] [panels_dir] [out.json]
 
@@ -21,7 +21,7 @@ REF = os.environ.get("QCY_PANELS_DIR", os.path.join(HOME, "qcy-panels"))
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEF_PRODUCTS = os.path.join(REF, "product_list/extracted/en_prod_0.0.0.2.5.json")
 DEF_PANELS = os.path.join(REF, "panels")
-DEF_OUT = os.path.join(HERE, "..", "backend/internal/qcycore/models/models.json")
+DEF_OUT = os.path.join(HERE, "..", "internal/qcycore/models/models.json")
 
 
 def num(v, default=None):

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore"
+	"github.com/bbztp/qcy-omarchy/internal/qcycore"
 )
 
 // slot0Flat is built in init: 143 bytes, slot 0, master 0, bands at the flat

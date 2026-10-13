@@ -37,9 +37,9 @@ if [ "$build" = 1 ]; then
   command -v go >/dev/null 2>&1 || { echo "error: go is required to build (or use --no-build after 'make build')" >&2; exit 1; }
   mkdir -p "${build_dir}"
   echo "building qcyctl..."
-  ( cd "${repo_dir}/backend" && go build -o "${build_dir}/qcyctl" . )
+  ( cd "${repo_dir}" && go build -o "${build_dir}/qcyctl" ./cmd/qcyctl )
   echo "building qcyctld..."
-  ( cd "${repo_dir}/backend" && go build -o "${build_dir}/qcyctld" ./cmd/qcyctld )
+  ( cd "${repo_dir}" && go build -o "${build_dir}/qcyctld" ./cmd/qcyctld )
 fi
 
 for b in qcyctl qcyctld; do

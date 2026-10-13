@@ -8,11 +8,11 @@ UNIT_FILE  := $(HOME)/.config/systemd/user/qcyctld.service
 
 build:
 	mkdir -p $(BUILD_DIR)
-	cd backend && go build -o ../$(BUILD_DIR)/qcyctl .
-	cd backend && go build -o ../$(BUILD_DIR)/qcyctld ./cmd/qcyctld
+	go build -o $(BUILD_DIR)/qcyctl ./cmd/qcyctl
+	go build -o $(BUILD_DIR)/qcyctld ./cmd/qcyctld
 
 vet:
-	cd backend && go vet ./...
+	go vet ./...
 
 install: build
 	./scripts/install.sh --no-build
@@ -27,4 +27,3 @@ uninstall:
 
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -f backend/qcyctl backend/cmd/qcyctld/qcyctld

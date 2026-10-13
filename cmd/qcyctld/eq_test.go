@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore"
+	"github.com/bbztp/qcy-omarchy/internal/qcycore"
 )
 
 // 0x22 payloads shaped like the device's (slot 11 is synthetic; same bytes as qcycore's fixtures).

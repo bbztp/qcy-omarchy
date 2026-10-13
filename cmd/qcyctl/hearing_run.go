@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bbztp/qcy-omarchy/backend/internal/hearing"
-	"github.com/bbztp/qcy-omarchy/backend/internal/qcycore"
+	"github.com/bbztp/qcy-omarchy/internal/hearing"
+	"github.com/bbztp/qcy-omarchy/internal/qcycore"
 )
 
 // `qcyctl hearing run`: the real test. Everything that touches the outside

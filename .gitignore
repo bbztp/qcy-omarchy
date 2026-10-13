@@ -1,10 +1,9 @@
 # Compiled binaries
 /build/
-/backend/qcyctl
-/backend/cmd/qcyctld/qcyctld
+/cmd/qcyctl/qcyctl
+/cmd/qcyctld/qcyctld
 
 # Build/test artifacts
 *.test
 *.out
 /tmp/
-/backend/backend

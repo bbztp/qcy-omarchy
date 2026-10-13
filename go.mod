@@ -1,4 +1,4 @@
-module github.com/bbztp/qcy-omarchy/backend
+module github.com/bbztp/qcy-omarchy
 
 go 1.27.2
 
