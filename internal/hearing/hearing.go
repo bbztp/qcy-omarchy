@@ -27,6 +27,9 @@ var Freqs = [Bands]int{63, 125, 250, 500, 1000, 2000, 4000, 8000}
 // constant here; callers may pass another table per model.
 var DefaultSoundDB = [Bands]float64{-65.3, -68.0, -72.6, -80.7, -86.9, -90.3, -90.4, -81.6}
 
+// noNo is lowestNo of a band in which nothing was answered "not heard".
+const noNo = 1 << 30
+
 const (
 	// MinStep and MaxStep bound the staircase position of a band.
 	MinStep = -8
@@ -95,10 +98,12 @@ type Session struct {
 	endCnt  int
 	last    int
 	hasLast bool
-	sawNo   bool // a "not heard" was recorded in the current band
-	done    bool
-	res     [2][Bands]int
-	floor   [2][Bands]bool
+	// lowestNo is the lowest gain at which "not heard" was answered in the
+	// current band (noneHeard when there was none).
+	lowestNo int
+	done     bool
+	res      [2][Bands]int
+	floor    [2][Bands]bool
 }
 
 // NewSession starts a test with the given per-band reference levels.
@@ -112,7 +117,7 @@ func (s *Session) startBand() {
 	s.gain = InitialStep
 	s.endCnt = 0
 	s.hasLast = false
-	s.sawNo = false
+	s.lowestNo = noNo
 }
 
 // Done reports whether all 16 bands were recorded.
@@ -168,7 +173,9 @@ func (s *Session) Answer(heard bool) error {
 	low := f <= LowBandMaxHz
 	g := s.gain
 	if !heard {
-		s.sawNo = true
+		if g < s.lowestNo {
+			s.lowestNo = g
+		}
 		if g >= MaxGain {
 			s.endCnt++
 			if s.endCnt >= 2 {
@@ -189,10 +196,11 @@ func (s *Session) Answer(heard bool) error {
 	}
 	s.last, s.hasLast = g, true
 	// Floor: the band ended heard at or below the "very quiet" threshold and
-	// NO "not heard" was ever recorded in it, so the threshold was never
-	// bracketed (a band that was bracketed - heard -4, not heard -6, heard -4 -
-	// is a measurement even when its value is low).
-	atFloor := !s.sawNo && ((low && g <= -4) || (!low && g <= -2))
+	// the threshold was never bracketed from below: no "not heard" was
+	// answered at a gain LOWER than the recorded one. (A "not heard" at +2
+	// before the descent says nothing about the floor; heard -4, not heard
+	// -6, heard -4 is a measurement even though -4 is low.)
+	atFloor := ((low && g <= -4) || (!low && g <= -2)) && s.lowestNo >= g
 	if s.endCnt >= 2 || same {
 		s.record(g, atFloor)
 		return nil

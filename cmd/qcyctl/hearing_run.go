@@ -1031,7 +1031,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 				}
 				answered = true
 				delete(fails, int(t.Ear)*hearing.Bands+t.Band)
-			default:
+			case 'n', 'N', ' ':
 				fmt.Fprintln(out, "not heard")
 				answers = append(answers, heardRec{Tone: t, Heard: false})
 				if e := sess.Answer(false); e != nil {

@@ -1590,3 +1590,30 @@ func TestHearingRunUnreadableSinkVolumeIsNotTrusted(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Only h/Enter, n/space, r and q are keys; anything else is ignored: it is not
+// a "not heard" and does not restart the tone.
+func TestHearingRunUnknownKeysAreIgnored(t *testing.T) {
+	ck := newCtlKeys()
+	r := newRig(t, ck)
+	o := opts()
+	o.outFile = filepath.Join(t.TempDir(), "r.json")
+	go func() {
+		waitStarted(r.pl, 1)
+		for _, k := range []byte{'x', 'z', 27, 'H' + 100, '1', '\t'} {
+			ck.press(k)
+		}
+		ck.press('h') // the real answer to the first tone
+		ck.release()
+	}()
+	if err := hearingRunLive(r.env, o); err != nil {
+		t.Fatal(err)
+	}
+	a := answersOf(t, o.outFile)
+	if len(a) == 0 || !a[0].Heard {
+		t.Fatalf("an ignored key was taken as an answer: %+v", a[:1])
+	}
+	if strings.Contains(r.out.String(), "repeat ... ") {
+		t.Fatal("an unknown key restarted the tone")
+	}
+}

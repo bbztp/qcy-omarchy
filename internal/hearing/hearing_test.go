@@ -391,3 +391,33 @@ func TestFloorOnlyWhenTheThresholdWasNeverBracketed(t *testing.T) {
 		t.Fatalf("high bracketed: %d floor=%v", g, f)
 	}
 }
+
+// Floor is decided by POSITION: only a "not heard" BELOW the recorded gain
+// brackets the threshold. A stray "not heard" at the top of the staircase
+// before the descent does not hide a listener who then hears everything down
+// to the bottom.
+func TestFloorIgnoresNotHeardAboveTheRecordedGain(t *testing.T) {
+	run := func(seq string, gains []int) (int, bool) {
+		s := NewSession(DefaultSoundDB)
+		answerSeq(t, s, seq, gains)
+		l, _ := s.Result()
+		fl, _ := s.Floor()
+		if s.Current().Band != 1 {
+			t.Fatalf("band 0 did not end: %+v", s.Current())
+		}
+		return l[0], fl[0]
+	}
+	// not heard at +2, then heard 3, 2, 1, 0, -2, -4, -6.
+	if g, f := run("nhhhhhhh", []int{2, 3, 2, 1, 0, -2, -4, -6}); g != -6 || !f {
+		t.Fatalf("stray no at +2: %d floor=%v", g, f)
+	}
+	// not heard at +2 and +3, then heard 4 down to -6.
+	if g, f := run("nnhhhhhhhh", []int{2, 3, 4, 3, 2, 1, 0, -2, -4, -6}); g != -6 || !f {
+		t.Fatalf("two stray no: %d floor=%v", g, f)
+	}
+	// the same stray no, but the threshold IS bracketed from below (not heard
+	// at -6, heard again at -4): a measurement.
+	if g, f := run("nhhhhhhnh", []int{2, 3, 2, 1, 0, -2, -4, -6, -4}); g != -4 || f {
+		t.Fatalf("bracketed: %d floor=%v", g, f)
+	}
+}
