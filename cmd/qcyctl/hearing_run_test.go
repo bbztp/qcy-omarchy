@@ -365,7 +365,9 @@ type rig struct {
 	ttyRestored *int
 	saved       []string
 	ttyOptional bool
-	order       []string // slot11 / save, in call order
+	order       []string // slot11 / save / record, in call order
+	recorded    []qcycore.Curve
+	recordErr   error
 	slot11Err   error
 	saveErr     error
 }
@@ -390,6 +392,14 @@ func newRig(t *testing.T, keys keySource) *rig {
 		now:       func() time.Time { return time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC) },
 		configDir: func() (string, error) { return cfg, nil },
 		sleep:     func(time.Duration) {},
+		recordCurve: func(c qcycore.Curve) (bool, error) {
+			rg.order = append(rg.order, "record")
+			if rg.recordErr != nil {
+				return false, rg.recordErr
+			}
+			rg.recorded = append(rg.recorded, c)
+			return true, nil
+		},
 		slot11: func(snap *qcycore.EqSnapshot) (slot11Backup, error) {
 			rg.order = append(rg.order, "slot11")
 			if rg.slot11Err != nil {

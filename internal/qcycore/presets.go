@@ -58,8 +58,23 @@ type Curve struct {
 	MasterGain float64  `json:"masterGain"`
 	Payload    string   `json:"payload,omitempty"`
 	Bands      []EqBand `json:"bands"`
-	Note       string   `json:"note"`
-	CreatedAt  string   `json:"createdAt"`
+	// Ears, when present, holds the two curves of a hearing-test result (what
+	// the app keeps on the phone and re-sends as 0x46/0x47 index 11). Bands
+	// then holds the per-band mean of the two, for the chart and for the
+	// checks that need one curve. Entries without it behave as before.
+	Ears      *EarCurves `json:"ears,omitempty"`
+	Note      string     `json:"note"`
+	CreatedAt string     `json:"createdAt"`
+}
+
+// EarBands is the number of bands per ear of a hearing-test result.
+const EarBands = 8
+
+// EarCurves is the per-ear curve pair of a hearing-test result.
+type EarCurves struct {
+	Left       []EqBand `json:"left"`
+	Right      []EqBand `json:"right"`
+	MasterGain float64  `json:"masterGain"` // dB, one value for both ears
 }
 
 // LibraryDir returns the directory curves are stored in.
@@ -202,6 +217,12 @@ func ValidateCurve(c Curve) error {
 		}
 	}
 
+	if c.Ears != nil {
+		if err := validateEars(c.Ears); err != nil {
+			return err
+		}
+	}
+
 	if c.Payload == "" {
 		if c.Source != SourceUser {
 			return fmt.Errorf("curve: source %q needs a payload", c.Source)
@@ -232,6 +253,42 @@ func ValidateCurve(c Curve) error {
 		b := c.Bands[i]
 		if b.Index != d.Index || b.Freq != d.Freq || bandC[i] != int(math.Round(d.Gain*100)) || b.Q != d.Q || b.Type != d.Type {
 			return fmt.Errorf("curve: band %d does not match the payload", i)
+		}
+	}
+	return nil
+}
+
+// validateEars checks the per-ear curves: EarBands bands each, in increasing
+// position, with frequency, gain, Q and type in the ranges of a payload.
+func validateEars(e *EarCurves) error {
+	if _, err := quantCenti(e.MasterGain, MasterMaxDB); err != nil {
+		return fmt.Errorf("curve: ears: masterGain: %w", err)
+	}
+	for _, side := range []struct {
+		name  string
+		bands []EqBand
+	}{{"left", e.Left}, {"right", e.Right}} {
+		if len(side.bands) != EarBands {
+			return fmt.Errorf("curve: ears.%s has %d bands (want %d)", side.name, len(side.bands), EarBands)
+		}
+		prev := -1
+		for i, b := range side.bands {
+			switch {
+			case b.Index < 0 || b.Index >= EqMaxBands:
+				return fmt.Errorf("curve: ears.%s[%d]: index %d out of range", side.name, i, b.Index)
+			case b.Index <= prev:
+				return fmt.Errorf("curve: ears.%s[%d]: index %d is duplicated or out of order", side.name, i, b.Index)
+			case b.Freq < minFreqHz || b.Freq > maxFreqHz:
+				return fmt.Errorf("curve: ears.%s[%d]: freq %d Hz out of range", side.name, i, b.Freq)
+			case b.Q < 0 || b.Q > math.MaxUint16:
+				return fmt.Errorf("curve: ears.%s[%d]: q %d out of range", side.name, i, b.Q)
+			case !BandTypeSupported(b.Type):
+				return fmt.Errorf("curve: ears.%s[%d]: type %d is not supported", side.name, i, b.Type)
+			}
+			prev = b.Index
+			if _, err := quantCenti(b.Gain, MaxDB); err != nil {
+				return fmt.Errorf("curve: ears.%s[%d]: %w", side.name, i, err)
+			}
 		}
 	}
 	return nil
@@ -481,6 +538,56 @@ func UpdateCurve(c Curve) error {
 	}
 	syncDir(dir)
 	return nil
+}
+
+// UpsertCurve stores c under its id, replacing an existing file ATOMICALLY
+// (temp file + rename: the entry never disappears). The version it replaces
+// is first linked into <library>/.trash/<id>-<UTC timestamp>.json, so nothing
+// is lost. replaced reports whether there was a previous version.
+func UpsertCurve(c Curve) (replaced bool, err error) {
+	c, _, err = prepareCurve(c)
+	if err != nil {
+		return false, err
+	}
+	dir, err := ensureLibraryDir()
+	if err != nil {
+		return false, err
+	}
+	path := filepath.Join(dir, c.ID+".json")
+	st, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, CreateCurve(c)
+	}
+	if err != nil {
+		return false, fmt.Errorf("curve %q: %w", c.ID, err)
+	}
+	if !st.Mode().IsRegular() {
+		return false, fmt.Errorf("curve %q: not a regular file", c.ID)
+	}
+	trash := filepath.Join(dir, ".trash")
+	if err := os.MkdirAll(trash, 0o700); err != nil {
+		return false, fmt.Errorf("curve trash: %w", err)
+	}
+	ts := time.Now().UTC().Format("20060102T150405.000000Z")
+	linked := false
+	for n := 0; n < 100 && !linked; n++ {
+		name := fmt.Sprintf("%s-%s.json", c.ID, ts)
+		if n > 0 {
+			name = fmt.Sprintf("%s-%s-%d.json", c.ID, ts, n)
+		}
+		err := os.Link(path, filepath.Join(trash, name))
+		switch {
+		case err == nil:
+			linked = true
+		case !errors.Is(err, os.ErrExist):
+			return false, fmt.Errorf("curve trash: %w", err)
+		}
+	}
+	if !linked {
+		return false, errors.New("curve trash: could not find a free file name")
+	}
+	syncDir(trash)
+	return true, UpdateCurve(c)
 }
 
 // DeleteCurve moves the curve to <library>/.trash/<id>-<UTC timestamp>.json.

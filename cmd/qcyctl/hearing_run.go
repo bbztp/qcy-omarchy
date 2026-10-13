@@ -97,8 +97,11 @@ type hearingEnv struct {
 	saveCurve func(name string, snap *qcycore.EqSnapshot) (string, error)
 	// slot11 preserves the slot 11 curve as a user entry of the library
 	// (errNoSlot11Copy when there is nothing to preserve).
-	slot11    func(snap *qcycore.EqSnapshot) (slot11Backup, error)
-	pingEvery time.Duration
+	slot11 func(snap *qcycore.EqSnapshot) (slot11Backup, error)
+	// recordCurve stores (replacing atomically, the old version to the trash)
+	// the hearing-test card after a confirmed write.
+	recordCurve func(c qcycore.Curve) (replaced bool, err error)
+	pingEvery   time.Duration
 	// monitor reads ~0.4 s of ONE stream's monitor (parec --monitor-stream) as
 	// s16le mono 8 kHz, read only. Nil/failing = not measurable (the
 	// conservative path).
@@ -1129,7 +1132,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			return fmt.Errorf("refused to write: %d band(s) were still heard at the lowest level, so the result is only relative. Rerun with a lower --sink-volume (e.g. 60%%), or pass --accept-floor to write it anyway; nothing was written (restore point: %s)", nFloor, restoreCmd)
 		}
 		rec.Backup, rec.Restore = backupPath, restoreCmd
-		writes, final, e := hearingCommit(out, link, l, r, restoreCmd, modeOff)
+		writes, final, e := hearingCommit(out, link, l, r, restoreCmd, modeOff, env.recorder(l, r, o.sinkVolume, rec.Timestamp))
 		rec.Writes, rec.Final = writes, final
 		if e != nil {
 			_ = save()
@@ -1504,12 +1507,13 @@ func liveHearingEnv(out io.Writer) (hearingEnv, func()) {
 			}
 			return ""
 		},
-		now:       time.Now,
-		sleep:     time.Sleep,
-		configDir: qcyConfigDir,
-		saveCurve: saveBackupCurve,
-		slot11:    func(snap *qcycore.EqSnapshot) (slot11Backup, error) { return hearingSlot11Backup(snap, time.Now()) },
-		monitor:   liveMonitor,
-		pingEvery: 3 * time.Second,
+		now:         time.Now,
+		sleep:       time.Sleep,
+		configDir:   qcyConfigDir,
+		saveCurve:   saveBackupCurve,
+		recordCurve: qcycore.UpsertCurve,
+		slot11:      func(snap *qcycore.EqSnapshot) (slot11Backup, error) { return hearingSlot11Backup(snap, time.Now()) },
+		monitor:     liveMonitor,
+		pingEvery:   3 * time.Second,
 	}, func() { signal.Stop(sigs) }
 }

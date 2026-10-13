@@ -157,7 +157,10 @@ required, because the reported master gain belongs to the active slot. `bands`
 and `gains` are mutually exclusive.
 
 **Protected slots.** Slots 6 (factory "Classico") and 11 (hearing test) are in
-`qcycore.ProtectedSlots`. Enforced inside `ApplyEq`, so the CLI (direct and via
+`qcycore.ProtectedSlots` *for 0x22 writes*: the phone app never writes slot 11
+through 0x22 either (the hearing-test result is stored and re-applied with
+0x46/0x47 index 11, see "Hearing test frames"), so a 0x22 write there would be
+something the app does not do. Enforced inside `ApplyEq`, so the CLI (direct and via
 the daemon), the socket and the library apply all inherit it. Without
 `--allow-protected` / `allowProtected: true` the write is refused, before the
 backup and before anything is sent, when
@@ -618,6 +621,24 @@ shows the written curve ("NOT CONFIRMED" otherwise). If the right ear fails
 after the left was written the output says "MIXED STATE" with the restore
 command. Bands still heard at the lowest level of the staircase ("floor") are
 refused unless `--accept-floor` is given.
+
+How the phone app handles the result (as observed): "use this
+result" writes `0x46` (left) and `0x47` (right) with effect index 11, nothing
+else (no 0x22, no slot select). Tapping the "Experiência auditiva" effect again
+with curves already saved does NOT reopen the test: the app re-sends 0x46/0x47
+index 11 from the left/right curves it keeps on the phone. The earbuds only
+report the active EQ through 0x22.
+
+We mirror that. A library entry may carry `ears` (`left` and `right`, 8 bands
+each at 63..8000 Hz, Q 70, type 2, plus `masterGain`); its `bands`/payload hold
+the per-band mean for the chart. After a hearing result is written and
+confirmed (`hearing apply`, `hearing run --apply --yes`) the entry
+`experiencia-auditiva` (source device-import, slot 11) is replaced atomically
+with the new `ears` and the previous version goes to the library `.trash`.
+`library apply <id> --yes` of an entry with `ears` sends 0x46/0x47 index 11
+(backups first, no 0x22, no slot 255); an entry without `ears` (a 13-band copy
+read from the device) keeps the slot 255 path. If the library cannot be updated
+after the earbuds were written, a warning says so and nothing is undone.
 
 Slot 11 is what the hearing-test frames overwrite, and the earbuds report only
 the ACTIVE slot, so before writing the tool preserves it as a user entry of the

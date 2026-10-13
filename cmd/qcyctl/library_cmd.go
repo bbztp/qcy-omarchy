@@ -730,6 +730,20 @@ func cmdLibraryApply(args []string) error {
 	if err != nil {
 		return err
 	}
+	if c.Ears != nil {
+		// A hearing-test result: the app re-sends 0x46/0x47 index 11 from the
+		// two ear curves it keeps; it never writes it through 0x22.
+		if _, ok := a.vals["--slot"]; ok || a.bools["--full-length"] {
+			return errors.New("library apply: --slot/--full-length do not apply to a hearing-test card: it is written as 0x46/0x47 index 11, not as a 0x22 curve")
+		}
+		out := io.Writer(os.Stdout)
+		if a.bools["--json"] {
+			out = os.Stderr // stdout carries the JSON result only
+		}
+		env, done := liveHearingEnv(out)
+		defer done()
+		return hearingApplyEars(env, c, a.bools["--json"], false)
+	}
 	op, err := libraryApplyOp(c, a.bools["--full-length"], slot)
 	if err != nil {
 		return err

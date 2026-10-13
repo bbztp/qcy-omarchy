@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -161,7 +162,7 @@ func hearingSlot11Backup(snap *qcycore.EqSnapshot, now time.Time) (slot11Backup,
 		c := clone
 		c.Name, c.Source, c.CreatedAt = name, qcycore.SourceUser, stamp
 		c.Note = "Última leitura do slot 11 feita no aparelho em " + when + " (entrada " + src.ID +
-			"); o aparelho não permite ler o slot 11 enquanto inativo. Depois de gravar um resultado do teste auditivo o slot 11 contém esse resultado; esta é a leitura mais antiga conhecida."
+			"); o aparelho não permite ler o slot 11 enquanto inativo. Cópia da última versão conhecida do slot 11 antes de gravar um novo resultado do teste auditivo."
 		return c, nil
 	})
 	if err == nil && len(failed) > 0 {
@@ -249,7 +250,7 @@ func printBackup(out io.Writer, in hearingBackupInfo) {
 // the link), reports each readback, switches the test mode off (modeOff may be
 // nil), reads the device back and says "applied" or NOT CONFIRMED. The restore
 // command is printed on every bad outcome.
-func hearingCommit(out io.Writer, link hearingLink, l, r [hearing.Bands]int, restoreCmd string, modeOff func()) (writes []*hearingCall, final *qcycore.EqSnapshot, err error) {
+func hearingCommit(out io.Writer, link hearingLink, l, r [hearing.Bands]int, restoreCmd string, modeOff func(), record func(master float64, state string) (bool, error)) (writes []*hearingCall, final *qcycore.EqSnapshot, err error) {
 	wrote := 0
 	var unconfirmed []string
 	for _, w := range []struct {
@@ -289,10 +290,142 @@ func hearingCommit(out io.Writer, link hearingLink, l, r [hearing.Bands]int, res
 		fmt.Fprintf(out, "device now reports: slot %d %q masterGain %.2f dB, %d bands\n", snap.Slot, snap.Effect, snap.MasterGain, len(snap.Bands))
 	}
 	if len(unconfirmed) > 0 {
+		if record != nil {
+			fmt.Fprintln(out, "library entry \"experiencia-auditiva\" NOT updated: the write was not confirmed")
+		}
 		return writes, final, fmt.Errorf("write NOT CONFIRMED for the %s ear: the result may not have been applied (restore: %s)", strings.Join(unconfirmed, " and "), restoreCmd)
 	}
 	fmt.Fprintf(out, "applied. to restore the previous state: %s\n", restoreCmd)
+	if record != nil {
+		master := computeResult(toFloats(l), toFloats(r)).MasterGain
+		state := "confirmado pelo eco do aparelho"
+		for _, w := range writes {
+			if !w.Ack {
+				state = "confirmado pelo readback do 0x22"
+			}
+		}
+		// The earbuds are written; a library failure must not look like a
+		// failed write, and nothing is undone.
+		if replaced, e := record(master, state); e != nil {
+			fmt.Fprintf(out, "WARNING: the earbuds were written, but the library entry %q could not be updated (%v); the card still shows the previous curve. The write was NOT undone; to restore the previous state: %s\n",
+				qcycore.HearingTestCurveID(), e, restoreCmd)
+		} else if replaced {
+			fmt.Fprintf(out, "library entry %q updated (the previous version is in the library .trash)\n", qcycore.HearingTestCurveID())
+		} else {
+			fmt.Fprintf(out, "library entry %q created\n", qcycore.HearingTestCurveID())
+		}
+	}
 	return writes, final, nil
+}
+
+func toFloats(g [hearing.Bands]int) [hearing.Bands]float64 {
+	var o [hearing.Bands]float64
+	for i, v := range g {
+		o[i] = float64(v)
+	}
+	return o
+}
+
+// hearingResultCurve is the library entry of a written hearing-test result:
+// the app keeps the two ear curves and re-sends them as 0x46/0x47 index 11, so
+// the entry carries them in Ears; Bands (and the payload) hold the per-band mean
+// for the chart. Source device-import and slot 11 keep it where the older
+// copies of this card were.
+func hearingResultCurve(l, r [hearing.Bands]int, master float64, now time.Time, sinkVolume int, fileTS, state string) (qcycore.Curve, error) {
+	const q, typ = 70, 2 // Q 0.7, the bell the frames carry
+	ear := func(g [hearing.Bands]int) []qcycore.EqBand {
+		out := make([]qcycore.EqBand, hearing.Bands)
+		for i, v := range g {
+			out[i] = qcycore.EqBand{Index: i, Freq: hearing.Freqs[i], Gain: float64(v), Q: q, Type: typ}
+		}
+		return out
+	}
+	specs := make([]qcycore.BandSpec, hearing.Bands)
+	for i := range specs {
+		specs[i] = qcycore.BandSpec{Index: i, Freq: hearing.Freqs[i], Gain: float64(l[i]+r[i]) / 2, Q: q, Type: typ}
+	}
+	mc := int(math.Round(master * 100))
+	slot := qcycore.HearingTestSlot
+	payload, err := qcycore.ApplyEq(make([]byte, qcycore.EqLen), qcycore.EqOp{Slot: &slot, MasterCenti: &mc, Bands: specs, AllowProtected: true})
+	if err != nil {
+		return qcycore.Curve{}, err
+	}
+	snap, err := qcycore.DecodeEq(payload)
+	if err != nil {
+		return qcycore.Curve{}, err
+	}
+	when := fileTS
+	if when == "" {
+		when = now.Format(time.RFC3339)
+	}
+	return qcycore.Curve{
+		Version: qcycore.CurveVersion, ID: qcycore.HearingTestCurveID(), Name: qcycore.HearingTestName,
+		Source: qcycore.SourceDeviceImport, Slot: qcycore.HearingTestSlot,
+		MasterGain: snap.MasterGain, Payload: snap.Payload, Bands: snap.Bands,
+		Ears: &qcycore.EarCurves{Left: ear(l), Right: ear(r), MasterGain: snap.MasterGain},
+		Note: fmt.Sprintf("Resultado do teste auditivo de %s (volume do sink %d%%). Gravado nas duas orelhas (0x46/0x47, índice 11); %s.",
+			when, sinkVolume, state),
+		CreatedAt: now.UTC().Format(time.RFC3339),
+	}, nil
+}
+
+// recorder returns the callback that stores a written result in the library.
+func (env hearingEnv) recorder(l, r [hearing.Bands]int, sinkVolume int, fileTS string) func(float64, string) (bool, error) {
+	return func(master float64, state string) (bool, error) {
+		c, err := hearingResultCurve(l, r, master, env.now(), sinkVolume, fileTS, state)
+		if err != nil {
+			return false, err
+		}
+		return env.recordCurve(c)
+	}
+}
+
+// earsGains reads the eight whole-dB gains of each ear of a library entry; the
+// frames carry integers, so an entry that was edited to fractions cannot be
+// sent as it is.
+func earsGains(e *qcycore.EarCurves) (l, r [hearing.Bands]int, err error) {
+	for _, side := range []struct {
+		name  string
+		bands []qcycore.EqBand
+		out   *[hearing.Bands]int
+	}{{"left", e.Left, &l}, {"right", e.Right, &r}} {
+		if len(side.bands) != hearing.Bands {
+			return l, r, fmt.Errorf("ears.%s has %d bands (want %d)", side.name, len(side.bands), hearing.Bands)
+		}
+		for i, b := range side.bands {
+			g := b.Gain
+			if g != math.Trunc(g) || g < hearing.MinStep || g > hearing.MaxGain {
+				return l, r, fmt.Errorf("ears.%s[%d] gain %v is not a whole dB in %d..+%d: the hearing frames carry integers", side.name, i, g, hearing.MinStep, hearing.MaxGain)
+			}
+			if b.Freq != hearing.Freqs[i] {
+				return l, r, fmt.Errorf("ears.%s[%d] is at %d Hz (the hearing test uses %d Hz)", side.name, i, b.Freq, hearing.Freqs[i])
+			}
+			side.out[i] = int(g)
+		}
+	}
+	return l, r, nil
+}
+
+// hearingApplyEars applies a library entry that carries per-ear curves the way
+// the phone app re-applies its hearing-test result: 0x46 and 0x47 index 11,
+// nothing in 0x22 and no slot 255. Backup (slot 11 and the active EQ) comes
+// first, the model must be verified, and the library entry is left alone.
+func hearingApplyEars(env hearingEnv, c qcycore.Curve, jsonOut bool, noSlot11 bool) error {
+	l, r, err := earsGains(c.Ears)
+	if err != nil {
+		return fmt.Errorf("library apply %s: %w", c.ID, err)
+	}
+	fmt.Fprintf(env.out, "applying %q to the earbuds as the hearing-test result (0x46/0x47, index 11)\nleft : %v\nright: %v\n", c.ID, l, r)
+	info, writes, err := hearingWriteGains(env, l, r, hearingApplyOpts{yes: true, noSlot11Backup: noSlot11}, nil)
+	if jsonOut {
+		res := map[string]interface{}{"id": c.ID, "ears": true, "confirmed": err == nil, "backup": info.Path, "restore": info.Restore,
+			"slot11Backup": info.Slot11, "slot11Restore": info.Slot11Cmd, "writes": writes}
+		if err != nil {
+			res["error"] = err.Error()
+		}
+		_ = printJSON(res)
+	}
+	return err
 }
 
 // ---------- hearing apply <file> ----------
@@ -462,6 +595,18 @@ func hearingApplyFile(env hearingEnv, path string, o hearingApplyOpts) (err erro
 		return fmt.Errorf("refused to write: %d band(s) were still heard at the lowest level, so the result is only relative; rerun the test with a lower --sink-volume, or pass --accept-floor; nothing was sent", nFloor)
 	}
 
+	record := env.recorder(l, r, f.SinkVolume, f.Timestamp)
+	_, _, err = hearingWriteGains(env, l, r, o, record)
+	return err
+}
+
+// hearingWriteGains is the write half of `hearing apply` and of applying a
+// hearing-test card from the library: model gate, backup (slot 11 included)
+// before any frame, optional 0x45, both ears, readback, mode off, and the
+// optional library update (record). The link is closed last, by the undo
+// chain, so the mode-off frame has an open connection.
+func hearingWriteGains(env hearingEnv, l, r [hearing.Bands]int, o hearingApplyOpts, record func(master float64, state string) (bool, error)) (info hearingBackupInfo, writes []*hearingCall, err error) {
+	out := env.out
 	var (
 		abortOnce sync.Once
 		abortCh   = make(chan struct{})
@@ -493,26 +638,26 @@ func hearingApplyFile(env hearingEnv, path string, o hearingApplyOpts) (err erro
 	fmt.Fprintln(out, "checking the earbuds…")
 	link, err := env.link()
 	if err != nil {
-		return fmt.Errorf("hearing apply needs the qcyctld daemon: %w", err)
+		return info, nil, fmt.Errorf("hearing apply needs the qcyctld daemon: %w", err)
 	}
 	// Closed last, by the chain: the mode-off frame needs the open link.
 	undo = append(undo, func() { _ = link.Close() })
 	verified, err := link.capabilities()
 	if err != nil {
-		return fmt.Errorf("capabilities: %w", err)
+		return info, nil, fmt.Errorf("capabilities: %w", err)
 	}
 	if !verified {
-		return errors.New("hearing apply is only for a verified model (this earbud is not)")
+		return info, nil, errors.New("hearing apply is only for a verified model (this earbud is not)")
 	}
 	fmt.Fprintln(out, "reading the earbuds' state for the backup…")
-	info, err := hearingTakeBackup(env, link, o.noSlot11Backup)
+	info, err = hearingTakeBackup(env, link, o.noSlot11Backup)
 	if err != nil {
-		return fmt.Errorf("backup failed, nothing was sent to the earbuds: %w", err)
+		return info, nil, fmt.Errorf("backup failed, nothing was sent to the earbuds: %w", err)
 	}
 	restoreCmd := info.Restore
 	printBackup(out, info)
 	if e := aborted(); e != nil {
-		return e
+		return info, nil, e
 	}
 
 	modeOn := false
@@ -529,16 +674,16 @@ func hearingApplyFile(env hearingEnv, path string, o hearingApplyOpts) (err erro
 	if o.deviceMode {
 		modeOn = true
 		if _, e := link.hearingMode(true); e != nil {
-			return fmt.Errorf("hearing mode on: %w", e)
+			return info, nil, fmt.Errorf("hearing mode on: %w", e)
 		}
 	} else {
 		fmt.Fprintln(out, "device test mode (0x45) not sent: pass --device-mode to enable it")
 	}
 	if e := aborted(); e != nil {
-		return e
+		return info, nil, e
 	}
-	_, _, err = hearingCommit(out, link, l, r, restoreCmd, modeOff)
-	return err
+	writes, _, err = hearingCommit(out, link, l, r, restoreCmd, modeOff, record)
+	return info, writes, err
 }
 
 // hearingApplyCmd is `qcyctl hearing apply <file> --yes [--accept-floor]
