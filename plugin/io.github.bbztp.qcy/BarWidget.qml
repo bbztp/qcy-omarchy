@@ -257,9 +257,44 @@ Panel {
   readonly property string composeBase: root.baseId !== ""
     ? root.baseId : (root.activeEntryId !== "" ? root.activeEntryId : "none")
 
+  // The plugin's own presets (factory snapshots and the hearing-experience
+  // card) are shown in the UI language; any other curve keeps its stored name.
+  function factoryLabel(id) {
+    switch (id) {
+    case "predefinido": return Qcy.tr("Default")
+    case "popular": return Qcy.tr("Popular")
+    case "bass-pesados": return Qcy.tr("Heavy bass")
+    case "rock": return Qcy.tr("Rock")
+    case "suave": return Qcy.tr("Soft")
+    case "classico": return Qcy.tr("Classical")
+    case "agudos-suaves": return Qcy.tr("Soft treble")
+    case "som-espacial": return Qcy.tr("Spatial sound")
+    case "experiencia-auditiva": return Qcy.tr("Hearing experience")
+    }
+    return ""
+  }
+
+  function curveLabel(id, name, source) {
+    var ok = id === "experiencia-auditiva" ? source === "device-import" : source === "factory-snapshot"
+    var t = ok ? root.factoryLabel(String(id)) : ""
+    return t !== "" ? t : name
+  }
+
+  // A name reported by the earbuds: translated when it is a known factory
+  // effect (stored Portuguese name or id), otherwise as it came.
+  function deviceEffectLabel(eff) {
+    var names = { "predefinido": "predefinido", "popular": "popular", "bass pesados": "bass-pesados",
+      "rock": "rock", "suave": "suave", "classico": "classico", "clássico": "classico",
+      "agudos suaves": "agudos-suaves", "som espacial": "som-espacial" }
+    var k = String(eff).trim().toLowerCase()
+    var id = names[k] !== undefined ? names[k] : k
+    var t = root.factoryLabel(id)
+    return t !== "" && id !== "experiencia-auditiva" ? t : String(eff)
+  }
+
   function curveName(id) {
     var l = Qcy.library
-    for (var i = 0; i < l.length; i++) if (l[i].id === id) return l[i].name
+    for (var i = 0; i < l.length; i++) if (l[i].id === id) return root.curveLabel(l[i].id, l[i].name, l[i].source)
     return id
   }
 
@@ -274,7 +309,7 @@ Panel {
       return adj ? Qcy.tr("{name} (adjusted)", { name: root.curveName(id) }) : root.curveName(id)
     }
     var eff = rep.eq.effect
-    if (eff !== undefined && eff !== null && String(eff) !== "") return String(eff)
+    if (eff !== undefined && eff !== null && String(eff) !== "") return root.deviceEffectLabel(eff)
     if (id !== "") return root.curveName(id)
     return root.activeSlot >= 0 ? Qcy.tr("Custom") : "—"
   }
@@ -3639,10 +3674,11 @@ Panel {
 
       Text {
         id: nameText
+        readonly property string nameLabel: root.curveLabel(cc.entry.id, cc.entry.name, cc.entry.source)
         width: parent.width - (cc.isDeletable ? Style.space(20) : 0)
         // Two lines reserved, so the cards of a row line up.
         height: Math.ceil(nameMetrics.height) * 2
-        text: cc.live && cc.adjusted ? Qcy.tr("{name} (adjusted)", { name: cc.entry.name }) : cc.entry.name
+        text: cc.live && cc.adjusted ? Qcy.tr("{name} (adjusted)", { name: nameLabel }) : nameLabel
         color: root.foreground
         font.family: root.textFamily
         font.pixelSize: Style.font.bodySmall
