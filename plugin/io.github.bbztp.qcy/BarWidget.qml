@@ -2754,6 +2754,25 @@ Panel {
   }
 
   // A selectable pill.
+  // The shell's PanelSlider takes every mouse-wheel tick as a value change, so
+  // scrolling the page over a slider moved it. Sliders get a WheelPassThrough
+  // on top: a plain wheel scrolls the page, Ctrl+wheel still reaches the slider.
+  function scrollPanelBy(dy) {
+    var max = Math.max(0, scroller.contentHeight - scroller.height)
+    scroller.contentY = Math.max(0, Math.min(max, scroller.contentY - dy))
+  }
+
+  component WheelPassThrough: Item {
+    anchors.fill: parent
+    z: 10
+    WheelHandler {
+      acceptedModifiers: Qt.NoModifier
+      onWheel: function (ev) {
+        root.scrollPanelBy(ev.pixelDelta.y !== 0 ? ev.pixelDelta.y : ev.angleDelta.y)
+      }
+    }
+  }
+
   component Chip: BorderSurface {
     id: chip
     required property string label
@@ -3150,6 +3169,10 @@ Panel {
         }
       }
     }
+
+    WheelPassThrough {
+      anchors.fill: srowSlider
+    }
   }
 
   // A stepped choice as a slider with one notch per option; the chosen
@@ -3211,6 +3234,10 @@ Panel {
         var i = Math.max(0, Math.min(srw.count - 1, Math.round(v)))
         if (i !== srw.currentIndex) srw.picked(String(srw.model[i].value))
       }
+    }
+
+    WheelPassThrough {
+      anchors.fill: stepSlider
     }
   }
 
