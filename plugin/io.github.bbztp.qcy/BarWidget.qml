@@ -2762,14 +2762,17 @@ Panel {
     scroller.contentY = Math.max(0, Math.min(max, scroller.contentY - dy))
   }
 
-  component WheelPassThrough: Item {
+  component WheelPassThrough: MouseArea {
     anchors.fill: parent
     z: 10
-    WheelHandler {
-      acceptedModifiers: Qt.NoModifier
-      onWheel: function (ev) {
-        root.scrollPanelBy(ev.pixelDelta.y !== 0 ? ev.pixelDelta.y : ev.angleDelta.y)
+    acceptedButtons: Qt.NoButton   // clicks and drags reach the slider below
+    onWheel: function (wheel) {
+      if (wheel.modifiers & Qt.ControlModifier) {
+        wheel.accepted = false      // Ctrl+wheel adjusts the slider
+        return
       }
+      root.scrollPanelBy(wheel.pixelDelta.y !== 0 ? wheel.pixelDelta.y : wheel.angleDelta.y)
+      wheel.accepted = true
     }
   }
 
