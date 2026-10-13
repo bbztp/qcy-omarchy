@@ -984,18 +984,29 @@ Panel {
       width: root.vertical ? 15 : 35
       height: root.vertical ? 35 : 15
 
-      Image {
-        id: logoImg
-        anchors.fill: parent
-        source: "assets/qcy-logo.svg"
-        sourceSize: root.vertical ? Qt.size(60, 140) : Qt.size(140, 60)
-        fillMode: Image.PreserveAspectFit
+      // Vertical: the wordmark is laid out at the host's rotated size (35x15,
+      // width = host.height) and then turned -90 about its centre, so it fills
+      // the 15x35 host instead of shrinking. The overlay shares the rect.
+      Item {
+        id: logoBox
+        anchors.centerIn: parent
+        width: root.vertical ? logoHost.height : logoHost.width
+        height: root.vertical ? logoHost.width : logoHost.height
         rotation: root.vertical ? -90 : 0
-      }
-      ColorOverlay {
-        anchors.fill: parent
-        source: logoImg
-        color: root.foreground
+
+        Image {
+          id: logoImg
+          anchors.fill: parent
+          source: "assets/qcy-logo.svg"
+          sourceSize: Qt.size(140, 60)
+          fillMode: Image.PreserveAspectFit
+          visible: false
+        }
+        ColorOverlay {
+          anchors.fill: parent
+          source: logoImg
+          color: root.foreground
+        }
       }
     }
   }
@@ -2010,13 +2021,25 @@ Panel {
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: Style.space(4)
+        // Fixed to the tallest numeral so 100 % / "—" never shift the bar.
+        height: pctRef.height
+
+        Text {
+          id: pctRef
+          visible: false
+          text: "0"
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.displayLarge
+          font.bold: true
+        }
 
         Item {
           width: ringPct.width + (ring.valid ? Style.space(2) + ringSign.width : 0)
-          height: ringPct.height
+          height: pctRef.height
 
           Text {
             id: ringPct
+            anchors.verticalCenter: parent.verticalCenter
             text: ring.valid ? String(ring.level) : "—"
             color: ring.low ? Color.urgent : (ring.valid ? root.foreground : root.muted)
             font.family: root.fontFamily
@@ -2027,7 +2050,7 @@ Panel {
             id: ringSign
             visible: ring.valid
             x: ringPct.width + Style.space(2)
-            y: ringPct.baselineOffset - baselineOffset
+            y: ringPct.y + ringPct.baselineOffset - baselineOffset
             text: "%"
             color: root.muted
             font.family: root.fontFamily

@@ -138,10 +138,29 @@ Singleton {
   readonly property string _imageKey: (connected && report && report.model
     && report.model.vendorId !== undefined && report.model.vendorId !== null)
     ? String(report.model.vendorId) : ""
+  // Fetch attempts for the current _imageKey (max 3: first, +30 s retry, and
+  // manual refresh() while empty); reset whenever the key changes.
+  property int _imageTries: 0
   on_ImageKeyChanged: {
-    if (_imageKey === "") { images = ({}); return }
+    images = ({})
+    _imageTries = 0
+    imageRetry.stop()
+    if (_imageKey === "") { if (imageProc.running) imageProc.running = false; return }
+    _loadImages()
+  }
+  function _loadImages() {
+    if (_imageKey === "" || _imageTries >= 3) return
+    _imageTries++
+    imageRetry.stop()
     if (imageProc.running) imageProc.running = false
+    imageProc.command = [binary, "model", "image", "--json", "--vendor", _imageKey]
     imageProc.running = true
+  }
+  Timer {
+    id: imageRetry
+    interval: 30000
+    repeat: false
+    onTriggered: if (root.connected && !imageProc.running && Object.keys(root.images).length === 0) root._loadImages()
   }
   property bool loading: false
   property string error: ""
@@ -170,6 +189,8 @@ Singleton {
   // Read the full state from the earbuds. Low priority: if anything else is
   // using the adapter the read is skipped and retried on the next tick.
   function refresh() {
+    if (connected && _imageKey !== "" && Object.keys(images).length === 0
+        && !imageProc.running) _loadImages()
     if (statusProc.running || setProc.running || batteryProc.running) return
     error = ""
     statusProc.running = true
@@ -358,15 +379,20 @@ Singleton {
       waitForEnd: true
       onStreamFinished: {
         var out = {}
+        var bad = false
         try {
-          var f = JSON.parse(text).files || {}
+          var parsed = JSON.parse(text)
+          if (parsed.missing && parsed.missing.length > 0) bad = true
+          var f = parsed.files || {}
           var names = ["left", "right", "box", "icon"]
           for (var i = 0; i < names.length; i++) {
             var v = f[names[i]]
-            if (typeof v === "string" && v.charAt(0) === "/") out[names[i]] = "file://" + v
+            if (typeof v === "string" && v.charAt(0) === "/") out[names[i]] = "file://" + encodeURI(v)
           }
-        } catch (e) { out = {} }
+        } catch (e) { out = {}; bad = true }
         root.images = out
+        if ((bad || Object.keys(out).length === 0) && root._imageTries < 3
+            && root.connected) imageRetry.restart()
       }
     }
   }
