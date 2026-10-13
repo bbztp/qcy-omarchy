@@ -1,5 +1,10 @@
 # QCY Earbuds for Omarchy
 
+[![CI](https://github.com/bbztp/qcy-omarchy/actions/workflows/ci.yml/badge.svg)](https://github.com/bbztp/qcy-omarchy/actions/workflows/ci.yml)
+
+Status: 0.1.0, verified on the MeloBuds N70 only. See the [CHANGELOG](CHANGELOG.md);
+maintainers: [docs/PUBLISHING.md](docs/PUBLISHING.md).
+
 A bar widget for the [Omarchy](https://omarchy.org) shell that controls QCY
 earbuds (developed against the **MeloBuds N70 / HT18**, but written to the
 vendor's low-energy GATT protocol) and shows their state:

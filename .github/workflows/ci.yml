@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      # TODO: pin actions to full commit SHAs (look them up on each action's releases page).
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Static build (no CGO needed)
+        run: CGO_ENABLED=0 go build ./cmd/...
+      - name: go vet
+        run: go vet ./...
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: go test
+        # Tests never touch hardware: each package's TestMain disables BLE and
+        # redirects HOME/XDG_* to a throwaway tree. No variables are required.
+        run: go test -count=1 ./...
+      - name: Shell scripts
+        run: |
+          for f in scripts/*.sh; do bash -n "$f"; done
+          bash scripts/bootstrap_test.sh
+      - name: Manifest
+        run: |
+          python3 -I - <<'PY'
+          import json, re, sys
+          m = json.load(open("manifest.json"))
+          v = m.get("version", "")
+          if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?", v):
+              sys.exit(f"manifest version is not semver: {v!r}")
+          print("manifest ok, version", v)
+          PY
