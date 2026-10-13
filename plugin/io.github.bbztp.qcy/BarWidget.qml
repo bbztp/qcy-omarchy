@@ -1928,9 +1928,10 @@ Panel {
     }
   }
 
-  // One circular charge indicator: a faint track, an arc for the level, the
-  // percentage in the middle and a label underneath. No reading (offline, not
-  // reported yet) leaves the track empty with a dash.
+  // One battery column: the device picture, its label and percentage, and a
+  // thin flat bar underneath. Red below 20%, amber to 49%, green from 50%; a
+  // charging battery takes the charge tone. No reading (offline, not reported
+  // yet) leaves the bar empty with a dash.
   component BatteryRing: Rectangle {
     id: ring
     required property string label
@@ -1939,108 +1940,42 @@ Panel {
     property bool charging: false
     // The case pulses while it charges.
     property bool pulse: false
-    // Optional product picture shown above the number (file:// URL or "").
+    // Product picture (file:// URL or ""); a headset glyph stands in without it.
     property string image: ""
 
-    readonly property real diameter: Style.space(76)
-    readonly property real stroke: Style.space(6)
     readonly property real pad: Style.space(10)
     readonly property real shown: ring.valid ? Math.max(0, Math.min(100, ring.level)) : 0
-    // Below 20% and not charging the whole arc is urgent; above it the tip of
-    // the arc slides from urgent to the accent between 20% and 50%. A charging
-    // battery takes the charge tone and never warns.
     readonly property bool low: ring.valid && !ring.charging && ring.level < 20
-    readonly property color startColor: ring.low ? Color.urgent
-      : (ring.charging ? root.chargeColor : root.accent)
-    readonly property color endColor: ring.charging ? root.chargeColor
-      : root.mix(Color.urgent, root.accent, Math.max(0, Math.min(1, (ring.level - 20) / 30)))
+    readonly property color barColor: ring.charging ? root.chargeColor
+      : (ring.level < 20 ? Color.urgent : (ring.level < 50 ? "#e5c07b" : "#98c379"))
 
-    implicitHeight: ring.pad * 2 + ring.diameter + Style.space(8) + ringLabel.implicitHeight
+    implicitHeight: ring.pad * 2 + col.implicitHeight
     radius: Style.cornerRadius
     color: root.cardFill
 
-    Item {
-      id: ringDisc
-      width: ring.diameter
-      height: ring.diameter
+    Column {
+      id: col
+      x: ring.pad
       y: ring.pad
-      anchors.horizontalCenter: parent.horizontalCenter
+      width: parent.width - ring.pad * 2
+      spacing: Style.space(6)
 
-      // Animated copy of the level; the canvas repaints as it moves.
-      property real progress: ring.shown
-      Behavior on progress { NumberAnimation { duration: 400; easing.type: Easing.OutCubic } }
+      Item {
+        id: pic
+        width: parent.width
+        height: Style.space(76)
 
-      SequentialAnimation {
-        running: ring.pulse && ring.valid && ring.charging && root.opened && root.tab === 0
-        loops: Animation.Infinite
-        NumberAnimation { target: ringDisc; property: "opacity"; from: 1; to: 0.45; duration: 900; easing.type: Easing.InOutSine }
-        NumberAnimation { target: ringDisc; property: "opacity"; from: 0.45; to: 1; duration: 900; easing.type: Easing.InOutSine }
-        onRunningChanged: if (!running) ringDisc.opacity = 1
-      }
-
-      Canvas {
-        id: ringCanvas
-        anchors.fill: parent
-        antialiasing: true
-        onPaint: {
-          var ctx = getContext("2d")
-          ctx.reset()
-          var c = width / 2
-          var r = c - ring.stroke / 2
-          ctx.lineWidth = ring.stroke
-          ctx.lineCap = "butt"
-          ctx.strokeStyle = root.trackFill
-          ctx.beginPath()
-          ctx.arc(c, c, r, 0, Math.PI * 2)
-          ctx.stroke()
-          var p = ringDisc.progress
-          if (p < 0.5) return
-          // Drawn as short segments so the colour can run along the arc
-          // (a conic gradient would not follow the clockwise sweep).
-          var a0 = -Math.PI / 2
-          var sweep = Math.PI * 2 * Math.min(100, p) / 100
-          var n = Math.max(1, Math.ceil(sweep / (Math.PI / 45)))
-          var step = sweep / n
-          for (var i = 0; i < n; i++) {
-            ctx.strokeStyle = root.mix(ring.startColor, ring.endColor, n > 1 ? i / (n - 1) : 1)
-            ctx.beginPath()
-            ctx.arc(c, c, r, a0 + i * step, a0 + (i + 1) * step + (i < n - 1 ? 0.03 : 0))
-            ctx.stroke()
-          }
-          // Round caps at both ends.
-          var rad = ring.stroke / 2
-          ctx.fillStyle = ring.startColor
-          ctx.beginPath()
-          ctx.arc(c + r * Math.cos(a0), c + r * Math.sin(a0), rad, 0, Math.PI * 2)
-          ctx.fill()
-          ctx.fillStyle = ring.endColor
-          ctx.beginPath()
-          ctx.arc(c + r * Math.cos(a0 + sweep), c + r * Math.sin(a0 + sweep), rad, 0, Math.PI * 2)
-          ctx.fill()
+        SequentialAnimation {
+          running: ring.pulse && ring.valid && ring.charging && root.opened && root.tab === 0
+          loops: Animation.Infinite
+          NumberAnimation { target: pic; property: "opacity"; from: 1; to: 0.45; duration: 900; easing.type: Easing.InOutSine }
+          NumberAnimation { target: pic; property: "opacity"; from: 0.45; to: 1; duration: 900; easing.type: Easing.InOutSine }
+          onRunningChanged: if (!running) pic.opacity = 1
         }
-      }
-      Connections {
-        target: ringDisc
-        function onProgressChanged() { ringCanvas.requestPaint() }
-      }
-      Connections {
-        target: ring
-        function onStartColorChanged() { ringCanvas.requestPaint() }
-        function onEndColorChanged() { ringCanvas.requestPaint() }
-      }
-      Connections {
-        target: root
-        function onForegroundChanged() { ringCanvas.requestPaint() }
-      }
-
-      Column {
-        anchors.centerIn: parent
-        spacing: 0
 
         Image {
-          anchors.horizontalCenter: parent.horizontalCenter
-          width: Style.space(20)
-          height: width
+          id: devImg
+          anchors.fill: parent
           visible: status === Image.Ready
           source: ring.image
           sourceSize: Qt.size(256, 256)
@@ -2051,9 +1986,32 @@ Panel {
           cache: true
           opacity: ring.valid ? 1 : 0.5
         }
+        Text {
+          anchors.centerIn: parent
+          visible: devImg.status !== Image.Ready
+          text: "󰋋"
+          color: root.muted
+          opacity: ring.valid ? 1 : 0.5
+          font.family: root.fontFamily
+          font.pixelSize: Style.space(40)
+        }
+      }
+
+      Text {
+        anchors.horizontalCenter: parent.horizontalCenter
+        text: ring.label.toUpperCase()
+        color: root.muted
+        font.family: root.textFamily
+        font.pixelSize: Style.font.caption
+        font.bold: true
+        font.letterSpacing: 1.2
+      }
+
+      Row {
+        anchors.horizontalCenter: parent.horizontalCenter
+        spacing: Style.space(4)
 
         Item {
-          anchors.horizontalCenter: parent.horizontalCenter
           width: ringPct.width + (ring.valid ? Style.space(2) + ringSign.width : 0)
           height: ringPct.height
 
@@ -2077,7 +2035,7 @@ Panel {
           }
         }
         Text {
-          anchors.horizontalCenter: parent.horizontalCenter
+          anchors.verticalCenter: parent.verticalCenter
           text: "󰂄"
           color: root.chargeColor
           font.family: root.fontFamily
@@ -2085,19 +2043,20 @@ Panel {
           visible: ring.valid && ring.charging
         }
       }
-    }
 
-    Text {
-      id: ringLabel
-      anchors.top: ringDisc.bottom
-      anchors.topMargin: Style.space(8)
-      anchors.horizontalCenter: parent.horizontalCenter
-      text: ring.label.toUpperCase()
-      color: root.muted
-      font.family: root.textFamily
-      font.pixelSize: Style.font.caption
-      font.bold: true
-      font.letterSpacing: 1.2
+      Rectangle {
+        width: parent.width
+        height: Style.space(6)
+        color: Qt.rgba(root.muted.r, root.muted.g, root.muted.b, 0.25)
+
+        Rectangle {
+          height: parent.height
+          width: parent.width * ring.shown / 100
+          color: ring.barColor
+          Behavior on width { NumberAnimation { duration: 400; easing.type: Easing.OutCubic } }
+          Behavior on color { ColorAnimation { duration: 400 } }
+        }
+      }
     }
   }
 
