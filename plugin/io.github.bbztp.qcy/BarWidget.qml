@@ -27,6 +27,16 @@ Panel {
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color accent: Color.accent
+  // The theme's muted tone (color8) is too dim for small captions on the dark
+  // panel; blend it toward the foreground so secondary text stays readable.
+  readonly property color muted: Qt.rgba(
+    Color.muted.r * 0.45 + root.foreground.r * 0.55,
+    Color.muted.g * 0.45 + root.foreground.g * 0.55,
+    Color.muted.b * 0.45 + root.foreground.b * 0.55, 1)
+  // Labels use the desktop's UI font; the shell's (monospace) bar font stays for
+  // numbers and icon glyphs, which is what `fontFamily` keeps meaning here.
+  readonly property string textFamily: Qt.application.font && Qt.application.font.family
+    ? Qt.application.font.family : root.fontFamily
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property bool vertical: bar ? bar.vertical : false
 
@@ -78,9 +88,18 @@ Panel {
   ]
 
   // ---- Som tab state ----
-  // A fill that is only a hint lighter than the panel, from the shell's
-  // foreground so it follows the theme.
-  readonly property color cardFill: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.06)
+  // Surfaces are lifted from the panel by a few percent of the foreground
+  // (the same as mixing background -> foreground), so the theme drives them and
+  // borders are left for state only.
+  readonly property color cardFill: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.05)
+  readonly property color raisedFill: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.09)
+  readonly property color trackFill: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.16)
+  // Mix of two colours, t in 0..1 of the way from a to b.
+  function mix(a, b, t) {
+    return Qt.rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t)
+  }
+  // Tone of a charging battery: the accent pulled toward the foreground.
+  readonly property color chargeColor: root.mix(root.accent, root.foreground, 0.45)
   property bool saveOpen: false
   // The user effect whose small menu is open, and the one asked to be deleted.
   property string menuId: ""
@@ -1049,7 +1068,7 @@ Panel {
         Rectangle {
           width: Style.space(4)
           radius: width / 2
-          color: Qt.darker(root.foreground, 1.6)
+          color: root.muted
           visible: scroller.overflows
           x: scroller.width - width
           // Divided by contentHeight, which is 0 until the first layout pass —
@@ -1095,10 +1114,88 @@ Panel {
           // =====================================================================
           // STATUS
           // =====================================================================
-          Column {
-            visible: root.tab === 0
-            width: parent.width
-            spacing: Style.space(14)
+          TabPage {
+            tabIndex: 0
+
+            // Hero: the earbuds' glyph, the model name (level one) and the
+            // connection state as a pill (level two).
+            Row {
+              width: parent.width
+              spacing: Style.space(12)
+
+              Rectangle {
+                id: heroIcon
+                width: Style.space(52)
+                height: width
+                radius: Style.cornerRadius
+                color: root.cardFill
+                anchors.verticalCenter: parent.verticalCenter
+
+                Text {
+                  anchors.centerIn: parent
+                  text: String.fromCodePoint(0xF02CB)
+                  color: Qcy.connected ? root.accent : root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.iconLarge
+                }
+              }
+
+              Column {
+                width: parent.width - heroIcon.width - Style.space(12)
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(6)
+
+                Text {
+                  width: parent.width
+                  text: root.modelName
+                  color: root.foreground
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.title
+                  font.bold: true
+                  elide: Text.ElideRight
+                }
+
+                Rectangle {
+                  id: statePill
+                  readonly property color tone: !Qcy.connected || root.isStale ? Color.urgent : root.accent
+                  width: Math.min(parent.width, stateMetrics.advanceWidth + Style.space(12) * 2 + stateDot.width + Style.space(6))
+                  height: stateText.implicitHeight + Style.space(6)
+                  radius: Style.cornerRadius > 0 ? height / 2 : 0
+                  color: Qt.rgba(tone.r, tone.g, tone.b, 0.16)
+                  Behavior on color { ColorAnimation { duration: 140 } }
+
+                  TextMetrics {
+                    id: stateMetrics
+                    font: stateText.font
+                    text: stateText.text
+                  }
+
+                  Rectangle {
+                    id: stateDot
+                    width: Style.space(8)
+                    height: width
+                    radius: width / 2
+                    x: Style.space(12)
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: statePill.tone
+                  }
+                  Text {
+                    id: stateText
+                    anchors.left: stateDot.right
+                    anchors.leftMargin: Style.space(6)
+                    anchors.right: parent.right
+                    anchors.rightMargin: Style.space(12)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: root.heroStatus()
+                    color: statePill.tone
+                    font.family: root.textFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
+                    elide: Text.ElideRight
+                  }
+                }
+              }
+            }
 
             // Three charge rings: left, right, case.
             Row {
@@ -1126,49 +1223,7 @@ Panel {
                 valid: Qcy.connected && !!(root.batt && root.batt.casePresent)
                 level: root.batt ? root.batt.case : 0
                 charging: root.batt ? root.batt.caseCharging : false
-              }
-            }
-
-            // Name (level one) and connection state (level two).
-            Column {
-              width: parent.width
-              spacing: Style.space(4)
-
-              Text {
-                width: parent.width
-                text: root.modelName
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.title
-                font.bold: true
-                elide: Text.ElideRight
-                horizontalAlignment: Text.AlignHCenter
-              }
-
-              Item {
-                width: parent.width
-                implicitHeight: stateRow.implicitHeight
-
-                Row {
-                  id: stateRow
-                  anchors.horizontalCenter: parent.horizontalCenter
-                  spacing: Style.space(6)
-
-                  Rectangle {
-                    width: Style.space(8)
-                    height: width
-                    radius: width / 2
-                    anchors.verticalCenter: stateText.verticalCenter
-                    color: root.isStale ? Color.urgent : root.accent
-                  }
-                  Text {
-                    id: stateText
-                    text: root.heroStatus()
-                    color: Qt.darker(root.foreground, 1.3)
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                  }
-                }
+                pulse: true
               }
             }
 
@@ -1178,16 +1233,14 @@ Panel {
               spacing: Style.space(8)
               visible: root.has("anc")
 
-              PanelSectionHeader {
+              SectionHeader {
                 text: Qcy.tr("Noise mode").toUpperCase()
-                foreground: root.foreground
-                fontFamily: root.fontFamily
               }
 
               Row {
                 id: noiseRow
                 width: parent.width
-                spacing: Style.space(8)
+                spacing: Style.space(2)
 
                 Repeater {
                   model: root.noiseButtons
@@ -1196,7 +1249,7 @@ Panel {
                     label: modelData.label
                     glyph: String.fromCodePoint(modelData.glyph)
                     active: root.ancGroup() === modelData.key
-                    btnWidth: (noiseRow.width - Style.space(8) * 2) / 3
+                    btnWidth: (noiseRow.width - Style.space(2) * 2) / 3
                     onClicked: {
                       if (root.ancGroup() !== modelData.key) root.setAnc(modelData.key)
                     }
@@ -1209,29 +1262,28 @@ Panel {
           // =====================================================================
           // SOM
           // =====================================================================
-          Column {
-            visible: root.tab === 1
-            width: parent.width
-            spacing: Style.space(14)
+          TabPage {
+            tabIndex: 1
 
             // ---- In use ----
             Column {
               width: parent.width
               spacing: Style.space(4)
 
-              PanelSectionHeader {
+              SectionHeader {
                 text: Qcy.tr("In use").toUpperCase()
-                foreground: root.foreground
-                fontFamily: root.fontFamily
               }
 
               Text {
                 width: parent.width
                 text: root.effectName()
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.title
+                color: root.accent
+                font.family: root.textFamily
+                font.pixelSize: Style.font.display
                 font.bold: true
+                // A long name shrinks toward the title size before it elides.
+                fontSizeMode: Text.HorizontalFit
+                minimumPixelSize: Style.font.title
                 elide: Text.ElideRight
               }
 
@@ -1239,8 +1291,8 @@ Panel {
                 width: parent.width
                 visible: !root.rep
                 text: Qcy.loading ? Qcy.tr("Reading the earbuds…") : Qcy.tr("Connect the earbuds to choose an effect.")
-                color: Qt.darker(root.foreground, 1.5)
-                font.family: root.fontFamily
+                color: root.muted
+                font.family: root.textFamily
                 font.pixelSize: Style.font.bodySmall
                 wrapMode: Text.WordWrap
               }
@@ -1250,8 +1302,8 @@ Panel {
               visible: root.unverifiedModel
               width: parent.width
               text: Qcy.tr("Equalizer is only available on the MeloBuds N70.")
-              color: Qt.darker(root.foreground, 1.5)
-              font.family: root.fontFamily
+              color: root.muted
+              font.family: root.textFamily
               font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
             }
@@ -1262,10 +1314,8 @@ Panel {
               width: parent.width
               spacing: Style.space(8)
 
-              PanelSectionHeader {
+              SectionHeader {
                 text: Qcy.tr("Effects").toUpperCase()
-                foreground: root.foreground
-                fontFamily: root.fontFamily
               }
 
               Text {
@@ -1273,7 +1323,7 @@ Panel {
                 visible: Qcy.libraryError !== ""
                 text: Qcy.libraryError
                 color: Color.urgent
-                font.family: root.fontFamily
+                font.family: root.textFamily
                 font.pixelSize: Style.font.bodySmall
                 wrapMode: Text.WordWrap
               }
@@ -1284,8 +1334,8 @@ Panel {
                 text: Qcy.libraryLoading || !Qcy.libraryLoaded
                   ? Qcy.tr("Loading effects…")
                   : Qcy.tr("No effect found. Tap Refresh.")
-                color: Qt.darker(root.foreground, 1.5)
-                font.family: root.fontFamily
+                color: root.muted
+                font.family: root.textFamily
                 font.pixelSize: Style.font.bodySmall
                 wrapMode: Text.WordWrap
               }
@@ -1328,7 +1378,7 @@ Panel {
                 visible: root.gridOpText() !== ""
                 text: root.gridOpText()
                 color: Qcy.libraryOp.phase === "error" ? Color.urgent : root.foreground
-                font.family: root.fontFamily
+                font.family: root.textFamily
                 font.pixelSize: Style.font.bodySmall
                 wrapMode: Text.WrapAnywhere
               }
@@ -1340,10 +1390,8 @@ Panel {
               width: parent.width
               spacing: Style.space(8)
 
-              PanelSectionHeader {
+              SectionHeader {
                 text: Qcy.tr("Equalizer").toUpperCase()
-                foreground: root.foreground
-                fontFamily: root.fontFamily
               }
 
               Card {
@@ -1360,8 +1408,8 @@ Panel {
                 Text {
                   width: parent.width
                   text: Qcy.tr("The bars show the chosen effect. Drag (±12 dB) and release: the sound changes right away. Double-click to zero a bar. \"Save as…\" keeps what you see.")
-                  color: Qt.darker(root.foreground, 1.5)
-                  font.family: root.fontFamily
+                  color: root.muted
+                  font.family: root.textFamily
                   font.pixelSize: Style.font.caption
                   wrapMode: Text.WordWrap
                 }
@@ -1387,8 +1435,8 @@ Panel {
                 Text {
                   width: parent.width
                   text: Qcy.tr("base: {name}", { name: root.baseLabel() })
-                  color: Qt.darker(root.foreground, 1.5)
-                  font.family: root.fontFamily
+                  color: root.muted
+                  font.family: root.textFamily
                   font.pixelSize: Style.font.caption
                   elide: Text.ElideRight
                 }
@@ -1398,7 +1446,7 @@ Panel {
                   visible: root.eqOpText() !== ""
                   text: root.eqOpText()
                   color: (root.eqNote !== "" || Qcy.libraryOp.phase === "error") ? Color.urgent : root.foreground
-                  font.family: root.fontFamily
+                  font.family: root.textFamily
                   font.pixelSize: Style.font.bodySmall
                   wrapMode: Text.WrapAnywhere
                 }
@@ -1469,10 +1517,8 @@ Panel {
           // =====================================================================
           // AJUSTES
           // =====================================================================
-          Column {
-            visible: root.tab === 2
-            width: parent.width
-            spacing: Style.space(14)
+          TabPage {
+            tabIndex: 2
 
             // ---- Advanced noise scenes ----
             Column {
@@ -1480,10 +1526,8 @@ Panel {
               spacing: Style.space(8)
               visible: root.has("anc")
 
-              PanelSectionHeader {
+              SectionHeader {
                 text: Qcy.tr("Cancellation scenes").toUpperCase()
-                foreground: root.foreground
-                fontFamily: root.fontFamily
               }
 
               Flow {
@@ -1503,7 +1547,7 @@ Panel {
 
               // Adaptive and anti-wind read back 0 whatever is written, so the
               // dial is hidden for them rather than shown doing nothing.
-              ChoiceRow {
+              GroupRow {
                 width: parent.width
                 visible: root.ancStrengthApplies
                 label: Qcy.tr("Intensity")
@@ -1519,16 +1563,31 @@ Panel {
 
               Repeater {
                 model: root.toggleDefs
-                ToggleRow {
+                Column {
+                  id: toggleCell
                   required property var modelData
+                  required property int index
                   width: parent.width
-                  label: modelData.label
-                  hint: modelData.hint
-                  checked: root.toggleState(modelData.key)
-                  onToggled: root.setToggle(modelData.key, modelData.label, !root.toggleState(modelData.key))
+                  spacing: Style.space(10)
+
+                  PanelSeparator {
+                    visible: toggleCell.index > 0
+                    foreground: root.foreground
+                  }
+                  ToggleRow {
+                    width: parent.width
+                    label: toggleCell.modelData.label
+                    hint: toggleCell.modelData.hint
+                    checked: root.toggleState(toggleCell.modelData.key)
+                    onToggled: root.setToggle(toggleCell.modelData.key, toggleCell.modelData.label, !root.toggleState(toggleCell.modelData.key))
+                  }
                 }
               }
 
+              PanelSeparator {
+                visible: root.has("spatial")
+                foreground: root.foreground
+              }
               ToggleRow {
                 width: parent.width
                 visible: root.has("spatial")
@@ -1538,7 +1597,11 @@ Panel {
                 onToggled: root.setToggle("spatial", "Spatial audio", !root.toggleState("spatial"))
               }
 
-              ChoiceRow {
+              PanelSeparator {
+                visible: root.wearSensVisible
+                foreground: root.foreground
+              }
+              GroupRow {
                 width: parent.width
                 visible: root.wearSensVisible
                 label: Qcy.tr("Sensor sensitivity")
@@ -1563,7 +1626,7 @@ Panel {
                 onReleased: function (v) { root.commitSlider("balance", "Balance", function (n) { return ["balance", String(Math.round(n))] }, Math.round(v)) }
               }
 
-              ChoiceRow {
+              StepRow {
                 width: parent.width
                 visible: root.has("promptVol")
                 label: Qcy.tr("Prompt volume")
@@ -1593,7 +1656,7 @@ Panel {
                 Text {
                   text: Qcy.tr("Earbud fit test")
                   color: root.foreground
-                  font.family: root.fontFamily
+                  font.family: root.textFamily
                   font.pixelSize: Style.font.body
                   anchors.left: parent.left
                   anchors.verticalCenter: parent.verticalCenter
@@ -1621,8 +1684,8 @@ Panel {
                   : (root.fitNeedsAttention && root.fitResult.ok
                     ? Qcy.tr("{summary}. Adjust the tips and repeat", { summary: root.fitSummary() })
                     : root.fitSummary())
-                color: root.fitNeedsAttention ? Color.urgent : Qt.darker(root.foreground, 1.3)
-                font.family: root.fontFamily
+                color: root.fitNeedsAttention ? Color.urgent : root.muted
+                font.family: root.textFamily
                 font.pixelSize: Style.font.bodySmall
               }
             }
@@ -1633,30 +1696,40 @@ Panel {
               width: parent.width
               spacing: Style.space(8)
 
-              PanelSectionHeader {
+              SectionHeader {
                 text: Qcy.tr("Touch controls").toUpperCase()
-                foreground: root.foreground
-                fontFamily: root.fontFamily
               }
 
-              TouchCell {
+              Card {
                 width: parent.width
-                header: true
-                gesture: ""
-                leftText: Qcy.tr("Left").toUpperCase()
-                rightText: Qcy.tr("Right").toUpperCase()
-              }
 
-              Repeater {
-                model: root.touchRows()
                 TouchCell {
-                  required property var modelData
                   width: parent.width
-                  gesture: modelData.gesture
-                  leftText: modelData.left
-                  rightText: modelData.right
+                  header: true
+                  gesture: ""
+                  leftText: Qcy.tr("Left").toUpperCase()
+                  rightText: Qcy.tr("Right").toUpperCase()
+                }
+
+                PanelSeparator {
+                  foreground: root.foreground
+                }
+
+                Repeater {
+                  model: root.touchRows()
+                  TouchCell {
+                    required property var modelData
+                    width: parent.width
+                    gesture: modelData.gesture
+                    leftText: modelData.left
+                    rightText: modelData.right
+                  }
                 }
               }
+            }
+
+            PanelSeparator {
+              foreground: root.foreground
             }
 
             // ---- Device ----
@@ -1664,10 +1737,8 @@ Panel {
               width: parent.width
               spacing: Style.space(8)
 
-              PanelSectionHeader {
+              SectionHeader {
                 text: Qcy.tr("Device").toUpperCase()
-                foreground: root.foreground
-                fontFamily: root.fontFamily
               }
 
               StatRow {
@@ -1678,18 +1749,23 @@ Panel {
               StatRow {
                 width: parent.width
                 label: "Firmware"
+                mono: true
                 value: root.rep && root.rep.firmware && root.rep.firmware.left
                   ? root.rep.firmware.left : "—"
               }
               Text {
                 visible: Qcy.modelUnverified
                 text: Qcy.tr("Unverified model — only the common controls were tested on another device.")
-                color: Qt.darker(root.foreground, 1.5)
-                font.family: root.fontFamily
+                color: root.muted
+                font.family: root.textFamily
                 font.pixelSize: Style.font.caption
                 wrapMode: Text.WordWrap
                 width: parent.width
               }
+            }
+
+            PanelSeparator {
+              foreground: root.foreground
             }
 
             // ---- Language: Automatic follows the system locale ----
@@ -1697,10 +1773,8 @@ Panel {
               width: parent.width
               spacing: Style.space(8)
 
-              PanelSectionHeader {
+              SectionHeader {
                 text: Qcy.tr("Language").toUpperCase()
-                foreground: root.foreground
-                fontFamily: root.fontFamily
               }
 
               ChoiceRow {
@@ -1715,8 +1789,8 @@ Panel {
               Text {
                 width: parent.width
                 text: Qcy.tr("To add a language: qcyctl i18n template (see the README).")
-                color: Qt.darker(root.foreground, 1.5)
-                font.family: root.fontFamily
+                color: root.muted
+                font.family: root.textFamily
                 font.pixelSize: Style.font.caption
                 wrapMode: Text.WordWrap
               }
@@ -1724,6 +1798,10 @@ Panel {
           }
 
           // ---------- Footer (all tabs) ----------
+          PanelSeparator {
+            foreground: root.foreground
+          }
+
           Row {
             spacing: Style.space(8)
 
@@ -1736,8 +1814,8 @@ Panel {
 
           Text {
             text: root.updatedLabel()
-            color: Qcy.error !== "" ? Color.urgent : Qt.darker(root.foreground, 1.5)
-            font.family: root.fontFamily
+            color: Qcy.error !== "" ? Color.urgent : root.muted
+            font.family: root.textFamily
             font.pixelSize: Style.font.caption
             wrapMode: Text.WordWrap
             width: parent.width
@@ -1747,8 +1825,8 @@ Panel {
           Text {
             visible: !!(root.rep && root.rep.errors && root.rep.errors.length > 0)
             text: root.rep && root.rep.errors ? root.rep.errors.join(" · ") : ""
-            color: Qt.darker(root.foreground, 1.5)
-            font.family: root.fontFamily
+            color: root.muted
+            font.family: root.textFamily
             font.pixelSize: Style.font.caption
             wrapMode: Text.WordWrap
             width: parent.width
@@ -1768,20 +1846,22 @@ Panel {
     implicitWidth: chipLabel.implicitWidth + Style.space(20)
     implicitHeight: chipLabel.implicitHeight + Style.space(12)
     radius: Style.cornerRadius
+    // At rest a soft lifted surface, no border: the border is only the state.
     color: chip.active
       ? Style.selectedFillFor(root.foreground, root.accent)
-      : (chipMouse.containsMouse ? Style.hoverFillFor(root.foreground, root.accent) : "transparent")
-    borderSpec: Border.controlSpec(chip.active ? "selected" : "normal", root.foreground, root.accent)
+      : (chipMouse.containsMouse ? Style.hoverFillFor(root.foreground, root.accent) : root.cardFill)
+    borderSpec: chip.active ? Border.controlSpec("selected", root.foreground, root.accent) : Border.none()
     Behavior on color { ColorAnimation { duration: 120 } }
 
     Text {
       id: chipLabel
       anchors.centerIn: parent
       text: chip.label
-      color: root.foreground
-      font.family: root.fontFamily
+      color: chip.active ? root.accent : root.foreground
+      font.family: root.textFamily
       font.pixelSize: Style.font.bodySmall
       font.bold: chip.active
+      Behavior on color { ColorAnimation { duration: 120 } }
     }
 
     MouseArea {
@@ -1799,14 +1879,16 @@ Panel {
     id: stat
     required property string label
     required property string value
+    // Numbers (firmware, versions) in the shell's monospace font.
+    property bool mono: false
 
     implicitHeight: Math.max(statLabel.implicitHeight, statValue.implicitHeight)
 
     Text {
       id: statLabel
       text: stat.label
-      color: Qt.darker(root.foreground, 1.3)
-      font.family: root.fontFamily
+      color: root.muted
+      font.family: root.textFamily
       font.pixelSize: Style.font.body
       anchors.left: parent.left
       anchors.right: statValue.left
@@ -1818,7 +1900,7 @@ Panel {
       id: statValue
       text: stat.value
       color: root.foreground
-      font.family: root.fontFamily
+      font.family: stat.mono ? root.fontFamily : root.textFamily
       font.pixelSize: Style.font.body
       width: Math.min(implicitWidth, Math.max(0, parent.width / 2))
       anchors.right: parent.right
@@ -1831,32 +1913,50 @@ Panel {
   // One circular charge indicator: a faint track, an arc for the level, the
   // percentage in the middle and a label underneath. No reading (offline, not
   // reported yet) leaves the track empty with a dash.
-  component BatteryRing: Item {
+  component BatteryRing: Rectangle {
     id: ring
     required property string label
     property int level: 0
     property bool valid: false
     property bool charging: false
+    // The case pulses while it charges.
+    property bool pulse: false
 
-    readonly property real diameter: Style.space(64)
-    readonly property real stroke: Style.space(5)
+    readonly property real diameter: Style.space(76)
+    readonly property real stroke: Style.space(6)
+    readonly property real pad: Style.space(10)
     readonly property real shown: ring.valid ? Math.max(0, Math.min(100, ring.level)) : 0
-    readonly property color arcColor: ring.valid && ring.level <= 20 ? Color.urgent : root.accent
-    readonly property color trackColor: Qt.rgba(
-      root.foreground.r, root.foreground.g, root.foreground.b, 0.18)
+    // Below 20% and not charging the whole arc is urgent; above it the tip of
+    // the arc slides from urgent to the accent between 20% and 50%. A charging
+    // battery takes the charge tone and never warns.
+    readonly property bool low: ring.valid && !ring.charging && ring.level < 20
+    readonly property color startColor: ring.low ? Color.urgent
+      : (ring.charging ? root.chargeColor : root.accent)
+    readonly property color endColor: ring.charging ? root.chargeColor
+      : root.mix(Color.urgent, root.accent, Math.max(0, Math.min(1, (ring.level - 20) / 30)))
 
-    implicitWidth: ring.diameter
-    implicitHeight: ringDisc.height + Style.space(6) + ringLabel.implicitHeight
+    implicitHeight: ring.pad * 2 + ring.diameter + Style.space(8) + ringLabel.implicitHeight
+    radius: Style.cornerRadius
+    color: root.cardFill
 
     Item {
       id: ringDisc
       width: ring.diameter
       height: ring.diameter
+      y: ring.pad
       anchors.horizontalCenter: parent.horizontalCenter
 
       // Animated copy of the level; the canvas repaints as it moves.
       property real progress: ring.shown
-      Behavior on progress { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+      Behavior on progress { NumberAnimation { duration: 400; easing.type: Easing.OutCubic } }
+
+      SequentialAnimation {
+        running: ring.pulse && ring.valid && ring.charging && root.opened && root.tab === 0
+        loops: Animation.Infinite
+        NumberAnimation { target: ringDisc; property: "opacity"; from: 1; to: 0.45; duration: 900; easing.type: Easing.InOutSine }
+        NumberAnimation { target: ringDisc; property: "opacity"; from: 0.45; to: 1; duration: 900; easing.type: Easing.InOutSine }
+        onRunningChanged: if (!running) ringDisc.opacity = 1
+      }
 
       Canvas {
         id: ringCanvas
@@ -1868,18 +1968,35 @@ Panel {
           var c = width / 2
           var r = c - ring.stroke / 2
           ctx.lineWidth = ring.stroke
-          ctx.lineCap = "round"
-          ctx.strokeStyle = ring.trackColor
+          ctx.lineCap = "butt"
+          ctx.strokeStyle = root.trackFill
           ctx.beginPath()
           ctx.arc(c, c, r, 0, Math.PI * 2)
           ctx.stroke()
-          if (ringDisc.progress > 0.5) {
-            var start = -Math.PI / 2
-            ctx.strokeStyle = ring.arcColor
+          var p = ringDisc.progress
+          if (p < 0.5) return
+          // Drawn as short segments so the colour can run along the arc
+          // (a conic gradient would not follow the clockwise sweep).
+          var a0 = -Math.PI / 2
+          var sweep = Math.PI * 2 * Math.min(100, p) / 100
+          var n = Math.max(1, Math.ceil(sweep / (Math.PI / 45)))
+          var step = sweep / n
+          for (var i = 0; i < n; i++) {
+            ctx.strokeStyle = root.mix(ring.startColor, ring.endColor, n > 1 ? i / (n - 1) : 1)
             ctx.beginPath()
-            ctx.arc(c, c, r, start, start + Math.PI * 2 * ringDisc.progress / 100)
+            ctx.arc(c, c, r, a0 + i * step, a0 + (i + 1) * step + (i < n - 1 ? 0.03 : 0))
             ctx.stroke()
           }
+          // Round caps at both ends.
+          var rad = ring.stroke / 2
+          ctx.fillStyle = ring.startColor
+          ctx.beginPath()
+          ctx.arc(c + r * Math.cos(a0), c + r * Math.sin(a0), rad, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.fillStyle = ring.endColor
+          ctx.beginPath()
+          ctx.arc(c + r * Math.cos(a0 + sweep), c + r * Math.sin(a0 + sweep), rad, 0, Math.PI * 2)
+          ctx.fill()
         }
       }
       Connections {
@@ -1888,24 +2005,46 @@ Panel {
       }
       Connections {
         target: ring
-        function onArcColorChanged() { ringCanvas.requestPaint() }
-        function onTrackColorChanged() { ringCanvas.requestPaint() }
+        function onStartColorChanged() { ringCanvas.requestPaint() }
+        function onEndColorChanged() { ringCanvas.requestPaint() }
+      }
+      Connections {
+        target: root
+        function onForegroundChanged() { ringCanvas.requestPaint() }
       }
 
       Column {
         anchors.centerIn: parent
-        Text {
+        spacing: 0
+
+        Item {
           anchors.horizontalCenter: parent.horizontalCenter
-          text: ring.valid ? ring.level + "%" : "—"
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          font.bold: true
+          width: ringPct.width + (ring.valid ? Style.space(2) + ringSign.width : 0)
+          height: ringPct.height
+
+          Text {
+            id: ringPct
+            text: ring.valid ? String(ring.level) : "—"
+            color: ring.low ? Color.urgent : (ring.valid ? root.foreground : root.muted)
+            font.family: root.fontFamily
+            font.pixelSize: ring.level >= 100 ? Style.font.display : Style.font.displayLarge
+            font.bold: true
+          }
+          Text {
+            id: ringSign
+            visible: ring.valid
+            x: ringPct.width + Style.space(2)
+            y: ringPct.baselineOffset - baselineOffset
+            text: "%"
+            color: root.muted
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
         }
         Text {
           anchors.horizontalCenter: parent.horizontalCenter
           text: "󰂄"
-          color: root.accent
+          color: root.chargeColor
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
           visible: ring.valid && ring.charging
@@ -1916,12 +2055,14 @@ Panel {
     Text {
       id: ringLabel
       anchors.top: ringDisc.bottom
-      anchors.topMargin: Style.space(6)
+      anchors.topMargin: Style.space(8)
       anchors.horizontalCenter: parent.horizontalCenter
-      text: ring.label
-      color: Qt.darker(root.foreground, 1.3)
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
+      text: ring.label.toUpperCase()
+      color: root.muted
+      font.family: root.textFamily
+      font.pixelSize: Style.font.caption
+      font.bold: true
+      font.letterSpacing: 1.2
     }
   }
 
@@ -1952,7 +2093,7 @@ Panel {
       anchors.right: parent.right
       y: curve.drawHeight / 2
       height: 1
-      color: Qt.darker(root.foreground, 1.9)
+      color: root.trackFill
     }
 
     Repeater {
@@ -1992,7 +2133,7 @@ Panel {
           text: hz >= 1000
             ? ((hz % 1000 === 0 ? (hz / 1000) : (hz / 1000).toFixed(1)) + "k")
             : String(hz)
-          color: Qt.darker(root.foreground, 1.5)
+          color: root.muted
           font.family: root.fontFamily
           font.pixelSize: curve.compactLabelPx
           anchors.horizontalCenter: parent.horizontalCenter
@@ -2007,7 +2148,7 @@ Panel {
           text: hz >= 1000
             ? ((hz % 1000 === 0 ? (hz / 1000) : (hz / 1000).toFixed(1)) + "k")
             : String(hz)
-          color: Qt.darker(root.foreground, 1.75)
+          color: root.muted
           font.family: root.fontFamily
           // Many bands (custom curves use up to 20) means narrow slots: shrink
           // the label with the count so neighbours do not overlap.
@@ -2040,8 +2181,8 @@ Panel {
     Text {
       id: srowLabel
       text: srow.label
-      color: Qt.darker(root.foreground, 1.3)
-      font.family: root.fontFamily
+      color: root.muted
+      font.family: root.textFamily
       font.pixelSize: Style.font.body
       anchors.left: parent.left
       anchors.top: parent.top
@@ -2068,11 +2209,139 @@ Panel {
       step: srow.step
       integer: srow.integer
       bar: root.bar
-      fillColor: root.foreground
+      fillColor: root.accent
       knobColor: root.foreground
-      trackColor: Qt.darker(root.foreground, 1.6)
+      trackColor: root.trackFill
       onMoved: function (v) { srow.moved(v) }
       onReleased: function (v) { srow.released(v) }
+    }
+  }
+
+  // A stepped choice as a slider with one notch per option; the chosen
+  // option's name is on the right and follows the knob while it is dragged.
+  component StepRow: Item {
+    id: srw
+    required property string label
+    property var model: []
+    required property string current
+    signal picked(string value)
+
+    readonly property int count: srw.model.length
+    readonly property int currentIndex: {
+      for (var i = 0; i < srw.model.length; i++)
+        if (String(srw.model[i].value) === String(srw.current)) return i
+      return -1
+    }
+    readonly property int liveIndex: Math.max(0, Math.min(srw.count - 1, Math.round(stepSlider.liveValue)))
+
+    implicitHeight: stepLabel.implicitHeight + Style.space(10) + stepSlider.implicitHeight
+
+    Text {
+      id: stepLabel
+      text: srw.label
+      color: root.muted
+      font.family: root.textFamily
+      font.pixelSize: Style.font.body
+      anchors.left: parent.left
+      anchors.top: parent.top
+    }
+    Text {
+      text: srw.currentIndex < 0 && !stepSlider.dragging ? "—"
+        : srw.model[stepSlider.dragging ? srw.liveIndex : srw.currentIndex].label
+      color: root.accent
+      font.family: root.textFamily
+      font.pixelSize: Style.font.body
+      font.bold: true
+      anchors.right: parent.right
+      anchors.top: parent.top
+    }
+
+    PanelSlider {
+      id: stepSlider
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      value: Math.max(0, srw.currentIndex)
+      minimum: 0
+      maximum: Math.max(1, srw.count - 1)
+      step: 1
+      integer: true
+      tickCount: srw.count
+      bar: root.bar
+      fillColor: root.accent
+      knobColor: root.foreground
+      trackColor: root.trackFill
+      tickColor: root.cardFill
+      onReleased: function (v) {
+        var i = Math.max(0, Math.min(srw.count - 1, Math.round(v)))
+        if (i !== srw.currentIndex) srw.picked(String(srw.model[i].value))
+      }
+    }
+  }
+
+  // The same contract as ChoiceRow, drawn as one segmented ButtonGroup.
+  component GroupRow: Item {
+    id: grow
+    required property string label
+    property var model: []
+    required property string current
+    signal picked(string value)
+
+    implicitHeight: growLabel.implicitHeight + Style.space(8) + growGroup.implicitHeight
+
+    Text {
+      id: growLabel
+      text: grow.label
+      color: root.muted
+      font.family: root.textFamily
+      font.pixelSize: Style.font.body
+      anchors.left: parent.left
+      anchors.top: parent.top
+    }
+
+    ButtonGroup {
+      id: growGroup
+      anchors.left: parent.left
+      anchors.top: growLabel.bottom
+      anchors.topMargin: Style.space(8)
+      spacing: Style.space(4)
+      focusable: false
+      options: grow.model.map(function (m) { return { value: String(m.value), label: m.label } })
+      value: String(grow.current)
+      foreground: root.foreground
+      background: "transparent"
+      accent: root.accent
+      fontFamily: root.textFamily
+      fontSize: Style.font.bodySmall
+      onChanged: function (v) { grow.picked(v) }
+    }
+  }
+
+  // A section title: small, caps, spaced, in the muted tone.
+  component SectionHeader: PanelSectionHeader {
+    foreground: root.foreground
+    fontFamily: root.textFamily
+    color: root.muted
+    font.letterSpacing: 1.2
+  }
+
+  // One page of the tab stack; fades in when it becomes the visible one.
+  component TabPage: Column {
+    id: page
+    required property int tabIndex
+    visible: root.tab === page.tabIndex
+    width: parent ? parent.width : 0
+    spacing: Style.space(14)
+    onVisibleChanged: if (page.visible) pageFade.restart()
+
+    NumberAnimation {
+      id: pageFade
+      target: page
+      property: "opacity"
+      from: 0
+      to: 1
+      duration: 160
+      easing.type: Easing.OutCubic
     }
   }
 
@@ -2085,37 +2354,36 @@ Panel {
     required property string leftText
     required property string rightText
     property bool header: false
-    readonly property real gestureW: Style.space(84)
+    readonly property real gestureW: Style.space(96)
     readonly property real sideW: Math.max(0, (cell.width - cell.gestureW - Style.space(16)) / 2)
     spacing: Style.space(8)
 
     Text {
       width: cell.gestureW
       text: cell.gesture
-      color: Qt.darker(root.foreground, 1.4)
-      font.family: root.fontFamily
+      color: root.muted
+      font.family: root.textFamily
       font.pixelSize: Style.font.bodySmall
-      font.bold: true
       elide: Text.ElideRight
     }
     Text {
       width: cell.sideW
       text: cell.leftText
-      color: cell.header ? Qt.darker(root.foreground, 1.35) : root.foreground
-      font.family: root.fontFamily
+      color: cell.header ? root.muted : root.foreground
+      font.family: root.textFamily
       font.pixelSize: cell.header ? Style.font.caption : Style.font.bodySmall
       font.bold: cell.header
-      font.letterSpacing: cell.header ? 1.1 : 0
+      font.letterSpacing: cell.header ? 1.2 : 0
       elide: Text.ElideRight
     }
     Text {
       width: cell.sideW
       text: cell.rightText
-      color: cell.header ? Qt.darker(root.foreground, 1.35) : root.foreground
-      font.family: root.fontFamily
+      color: cell.header ? root.muted : root.foreground
+      font.family: root.textFamily
       font.pixelSize: cell.header ? Style.font.caption : Style.font.bodySmall
       font.bold: cell.header
-      font.letterSpacing: cell.header ? 1.1 : 0
+      font.letterSpacing: cell.header ? 1.2 : 0
       elide: Text.ElideRight
     }
   }
@@ -2136,23 +2404,34 @@ Panel {
     radius: Style.cornerRadius
     color: tabBtn.active
       ? Style.selectedFillFor(root.foreground, root.accent)
-      : "transparent"
-    borderSpec: Border.controlSpec(
-      tabBtn.active ? "selected" : "normal", root.foreground, root.accent)
-    Behavior on color { ColorAnimation { duration: 120 } }
+      : (tabMouse.containsMouse ? Style.hoverFillFor(root.foreground, root.accent) : root.cardFill)
+    Behavior on color { ColorAnimation { duration: 140 } }
 
     Text {
       anchors.centerIn: parent
-      text: tabBtn.label
-      color: root.foreground
-      font.family: root.fontFamily
+      text: tabBtn.label.toUpperCase()
+      color: tabBtn.active ? root.accent : root.muted
+      font.family: root.textFamily
       font.pixelSize: Style.font.bodySmall
       font.bold: true
-      font.letterSpacing: 0.6
+      font.letterSpacing: 1.2
+      Behavior on color { ColorAnimation { duration: 140 } }
+    }
+
+    // The accent underline grows from the centre to mark the tab in use.
+    Rectangle {
+      anchors.bottom: parent.bottom
+      anchors.horizontalCenter: parent.horizontalCenter
+      height: Math.max(2, Style.space(2))
+      width: tabBtn.active ? parent.width : 0
+      color: root.accent
+      Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
     }
 
     MouseArea {
+      id: tabMouse
       anchors.fill: parent
+      hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
       onClicked: root.tab = tabBtn.index
     }
@@ -2169,7 +2448,7 @@ Panel {
     implicitHeight: cardBody.implicitHeight + card.inset * 2
     radius: Style.cornerRadius
     color: card.active ? Style.selectedFillFor(root.foreground, root.accent) : root.cardFill
-    borderSpec: Border.controlSpec(card.active ? "selected" : "normal", root.foreground, root.accent)
+    borderSpec: card.active ? Border.controlSpec("selected", root.foreground, root.accent) : Border.none()
     Behavior on color { ColorAnimation { duration: 120 } }
 
     Column {
@@ -2193,11 +2472,11 @@ Panel {
     width: mb.btnWidth
     implicitHeight: Style.spacing.controlHeight * 2
     radius: Style.cornerRadius
+    // A segment of the noise-mode control: the one in use is filled solid.
     color: mb.active
-      ? Style.selectedFillFor(root.foreground, root.accent)
-      : (mbMouse.containsMouse ? Style.hoverFillFor(root.foreground, root.accent) : root.cardFill)
-    borderSpec: Border.controlSpec(mb.active ? "selected" : "normal", root.foreground, root.accent)
-    Behavior on color { ColorAnimation { duration: 120 } }
+      ? root.accent
+      : (mbMouse.containsMouse ? root.raisedFill : root.cardFill)
+    Behavior on color { ColorAnimation { duration: 140 } }
 
     Column {
       anchors.centerIn: parent
@@ -2207,20 +2486,22 @@ Panel {
       Text {
         width: parent.width
         text: mb.glyph
-        color: mb.active ? root.accent : root.foreground
+        color: mb.active ? Color.background : root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.title * 1.5
         horizontalAlignment: Text.AlignHCenter
+        Behavior on color { ColorAnimation { duration: 140 } }
       }
       Text {
         width: parent.width
         text: mb.label
-        color: root.foreground
-        font.family: root.fontFamily
+        color: mb.active ? Color.background : root.foreground
+        font.family: root.textFamily
         font.pixelSize: Style.font.bodySmall
         font.bold: mb.active
         elide: Text.ElideRight
         horizontalAlignment: Text.AlignHCenter
+        Behavior on color { ColorAnimation { duration: 140 } }
       }
     }
 
@@ -2256,7 +2537,7 @@ Panel {
         width: parent.width
         text: trow.label
         color: root.foreground
-        font.family: root.fontFamily
+        font.family: root.textFamily
         font.pixelSize: Style.font.body
         elide: Text.ElideRight
       }
@@ -2264,8 +2545,8 @@ Panel {
         width: parent.width
         visible: trow.hint !== ""
         text: trow.hint
-        color: Qt.darker(root.foreground, 1.6)
-        font.family: root.fontFamily
+        color: root.muted
+        font.family: root.textFamily
         font.pixelSize: Style.font.caption
         wrapMode: Text.WordWrap
       }
@@ -2312,13 +2593,13 @@ Panel {
 
     FontMetrics {
       id: nameMetrics
-      font.family: root.fontFamily
+      font.family: root.textFamily
       font.pixelSize: Style.font.bodySmall
       font.bold: true
     }
     FontMetrics {
       id: noteMetrics
-      font.family: root.fontFamily
+      font.family: root.textFamily
       font.pixelSize: Style.font.caption
     }
 
@@ -2329,7 +2610,9 @@ Panel {
     color: cc.highlighted
       ? Style.selectedFillFor(root.foreground, root.accent)
       : ((ccMouse.containsMouse && cc.canApply) ? Style.hoverFillFor(root.foreground, root.accent) : root.cardFill)
-    borderSpec: Border.controlSpec(cc.highlighted ? "selected" : "normal", root.foreground, root.accent)
+    // The effect in use gets an accent rule on its top and left sides; the
+    // others carry no border at all.
+    borderSpec: cc.highlighted ? Border.flat(root.accent, "2 0 0 2") : Border.none()
     Behavior on color { ColorAnimation { duration: 120 } }
     Behavior on opacity { NumberAnimation { duration: 120 } }
 
@@ -2355,7 +2638,7 @@ Panel {
         height: Math.ceil(nameMetrics.height) * 2
         text: cc.live && cc.adjusted ? Qcy.tr("{name} (adjusted)", { name: cc.entry.name }) : cc.entry.name
         color: root.foreground
-        font.family: root.fontFamily
+        font.family: root.textFamily
         font.pixelSize: Style.font.bodySmall
         font.bold: true
         wrapMode: Text.WordWrap
@@ -2384,8 +2667,8 @@ Panel {
         }
         color: (cc.phase === "error" || cc.phase === "unconfirmed")
           ? Color.urgent
-          : ((cc.live || cc.phase === "ok") ? root.accent : Qt.darker(root.foreground, 1.3))
-        font.family: root.fontFamily
+          : ((cc.live || cc.phase === "ok") ? root.accent : root.muted)
+        font.family: root.textFamily
         font.pixelSize: Style.font.caption
         font.bold: cc.live
         elide: Text.ElideRight
@@ -2395,7 +2678,7 @@ Panel {
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
           text: root.fmtDb(cc.entry.masterGain) + " dB"
-          color: Qt.darker(root.foreground, 1.4)
+          color: root.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption * 0.85
         }
@@ -2416,7 +2699,7 @@ Panel {
           visible: cc.confirmingDelete
           text: Qcy.tr("Delete this effect?")
           color: root.foreground
-          font.family: root.fontFamily
+          font.family: root.textFamily
           font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
           width: parent.width
@@ -2447,8 +2730,8 @@ Panel {
       Text {
         anchors.centerIn: parent
         text: "···"
-        color: cc.menuOpen ? root.accent : Qt.darker(root.foreground, 1.2)
-        font.family: root.fontFamily
+        color: cc.menuOpen ? root.accent : root.muted
+        font.family: root.textFamily
         font.pixelSize: Style.font.body
         font.bold: true
       }
@@ -2481,16 +2764,113 @@ Panel {
     implicitHeight: be.valueHeight + be.plotHeight + be.labelHeight
     opacity: be.editable ? 1.0 : 0.5
 
+    // A bar is being dragged: the curve and the knobs follow the pointer at
+    // once; otherwise they glide to a new effect's shape.
+    property bool dragging: false
+    readonly property real half: be.plotHeight / 2 - be.knobSize / 2
+
+    // One lifted surface behind the ten bars, so they read as a single plot.
+    Rectangle {
+      x: 0
+      y: be.valueHeight
+      width: be.width
+      height: be.plotHeight
+      radius: Style.cornerRadius
+      color: root.cardFill
+    }
+
+    // The response drawn through the bar positions: a rounded line, an accent
+    // fill fading to nothing underneath and the dashed 0 dB line.
+    Canvas {
+      id: curveCanvas
+      x: 0
+      y: be.valueHeight
+      width: be.width
+      height: be.plotHeight
+      antialiasing: true
+      onPaint: {
+        var ctx = getContext("2d")
+        ctx.reset()
+        var w = width
+        var h = height
+        var zeroY = h / 2
+        // 0 dB line, dashed by hand.
+        ctx.strokeStyle = root.trackFill
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        for (var x = 0; x < w; x += 8) {
+          ctx.moveTo(x, zeroY)
+          ctx.lineTo(Math.min(w, x + 4), zeroY)
+        }
+        ctx.stroke()
+
+        var pts = []
+        for (var i = 0; i < 10; i++) {
+          var it = slots.itemAt(i)
+          var db = it ? it.animDb : 0
+          pts.push({ x: (i + 0.5) * be.slotWidth, y: zeroY - db / root.editorMaxDb * be.half })
+        }
+        // Catmull-Rom through the points as cubic segments, kept inside the plot.
+        function cy(v) { return Math.max(1, Math.min(h - 1, v)) }
+        function trace(withMove) {
+          if (withMove) ctx.moveTo(pts[0].x, pts[0].y)
+          else ctx.lineTo(pts[0].x, pts[0].y)
+          for (var k = 0; k < pts.length - 1; k++) {
+            var p0 = pts[Math.max(0, k - 1)]
+            var p1 = pts[k]
+            var p2 = pts[k + 1]
+            var p3 = pts[Math.min(pts.length - 1, k + 2)]
+            ctx.bezierCurveTo(p1.x + (p2.x - p0.x) / 6, cy(p1.y + (p2.y - p0.y) / 6),
+                              p2.x - (p3.x - p1.x) / 6, cy(p2.y - (p3.y - p1.y) / 6),
+                              p2.x, p2.y)
+          }
+        }
+        var grad = ctx.createLinearGradient(0, 0, 0, h)
+        grad.addColorStop(0, Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.25))
+        grad.addColorStop(1, Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0))
+        ctx.beginPath()
+        ctx.moveTo(pts[0].x, h)
+        trace(false)
+        ctx.lineTo(pts[pts.length - 1].x, h)
+        ctx.closePath()
+        ctx.fillStyle = grad
+        ctx.fill()
+
+        ctx.beginPath()
+        trace(true)
+        ctx.strokeStyle = root.accent
+        ctx.lineWidth = 2
+        ctx.lineCap = "round"
+        ctx.lineJoin = "round"
+        ctx.stroke()
+      }
+    }
+    Connections {
+      target: root
+      function onAccentChanged() { curveCanvas.requestPaint() }
+      function onForegroundChanged() { curveCanvas.requestPaint() }
+    }
+
     Repeater {
+      id: slots
       model: 10
+      onItemAdded: curveCanvas.requestPaint()
       Item {
         id: slot
         required property int index
         readonly property real gainDb: Number(be.gains[slot.index]) || 0
+        // The drawn value: it glides to a new target (an effect was chosen)
+        // and tracks the pointer without delay while a bar is dragged.
+        property real animDb: slot.gainDb
+        Behavior on animDb {
+          enabled: !be.dragging
+          NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+        }
+        onAnimDbChanged: curveCanvas.requestPaint()
         readonly property int hz: root.editorFreqs[slot.index]
         // Vertical travel of the knob's centre, from the plot's middle.
         readonly property real half: plot.height / 2 - be.knobSize / 2
-        readonly property real knobY: plot.height / 2 - slot.gainDb / root.editorMaxDb * slot.half
+        readonly property real knobY: plot.height / 2 - slot.animDb / root.editorMaxDb * slot.half
 
         x: slot.index * be.slotWidth
         width: be.slotWidth
@@ -2500,7 +2880,7 @@ Panel {
           width: parent.width
           height: be.valueHeight
           text: root.fmtDb(slot.gainDb)
-          color: slot.gainDb === 0 ? Qt.darker(root.foreground, 1.6) : root.foreground
+          color: slot.gainDb === 0 ? root.muted : root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption * 0.85
           font.bold: slot.gainDb !== 0
@@ -2515,7 +2895,7 @@ Panel {
           anchors.horizontalCenter: parent.horizontalCenter
           height: be.plotHeight
           radius: Style.space(3)
-          color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
+          color: "transparent"
 
           // The rail.
           Rectangle {
@@ -2527,15 +2907,6 @@ Panel {
             color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.22)
           }
 
-          // The zero line.
-          Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            height: 1
-            color: Qt.darker(root.foreground, 1.25)
-          }
-
           // The fill, from zero to the knob.
           Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
@@ -2543,7 +2914,7 @@ Panel {
             y: Math.min(slot.knobY, plot.height / 2)
             height: Math.abs(slot.knobY - plot.height / 2)
             radius: width / 2
-            color: slot.gainDb >= 0 ? root.accent : Qt.darker(root.foreground, 1.4)
+            color: slot.gainDb >= 0 ? root.accent : root.muted
           }
 
           // The knob.
@@ -2555,7 +2926,7 @@ Panel {
             radius: width / 2
             color: slot.gainDb === 0 ? root.foreground : root.accent
             border.width: 1
-            border.color: Qt.darker(root.foreground, 1.6)
+            border.color: root.muted
           }
 
           MouseArea {
@@ -2579,6 +2950,7 @@ Panel {
               interval: 250
               onTriggered: be.committed()
             }
+            onPressedChanged: be.dragging = dragArea.pressed
             onPressed: function (mouse) {
               dragArea.moved = false
               dragArea.setFrom(mouse.y)
@@ -2618,7 +2990,7 @@ Panel {
           text: slot.hz >= 1000
             ? ((slot.hz % 1000 === 0 ? (slot.hz / 1000) : (slot.hz / 1000).toFixed(1)) + "k")
             : String(slot.hz)
-          color: Qt.darker(root.foreground, 1.45)
+          color: root.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption * 0.85
           horizontalAlignment: Text.AlignHCenter
@@ -2642,8 +3014,8 @@ Panel {
     Text {
       id: crowLabel
       text: crow.label
-      color: Qt.darker(root.foreground, 1.3)
-      font.family: root.fontFamily
+      color: root.muted
+      font.family: root.textFamily
       font.pixelSize: Style.font.body
       anchors.left: parent.left
       anchors.top: parent.top

@@ -123,6 +123,20 @@ func (d *daemon) needsProbe() bool {
 	return !d.probed
 }
 
+// waitProbe blocks until the background capability sweep is done, or max.
+func (d *daemon) waitProbe(max time.Duration) {
+	deadline := time.Now().Add(max)
+	for time.Now().Before(deadline) {
+		d.mu.Lock()
+		p := d.probing
+		d.mu.Unlock()
+		if !p {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func (d *daemon) knownHandler() ModelHandler {
 	d.mu.Lock()
 	defer d.mu.Unlock()

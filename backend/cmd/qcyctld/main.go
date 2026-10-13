@@ -71,6 +71,9 @@ type daemon struct {
 	// Model detection & routing
 	caps   map[string]bool
 	probed bool
+	// probing is true while the background capability sweep runs; a status
+	// read waits for it so the first report is never missing the probe results.
+	probing bool
 	// txMu serialises BLE transactions. The frame channel is shared, so a
 	// background capability probe interleaving with a status read would drain
 	// the other one's replies and both would time out.
@@ -527,8 +530,16 @@ func (d *daemon) detectAndAttachModel() {
 	// idle timer cannot cut it off half way.
 	if d.needsProbe() {
 		d.beginRequest()
+		d.mu.Lock()
+		d.probing = true
+		d.mu.Unlock()
 		go func() {
 			defer d.endRequest()
+			defer func() {
+				d.mu.Lock()
+				d.probing = false
+				d.mu.Unlock()
+			}()
 			d.probeCapabilities()
 		}()
 	}
@@ -956,6 +967,10 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 	if !d.isConnected() {
 		return nil, errors.New("not connected")
 	}
+
+	// The first status after a connect would otherwise race the capability
+	// sweep and report every probed control as absent; wait for it (bounded).
+	d.waitProbe(8 * time.Second)
 
 	rep := map[string]interface{}{}
 	if left, right, box, lc, rc, cc, err := d.readBatteryRaw(); err == nil {
