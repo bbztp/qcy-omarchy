@@ -159,6 +159,13 @@ Panel {
     if (root.baseId !== "" && (slot === 255 || slot < 0)) {
       for (i = 0; i < l.length; i++) if (l[i].id === root.baseId && !root.hiddenEntry(l[i])) return root.baseId
     }
+    // Slot 11 is the hearing-test experience by definition: the card of that
+    // name is the one in use, never a backup copy that happens to share bands.
+    if (slot === 11) {
+      for (i = 0; i < l.length; i++) {
+        if (l[i].id === "experiencia-auditiva" && !root.hiddenEntry(l[i])) return l[i].id
+      }
+    }
     if (sig !== "") {
       for (i = 0; i < l.length; i++) {
         if (!root.hiddenEntry(l[i]) && root.entrySig(l[i]) === sig) return l[i].id
