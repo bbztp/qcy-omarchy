@@ -1131,8 +1131,22 @@ Panel {
                 color: root.cardFill
                 anchors.verticalCenter: parent.verticalCenter
 
+                Image {
+                  id: heroImage
+                  anchors.fill: parent
+                  anchors.margins: Style.space(6)
+                  visible: status === Image.Ready
+                  source: Qcy.images.icon ? Qcy.images.icon : ""
+                  sourceSize: Qt.size(128, 128)
+                  fillMode: Image.PreserveAspectFit
+                  asynchronous: true
+                  smooth: true
+                  cache: true
+                }
+
                 Text {
                   anchors.centerIn: parent
+                  visible: heroImage.status !== Image.Ready
                   text: String.fromCodePoint(0xF02CB)
                   color: Qcy.connected ? root.accent : root.muted
                   font.family: root.fontFamily
@@ -1206,6 +1220,7 @@ Panel {
               BatteryRing {
                 width: (ringRow.width - Style.space(8) * 2) / 3
                 label: Qcy.tr("L")
+                image: Qcy.images.left ? Qcy.images.left : ""
                 valid: Qcy.connected && !!root.batt
                 level: root.batt ? root.batt.left : 0
                 charging: root.batt ? root.batt.leftCharging : false
@@ -1213,6 +1228,7 @@ Panel {
               BatteryRing {
                 width: (ringRow.width - Style.space(8) * 2) / 3
                 label: Qcy.tr("R")
+                image: Qcy.images.right ? Qcy.images.right : ""
                 valid: Qcy.connected && !!root.batt
                 level: root.batt ? root.batt.right : 0
                 charging: root.batt ? root.batt.rightCharging : false
@@ -1220,6 +1236,7 @@ Panel {
               BatteryRing {
                 width: (ringRow.width - Style.space(8) * 2) / 3
                 label: Qcy.tr("Case")
+                image: Qcy.images.box ? Qcy.images.box : ""
                 valid: Qcy.connected && !!(root.batt && root.batt.casePresent)
                 level: root.batt ? root.batt.case : 0
                 charging: root.batt ? root.batt.caseCharging : false
@@ -1921,6 +1938,8 @@ Panel {
     property bool charging: false
     // The case pulses while it charges.
     property bool pulse: false
+    // Optional product picture shown above the number (file:// URL or "").
+    property string image: ""
 
     readonly property real diameter: Style.space(76)
     readonly property real stroke: Style.space(6)
@@ -2016,6 +2035,20 @@ Panel {
       Column {
         anchors.centerIn: parent
         spacing: 0
+
+        Image {
+          anchors.horizontalCenter: parent.horizontalCenter
+          width: Style.space(20)
+          height: width
+          visible: status === Image.Ready
+          source: ring.image
+          sourceSize: Qt.size(128, 128)
+          fillMode: Image.PreserveAspectFit
+          asynchronous: true
+          smooth: true
+          cache: true
+          opacity: ring.valid ? 1 : 0.5
+        }
 
         Item {
           anchors.horizontalCenter: parent.horizontalCenter

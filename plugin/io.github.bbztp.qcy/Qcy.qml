@@ -130,6 +130,19 @@ Singleton {
     && report.capabilities.verified === false)
   readonly property string productTitle: (report && report.model && report.model.productTitle)
     ? String(report.model.productTitle) : ""
+  // Real product images of the connected model ({left,right,box,icon} as
+  // file:// URLs) or {} when unavailable. Loaded from the daemon's cache by a
+  // one-shot `qcyctl model image --json`; it uses no BLE, so it never competes
+  // with the adapter. Failure is silent: the UI keeps its drawn visuals.
+  property var images: ({})
+  readonly property string _imageKey: (connected && report && report.model
+    && report.model.vendorId !== undefined && report.model.vendorId !== null)
+    ? String(report.model.vendorId) : ""
+  on_ImageKeyChanged: {
+    if (_imageKey === "") { images = ({}); return }
+    if (imageProc.running) imageProc.running = false
+    imageProc.running = true
+  }
   property bool loading: false
   property string error: ""
   // True when the last failure was the daemon's "busy" answer: the earbuds
@@ -335,6 +348,26 @@ Singleton {
       _wantBattery = false
       _writeNext = null   // a queued write must not run on the next connection
       _dropPending("disconnected")
+    }
+  }
+
+  Process {
+    id: imageProc
+    command: [root.binary, "model", "image", "--json"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var out = {}
+        try {
+          var f = JSON.parse(text).files || {}
+          var names = ["left", "right", "box", "icon"]
+          for (var i = 0; i < names.length; i++) {
+            var v = f[names[i]]
+            if (typeof v === "string" && v.charAt(0) === "/") out[names[i]] = "file://" + v
+          }
+        } catch (e) { out = {} }
+        root.images = out
+      }
     }
   }
 
