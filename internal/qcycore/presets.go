@@ -75,6 +75,10 @@ type EarCurves struct {
 	Left       []EqBand `json:"left"`
 	Right      []EqBand `json:"right"`
 	MasterGain float64  `json:"masterGain"` // dB, one value for both ears
+	// Baseline says how the frames are built when the card is re-applied:
+	// absent/"factory" = the 8 test bands as they are; "zero" = EXPERIMENT,
+	// 13 bands per ear with the 5 factory bands at gain 0 first.
+	Baseline string `json:"baseline,omitempty"`
 }
 
 // LibraryDir returns the directory curves are stored in.
@@ -261,6 +265,9 @@ func ValidateCurve(c Curve) error {
 // validateEars checks the per-ear curves: EarBands bands each, in increasing
 // position, with frequency, gain, Q and type in the ranges of a payload.
 func validateEars(e *EarCurves) error {
+	if e.Baseline != "" && e.Baseline != "factory" && e.Baseline != "zero" {
+		return fmt.Errorf("curve: ears.baseline %q is not factory or zero", e.Baseline)
+	}
 	if _, err := quantCenti(e.MasterGain, MasterMaxDB); err != nil {
 		return fmt.Errorf("curve: ears: masterGain: %w", err)
 	}

@@ -104,9 +104,9 @@ func (s *sendWatch) hearingMode(on bool) (*hearingCall, error) {
 	s.check()
 	return s.fakeLink.hearingMode(on)
 }
-func (s *sendWatch) hearingWrite(e hearing.Ear, g, o [hearing.Bands]int) (*hearingCall, error) {
+func (s *sendWatch) hearingWrite(e hearing.Ear, g, o [hearing.Bands]int, baseline string) (*hearingCall, error) {
 	s.check()
-	return s.fakeLink.hearingWrite(e, g, o)
+	return s.fakeLink.hearingWrite(e, g, o, baseline)
 }
 
 func TestHearingApplyWithoutYesSendsNothing(t *testing.T) {
@@ -683,7 +683,7 @@ func earsCard(t *testing.T, mut func(c *qcycore.Curve)) qcycore.Curve {
 	t.Helper()
 	l := [hearing.Bands]int{1, 0, -2, -3, 0, 1, 0, 2}
 	r := [hearing.Bands]int{0, 0, -1, -2, 0, 0, 1, 1}
-	c, err := hearingResultCurve(l, r, -10, time.Date(2026, 10, 13, 14, 0, 0, 0, time.UTC), 90, "2026-10-13T13:00:00Z", "confirmado pelo eco do aparelho")
+	c, err := hearingResultCurve(l, r, -10, time.Date(2026, 10, 13, 14, 0, 0, 0, time.UTC), 90, "2026-10-13T13:00:00Z", "confirmado pelo eco do aparelho", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -976,5 +976,149 @@ func TestHearingApplyRightReadbackShowingSomethingElseIsNotConfirmed(t *testing.
 	err := hearingApplyFile(r.env, resultFileFrom(t, func(i int) bool { return i%2 == 0 }, nil), hearingApplyOpts{yes: true, acceptFloor: true})
 	if err == nil || !strings.Contains(err.Error(), "NOT CONFIRMED for the right ear") || len(r.recorded) != 0 {
 		t.Fatalf("%v", err)
+	}
+}
+
+// ---------- --baseline zero (EXPERIMENT) ----------
+
+func distinctEars(t *testing.T) string {
+	t.Helper()
+	p := resultFileFrom(t, func(i int) bool { return i%2 == 0 }, nil)
+	if l, r, _, _, err := loadHearingResult(p); err != nil || l == r {
+		t.Fatalf("need two different ears: %v %v %v", l, r, err)
+	}
+	return p
+}
+
+func TestBaselineZeroExpectedOutcome(t *testing.T) {
+	r := newRig(t, nil)
+	err := hearingApplyFile(r.env, distinctEars(t), hearingApplyOpts{yes: true, acceptFloor: true, baseline: "zero"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(r.link.baselines, ","); got != "zero,zero" {
+		t.Fatalf("baselines sent: %s", got)
+	}
+	out := r.out.String()
+	if strings.Contains(out, "RESULT OF THE EXPERIMENT") || strings.Contains(out, "NOT CONFIRMED") {
+		t.Fatal(out)
+	}
+	if len(r.recorded) != 1 || r.recorded[0].Ears.Baseline != "zero" || len(r.recorded[0].Ears.Left) != 8 ||
+		!strings.Contains(r.recorded[0].Note, "baseline: zero") {
+		t.Fatalf("recorded %+v", r.recorded)
+	}
+	if err := qcycore.ValidateCurve(r.recorded[0]); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBaselineZeroFirmwareStillPrefixesIsAResultNotAFailure(t *testing.T) {
+	for model, want := range map[string]string{
+		"prefix18": "firmware still prefixes the factory baseline (18 bands)",
+		"replaced": "firmware replaced the zero baseline with the factory baseline (13 bands)",
+	} {
+		t.Run(model, func(t *testing.T) {
+			r := newRig(t, nil)
+			r.link.zeroModel = model
+			err := hearingApplyFile(r.env, distinctEars(t), hearingApplyOpts{yes: true, acceptFloor: true, baseline: "zero"})
+			if err != nil {
+				t.Fatalf("an experiment outcome must exit 0: %v", err)
+			}
+			out := r.out.String()
+			if !strings.Contains(out, "RESULT OF THE EXPERIMENT") || !strings.Contains(out, want) || strings.Contains(out, "NOT CONFIRMED") {
+				t.Fatal(out)
+			}
+			if len(r.recorded) != 1 || !strings.Contains(r.recorded[0].Note, want) {
+				t.Fatalf("the card note does not carry the result: %+v", r.recorded)
+			}
+		})
+	}
+}
+
+func TestBaselineZeroAnyOtherBandCountIsNotConfirmed(t *testing.T) {
+	r := newRig(t, nil)
+	r.link.zeroModel = "odd"
+	err := hearingApplyFile(r.env, distinctEars(t), hearingApplyOpts{yes: true, acceptFloor: true, baseline: "zero"})
+	if err == nil || !strings.Contains(err.Error(), "NOT CONFIRMED") || len(r.recorded) != 0 {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestReadbackShowsBaselineLayouts(t *testing.T) {
+	g := [hearing.Bands]int{-4, -4, -2, -6, -1, -1, -1, -2}
+	mk := func(model string, master float64) *hearingCall {
+		mg := -10.0
+		c := &hearingCall{MasterGain: &mg}
+		c.Readback = &struct {
+			Slot       int     `json:"slot"`
+			Effect     string  `json:"effect,omitempty"`
+			MasterGain float64 `json:"masterGain"`
+			Payload    string  `json:"payload"`
+		}{Slot: 11, MasterGain: master, Payload: deviceReadbackZero(g, master, model)}
+		return c
+	}
+	if ok, note := readbackShows(mk("", -10), g, "zero"); !ok || note != "" {
+		t.Fatalf("expected layout: %v %q", ok, note)
+	}
+	if ok, note := readbackShows(mk("prefix18", -10), g, "zero"); !ok || !strings.Contains(note, "18 bands") {
+		t.Fatalf("18 bands: %v %q", ok, note)
+	}
+	if ok, _ := readbackShows(mk("odd", -10), g, "zero"); ok {
+		t.Fatal("12 bands accepted")
+	}
+	if ok, _ := readbackShows(mk("", -9), g, "zero"); ok {
+		t.Fatal("a divergent master accepted")
+	}
+	// under the factory baseline 18 bands are NOT a layout we know
+	if ok, _ := readbackShows(mk("prefix18", -10), g, "factory"); ok {
+		t.Fatal("18 bands accepted for the factory baseline")
+	}
+	bad := g
+	bad[0] = 3
+	if ok, _ := readbackShows(mk("", -10), bad, "zero"); ok {
+		t.Fatal("divergent test bands accepted")
+	}
+}
+
+// Re-applying the card honours the baseline recorded in it.
+func TestLibraryApplyHonoursTheCardBaseline(t *testing.T) {
+	for baseline, want := range map[string]string{"zero": "zero,zero", "": ",", "factory": "factory,factory"} {
+		r := newRig(t, nil)
+		c := earsCard(t, func(c *qcycore.Curve) { c.Ears.Baseline = baseline })
+		if err := hearingApplyEars(r.env, c, false, false); err != nil {
+			t.Fatalf("%q: %v", baseline, err)
+		}
+		if got := strings.Join(r.link.baselines, ","); got != want {
+			t.Fatalf("card baseline %q: sent %q want %q", baseline, got, want)
+		}
+		if baseline == "zero" && !strings.Contains(r.out.String(), "baseline zero (EXPERIMENT") {
+			t.Fatal(r.out.String())
+		}
+	}
+}
+
+func TestEarsBaselineIsValidatedAndOptional(t *testing.T) {
+	c := earsCard(t, func(c *qcycore.Curve) { c.Ears.Baseline = "banana" })
+	if err := qcycore.ValidateCurve(c); err == nil {
+		t.Fatal("an unknown baseline accepted")
+	}
+	b, _ := json.Marshal(earsCard(t, nil))
+	if strings.Contains(string(b), `"baseline"`) {
+		t.Fatal("baseline must be omitted for the factory layout")
+	}
+}
+
+func TestApplyBaselineFlagIsValidated(t *testing.T) {
+	p := resultFile(t, nil)
+	err := hearingMain([]string{"apply", p, "--yes", "--baseline", "banana"}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "--baseline must be") {
+		t.Fatalf("%v", err)
+	}
+	// valid values reach the hardware guard of the sandbox
+	for _, v := range []string{"factory", "zero"} {
+		err := hearingMain([]string{"apply", p, "--yes", "--baseline", v}, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), errHardwareDisabled.Error()) {
+			t.Fatalf("%s: %v", v, err)
+		}
 	}
 }

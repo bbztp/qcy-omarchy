@@ -45,7 +45,9 @@ type hearingLink interface {
 	capabilities() (verified bool, err error)
 	// hearingMode sends 0x45 (with confirm:true).
 	hearingMode(on bool) (*hearingCall, error)
-	hearingWrite(ear hearing.Ear, gains, other [hearing.Bands]int) (*hearingCall, error)
+	// baseline "" or "factory": the 8 test bands; "zero": EXPERIMENT, the 5
+	// factory bands at gain 0 first (13 bands per ear).
+	hearingWrite(ear hearing.Ear, gains, other [hearing.Bands]int, baseline string) (*hearingCall, error)
 	eqRead() (*qcycore.EqSnapshot, error)
 	// ping is a harmless read that keeps the daemon's idle window from
 	// dropping the BLE link during a long test.
@@ -860,7 +862,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			return fmt.Errorf("refused to write: %d band(s) were still heard at the lowest level, so the result is only relative. Rerun with a lower --sink-volume (e.g. 60%%), or pass --accept-floor to write it anyway; nothing was written (restore point: %s)", nFloor, restoreCmd)
 		}
 		rec.Backup, rec.Restore = backupPath, restoreCmd
-		writes, final, e := hearingCommit(out, link, l, r, restoreCmd, modeOff, env.recorder(l, r, o.sinkVolume, rec.Timestamp))
+		writes, final, e := hearingCommit(out, link, l, r, restoreCmd, modeOff, "factory", env.recorder(l, r, o.sinkVolume, rec.Timestamp, "factory"))
 		rec.Writes, rec.Final = writes, final
 		if e != nil {
 			_ = save()
@@ -875,13 +877,8 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	return save()
 }
 
-// readbackTail returns the eight test bands of a 0x22 readback. Measured on
-// the N70 after 0x46/0x47 index 11: slot 11 active, 13 bands = the 5 bands of
-// the default effect (50/200/900/2800/8000 Hz) at positions 0-4 followed by
-// the 8 test bands at positions 5-12; a bare 8-band payload is accepted too.
-// The tail is taken BY POSITION: the 8000 Hz band of the default effect would
-// collide with the 8000 Hz test band in a lookup by frequency.
-func readbackTail(c *hearingCall) ([]qcycore.EqBand, bool) {
+// readbackBands decodes the bands of a 0x22 readback.
+func readbackBands(c *hearingCall) ([]qcycore.EqBand, bool) {
 	if c.Readback == nil {
 		return nil, false
 	}
@@ -893,14 +890,10 @@ func readbackTail(c *hearingCall) ([]qcycore.EqBand, bool) {
 	if err != nil {
 		return nil, false
 	}
-	n := len(snap.Bands)
-	if n != hearing.Bands && n != 5+hearing.Bands {
-		return nil, false
-	}
-	return snap.Bands[n-hearing.Bands:], true
+	return snap.Bands, true
 }
 
-// tailMatches compares the tail positionally with whole-dB gains (0.1 dB).
+// tailMatches compares eight bands positionally with whole-dB gains (0.1 dB).
 func tailMatches(tail []qcycore.EqBand, gains [hearing.Bands]int) bool {
 	if len(tail) != hearing.Bands {
 		return false
@@ -913,6 +906,60 @@ func tailMatches(tail []qcycore.EqBand, gains [hearing.Bands]int) bool {
 	return true
 }
 
+// prefixIsZero: the first five bands are the factory baseline's frequencies at
+// gain 0 (what the "zero" experiment wrote).
+func prefixIsZero(bands []qcycore.EqBand) bool {
+	for i, f := range hearing.FactoryBaseline {
+		if bands[i].Freq != f.Freq || bands[i].Gain > 0.101 || bands[i].Gain < -0.101 {
+			return false
+		}
+	}
+	return true
+}
+
+// readbackShows checks that the 0x22 readback shows the eight gains, BY
+// POSITION (the 8000 Hz band of the default effect would collide with the test's
+// 8000 Hz band in a lookup by frequency), and returns an experiment note when
+// the layout is one of the unexpected-but-understood ones.
+//
+// baseline "factory" (the default; measured): 13 bands = the 5 of the default
+// effect + the 8 test bands, or a bare 8.
+//
+// baseline "zero" (EXPERIMENT, not verified): 13 bands with the first 5 at
+// gain 0 is the expected outcome; 18 bands (the firmware prefixed the factory
+// baseline again) and 13 bands with a non-zero prefix (it replaced the zeros)
+// are reported as results of the experiment, not as failures; any other band
+// count is not confirmed.
+func readbackShows(c *hearingCall, gains [hearing.Bands]int, baseline string) (ok bool, note string) {
+	bands, have := readbackBands(c)
+	if !have || !readbackMasterMatches(c) {
+		return false, ""
+	}
+	n := len(bands)
+	if baseline != "zero" {
+		if n != hearing.Bands && n != 5+hearing.Bands {
+			return false, ""
+		}
+		return tailMatches(bands[n-hearing.Bands:], gains), ""
+	}
+	switch n {
+	case 5 + hearing.Bands:
+		if !tailMatches(bands[5:], gains) {
+			return false, ""
+		}
+		if prefixIsZero(bands) {
+			return true, ""
+		}
+		return true, "firmware replaced the zero baseline with the factory baseline (13 bands)"
+	case 10 + hearing.Bands:
+		if !tailMatches(bands[10:], gains) || !prefixIsZero(bands[5:]) {
+			return false, ""
+		}
+		return true, "firmware still prefixes the factory baseline (18 bands)"
+	}
+	return false, ""
+}
+
 // readbackMasterMatches: the readback's master gain is the one written (0.05 dB).
 func readbackMasterMatches(c *hearingCall) bool {
 	if c.Readback == nil || c.MasterGain == nil {
@@ -922,29 +969,28 @@ func readbackMasterMatches(c *hearingCall) bool {
 	return d <= 0.051 && d >= -0.051
 }
 
-// writeConfirmed: the device echoed the opcode, or its 0x22 readback shows the
-// master gain and the eight written bands (positionally, within 0.1 dB).
+// writeConfirmed (factory baseline): the device echoed the opcode, or its 0x22
+// readback shows the master gain and the eight written bands.
 func writeConfirmed(c *hearingCall, gains [hearing.Bands]int) bool {
+	ok, _ := writeConfirmedB(c, gains, "factory")
+	return ok
+}
+
+// writeConfirmedB is writeConfirmed for a baseline; note carries the result of
+// the experiment, if any.
+func writeConfirmedB(c *hearingCall, gains [hearing.Bands]int, baseline string) (bool, string) {
 	if c.Ack {
-		return true
+		return true, ""
 	}
-	if !readbackMasterMatches(c) {
-		return false
-	}
-	tail, ok := readbackTail(c)
-	return ok && tailMatches(tail, gains)
+	return readbackShows(c, gains, baseline)
 }
 
 // rightUnverifiable: the 0x22 reports ONE ear (measured: the left one), so
 // after the right ear is written its curve never shows up. The right write is
 // accepted as "sent, not independently verifiable" only when the readback is
 // recognisably the left curve that was just confirmed, with the written master.
-func rightUnverifiable(c *hearingCall, left [hearing.Bands]int) bool {
-	if !readbackMasterMatches(c) {
-		return false
-	}
-	tail, ok := readbackTail(c)
-	return ok && tailMatches(tail, left)
+func rightUnverifiable(c *hearingCall, left [hearing.Bands]int, baseline string) (bool, string) {
+	return readbackShows(c, left, baseline)
 }
 
 // earsNote is the state text stored with a partially confirmed result.
@@ -1032,10 +1078,14 @@ func (l *liveHearingLink) hearingMode(on bool) (*hearingCall, error) {
 	return l.call("hearingMode", map[string]interface{}{"on": on, "confirm": true})
 }
 
-func (l *liveHearingLink) hearingWrite(ear hearing.Ear, gains, other [hearing.Bands]int) (*hearingCall, error) {
-	return l.call("hearingWrite", map[string]interface{}{
+func (l *liveHearingLink) hearingWrite(ear hearing.Ear, gains, other [hearing.Bands]int, baseline string) (*hearingCall, error) {
+	args := map[string]interface{}{
 		"ear": ear.String(), "gains": gains[:], "otherGains": other[:], "confirm": true,
-	})
+	}
+	if baseline == "zero" {
+		args["baseline"] = "zero"
+	}
+	return l.call("hearingWrite", args)
 }
 
 func (l *liveHearingLink) eqRead() (*qcycore.EqSnapshot, error) {

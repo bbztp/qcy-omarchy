@@ -123,7 +123,25 @@ func (d *daemon) hearingWrite(args map[string]interface{}) (*hearingResult, erro
 		}
 	}
 	mg, clamped := hearing.ClampMaster(mg)
-	res, err := d.hearingSend(hearing.WriteFrame(ear, gains, mg), &mg)
+	// baseline: "factory" (default, the 8 test bands) or "zero" (EXPERIMENT:
+	// the 5 factory bands at gain 0 first, 13 bands per ear).
+	frame := hearing.WriteFrame(ear, gains, mg)
+	b := ""
+	if v, present := args["baseline"]; present {
+		str, ok := v.(string)
+		if !ok {
+			return nil, errors.New(`hearingWrite: baseline must be the string "factory" or "zero"`)
+		}
+		b = str
+	}
+	switch b {
+	case "", "factory":
+	case "zero":
+		frame = hearing.WriteFrameBands(ear, hearing.ZeroBaselineBands(gains), mg)
+	default:
+		return nil, fmt.Errorf(`hearingWrite: baseline must be "factory" or "zero", got %q`, b)
+	}
+	res, err := d.hearingSend(frame, &mg)
 	if res != nil {
 		res.MasterClamped = clamped
 	}

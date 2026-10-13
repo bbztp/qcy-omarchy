@@ -32,8 +32,9 @@ const hearingUsage = `usage: qcyctl hearing <subcommand>
                                                                        the app's (phone) reference level: PipeWire volume is cubic, dB = 60*log10(v), so
                                                                        60% is about -13 dB. Bands still heard at the lowest level are marked "floor";
                                                                        --apply --yes refuses them unless --accept-floor is given)
-  hearing apply <result.json> --yes [--accept-floor] [--device-mode] [--no-slot11-backup]   (writes the result of an earlier "hearing run --out" without redoing the test: backup first,
-                                                                       both ears, readback; no audio. Bands marked floor need --accept-floor; 0x45 only with --device-mode)
+  hearing apply <result.json> --yes [--accept-floor] [--device-mode] [--no-slot11-backup] [--baseline factory|zero]   (writes the result of an earlier "hearing run --out" without redoing the test: backup first,
+                                                                       both ears, readback; no audio. Bands marked floor need --accept-floor; 0x45 only with --device-mode;
+                                                                       --baseline zero is an EXPERIMENT, not verified: 13 bands per ear, the 5 factory bands at gain 0 first)
   hearing mode on|off --yes                                           (sends the 0x45 test-mode frame, NOT verified on hardware; for recovery)`
 
 func cmdHearing(args []string) error { return hearingMain(args, os.Stdout) }

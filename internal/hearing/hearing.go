@@ -360,6 +360,61 @@ func WriteFrame(ear Ear, gains [Bands]float64, masterGain float64) []byte {
 	return append(out, params...)
 }
 
+// FactoryBaseline are the 5 bands of the default effect (50/200/900/2800/8000
+// Hz, Q 60/60/70/120/350) that the firmware prefixes to the 8 test bands when
+// it reports slot 11 (measured on the N70). Their type is assumed to be 2.
+var FactoryBaseline = [5]FrameBand{
+	{Freq: 50, Q: 60, Type: bandType},
+	{Freq: 200, Q: 60, Type: bandType},
+	{Freq: 900, Q: 70, Type: bandType},
+	{Freq: 2800, Q: 120, Type: bandType},
+	{Freq: 8000, Q: 350, Type: bandType},
+}
+
+// FrameBand is one band of a 0x46/0x47 frame.
+type FrameBand struct {
+	Freq int
+	Gain float64 // dB
+	Q    int     // raw payload units (70 = Q 0.7)
+	Type int
+}
+
+// WriteFrameBands is WriteFrame for an arbitrary band list (the 0x46/0x47 band
+// count n is the length of bands: paramLen = 7n+3). EXPERIMENT, not verified:
+// with the 5 factory bands at gain 0 followed by the 8 test bands n = 13 and
+// paramLen = 0x5E.
+func WriteFrameBands(ear Ear, bands []FrameBand, masterGain float64) []byte {
+	params := []byte{EffectID}
+	params = le16(params, int(masterGain*100))
+	for _, b := range bands {
+		params = le16(params, b.Freq)
+		params = le16(params, int(math.Round(ClampGain(b.Gain)*100)))
+		params = le16(params, b.Q)
+		params = append(params, byte(b.Type))
+	}
+	cmd := byte(cmdLeft)
+	if ear == Right {
+		cmd = cmdRight
+	}
+	out := []byte{0xff, byte(len(params) + 2), cmd, byte(len(params))}
+	return append(out, params...)
+}
+
+// ZeroBaselineBands is the band list of the "zero baseline" experiment: the 5
+// factory bands at gain 0 (same frequency, Q and type, so the positions stay
+// coherent) followed by the 8 test bands of gains.
+func ZeroBaselineBands(gains [Bands]float64) []FrameBand {
+	out := make([]FrameBand, 0, 5+Bands)
+	for _, b := range FactoryBaseline {
+		b.Gain = 0
+		out = append(out, b)
+	}
+	for i, g := range gains {
+		out = append(out, FrameBand{Freq: Freqs[i], Gain: g, Q: qCenti, Type: bandType})
+	}
+	return out
+}
+
 // FlagFrame builds the frame that switches the personalised effect flag.
 func FlagFrame(on bool) []byte {
 	v := byte(0)

@@ -715,3 +715,23 @@ one ear only. Consequences for the tool:
   written master. If the left does not match, or the readback shows something
   else, the result is "NOT CONFIRMED" as before.
 
+**Experiment, opt-in and NOT verified: `--baseline zero`.** After 0x46/0x47
+index 11 with 8 bands the firmware reports 13 (the 5 factory bands first). To
+see whether the earbuds can be left without that baseline,
+`qcyctl hearing apply <file> --yes --baseline zero` (default `--baseline
+factory`, the behaviour above) sends N = 13 bands per ear: the 5 factory bands
+(50/200/900/2800/8000 Hz, Q 60/60/70/120/350, type assumed 2) at gain 0, then
+the 8 test bands, so `paramLen = 7*13+3 = 0x5E` and `bodyLen = paramLen+2`
+(the vendor app takes n = the band count of the item).
+The master gain comes from the 8 test gains alone. The positional readback
+check then accepts: (a) 13 bands, first 5 at gain 0, last 8 the test bands;
+(b) 18 bands (the firmware prefixed the factory baseline again), reported as
+"firmware still prefixes the factory baseline (18 bands)" and counted as a
+RESULT OF THE EXPERIMENT (exit 0, with a warning); (c) 13 bands with a non-zero
+prefix, reported as "firmware replaced the zero baseline with the factory
+baseline (13 bands)", also a result; any other band count is NOT CONFIRMED.
+The `experiencia-auditiva` card stores only the 8 test bands in `ears` plus
+`ears.baseline: "zero"`; re-applying the card (`library apply`) honours it
+(zero: 13 bands per ear; absent or factory: 8). The daemon's `hearingWrite`
+takes an optional `baseline` (`"factory"` | `"zero"`).
+

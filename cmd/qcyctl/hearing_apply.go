@@ -250,15 +250,16 @@ func printBackup(out io.Writer, in hearingBackupInfo) {
 // the link), reports each readback, switches the test mode off (modeOff may be
 // nil), reads the device back and says "applied" or NOT CONFIRMED. The restore
 // command is printed on every bad outcome.
-func hearingCommit(out io.Writer, link hearingLink, l, r [hearing.Bands]int, restoreCmd string, modeOff func(), record func(master float64, state string) (bool, error)) (writes []*hearingCall, final *qcycore.EqSnapshot, err error) {
+func hearingCommit(out io.Writer, link hearingLink, l, r [hearing.Bands]int, restoreCmd string, modeOff func(), baseline string, record func(master float64, state string) (bool, error)) (writes []*hearingCall, final *qcycore.EqSnapshot, err error) {
 	wrote := 0
 	var unconfirmed []string
 	leftOK, partial := false, false
+	var experiment []string
 	for _, w := range []struct {
 		ear         hearing.Ear
 		gains, peer [hearing.Bands]int
 	}{{hearing.Left, l, r}, {hearing.Right, r, l}} {
-		c, e := link.hearingWrite(w.ear, w.gains, w.peer)
+		c, e := link.hearingWrite(w.ear, w.gains, w.peer, baseline)
 		if e != nil {
 			state := "no ear was confirmed written"
 			if wrote > 0 {
@@ -276,14 +277,33 @@ func hearingCommit(out io.Writer, link hearingLink, l, r [hearing.Bands]int, res
 			fmt.Fprintf(out, "  readback failed: %s", c.ReadbackError)
 		}
 		fmt.Fprintln(out)
+		ok, note := writeConfirmedB(c, w.gains, baseline)
+		addNote := func(n string) {
+			if n == "" {
+				return
+			}
+			for _, x := range experiment {
+				if x == n {
+					return
+				}
+			}
+			experiment = append(experiment, n)
+			fmt.Fprintf(out, "RESULT OF THE EXPERIMENT (baseline zero, not verified): %s\n", n)
+		}
 		switch {
-		case writeConfirmed(c, w.gains):
+		case ok:
 			if w.ear == hearing.Left {
 				leftOK = true
 			}
-		case w.ear == hearing.Right && leftOK && rightUnverifiable(c, l):
-			partial = true
-			fmt.Fprintln(out, "left confirmed by readback; right sent, not independently verifiable (0x22 reports the left ear)")
+			addNote(note)
+		case w.ear == hearing.Right && leftOK:
+			if uok, unote := rightUnverifiable(c, l, baseline); uok {
+				partial = true
+				addNote(unote)
+				fmt.Fprintln(out, "left confirmed by readback; right sent, not independently verifiable (0x22 reports the left ear)")
+				break
+			}
+			fallthrough
 		default:
 			unconfirmed = append(unconfirmed, w.ear.String())
 			fmt.Fprintf(out, "NOT CONFIRMED: the earbuds sent no echo for the %s ear and the 0x22 readback does not show the written curve; to restore the previous state: %s\n", w.ear, restoreCmd)
@@ -320,6 +340,12 @@ func hearingCommit(out io.Writer, link hearingLink, l, r [hearing.Bands]int, res
 		if partial {
 			state = partialConfirmNote
 		}
+		if baseline == "zero" {
+			state += "; experimento baseline zero (13 bandas por orelha, não verificado)"
+			for _, n := range experiment {
+				state += "; " + n
+			}
+		}
 		// The earbuds are written; a library failure must not look like a
 		// failed write, and nothing is undone.
 		if replaced, e := record(master, state); e != nil {
@@ -347,7 +373,7 @@ func toFloats(g [hearing.Bands]int) [hearing.Bands]float64 {
 // the entry carries them in Ears; Bands (and the payload) hold the per-band mean
 // for the chart. Source device-import and slot 11 keep it where the older
 // copies of this card were.
-func hearingResultCurve(l, r [hearing.Bands]int, master float64, now time.Time, sinkVolume int, fileTS, state string) (qcycore.Curve, error) {
+func hearingResultCurve(l, r [hearing.Bands]int, master float64, now time.Time, sinkVolume int, fileTS, state, baseline string) (qcycore.Curve, error) {
 	const q, typ = 70, 2 // Q 0.7, the bell the frames carry
 	ear := func(g [hearing.Bands]int) []qcycore.EqBand {
 		out := make([]qcycore.EqBand, hearing.Bands)
@@ -378,17 +404,26 @@ func hearingResultCurve(l, r [hearing.Bands]int, master float64, now time.Time, 
 		Version: qcycore.CurveVersion, ID: qcycore.HearingTestCurveID(), Name: qcycore.HearingTestName,
 		Source: qcycore.SourceDeviceImport, Slot: qcycore.HearingTestSlot,
 		MasterGain: snap.MasterGain, Payload: snap.Payload, Bands: snap.Bands,
-		Ears: &qcycore.EarCurves{Left: ear(l), Right: ear(r), MasterGain: snap.MasterGain},
-		Note: fmt.Sprintf("Resultado do teste auditivo de %s (volume do sink %d%%). Gravado nas duas orelhas (0x46/0x47, índice 11); %s.",
-			when, sinkVolume, state),
+		Ears: &qcycore.EarCurves{Left: ear(l), Right: ear(r), MasterGain: snap.MasterGain, Baseline: earsBaseline(baseline)},
+		Note: fmt.Sprintf("Resultado do teste auditivo de %s (volume do sink %d%%). Gravado nas duas orelhas (0x46/0x47, índice 11)%s; %s.",
+			when, sinkVolume, map[bool]string{true: "; baseline: zero", false: ""}[baseline == "zero"], state),
 		CreatedAt: now.UTC().Format(time.RFC3339),
 	}, nil
 }
 
+// earsBaseline normalises the baseline stored in a card: only "zero" is
+// recorded, absent means the factory baseline (the 8 bands as they are).
+func earsBaseline(b string) string {
+	if b == "zero" {
+		return "zero"
+	}
+	return ""
+}
+
 // recorder returns the callback that stores a written result in the library.
-func (env hearingEnv) recorder(l, r [hearing.Bands]int, sinkVolume int, fileTS string) func(float64, string) (bool, error) {
+func (env hearingEnv) recorder(l, r [hearing.Bands]int, sinkVolume int, fileTS, baseline string) func(float64, string) (bool, error) {
 	return func(master float64, state string) (bool, error) {
-		c, err := hearingResultCurve(l, r, master, env.now(), sinkVolume, fileTS, state)
+		c, err := hearingResultCurve(l, r, master, env.now(), sinkVolume, fileTS, state, baseline)
 		if err != nil {
 			return false, err
 		}
@@ -432,7 +467,11 @@ func hearingApplyEars(env hearingEnv, c qcycore.Curve, jsonOut bool, noSlot11 bo
 		return fmt.Errorf("library apply %s: %w", c.ID, err)
 	}
 	fmt.Fprintf(env.out, "applying %q to the earbuds as the hearing-test result (0x46/0x47, index 11)\nleft : %v\nright: %v\n", c.ID, l, r)
-	info, writes, err := hearingWriteGains(env, l, r, hearingApplyOpts{yes: true, noSlot11Backup: noSlot11}, nil)
+	baseline := c.Ears.Baseline
+	if baseline == "zero" {
+		fmt.Fprintln(env.out, "baseline zero (EXPERIMENT, not verified): 13 bands per ear, the 5 factory bands at gain 0 first")
+	}
+	info, writes, err := hearingWriteGains(env, l, r, hearingApplyOpts{yes: true, noSlot11Backup: noSlot11, baseline: baseline}, nil)
 	if jsonOut {
 		res := map[string]interface{}{"id": c.ID, "ears": true, "confirmed": err == nil, "backup": info.Path, "restore": info.Restore,
 			"slot11Backup": info.Slot11, "slot11Restore": info.Slot11Cmd, "writes": writes}
@@ -464,6 +503,8 @@ type hearingResultFile struct {
 type hearingApplyOpts struct {
 	yes, acceptFloor, deviceMode bool
 	noSlot11Backup               bool
+	// baseline "" / "factory" (default) or "zero" (EXPERIMENT).
+	baseline string
 }
 
 const (
@@ -611,7 +652,7 @@ func hearingApplyFile(env hearingEnv, path string, o hearingApplyOpts) (err erro
 		return fmt.Errorf("refused to write: %d band(s) were still heard at the lowest level, so the result is only relative; rerun the test with a lower --sink-volume, or pass --accept-floor; nothing was sent", nFloor)
 	}
 
-	record := env.recorder(l, r, f.SinkVolume, f.Timestamp)
+	record := env.recorder(l, r, f.SinkVolume, f.Timestamp, o.baseline)
 	_, _, err = hearingWriteGains(env, l, r, o, record)
 	return err
 }
@@ -698,19 +739,20 @@ func hearingWriteGains(env hearingEnv, l, r [hearing.Bands]int, o hearingApplyOp
 	if e := aborted(); e != nil {
 		return info, nil, e
 	}
-	writes, _, err = hearingCommit(out, link, l, r, restoreCmd, modeOff, record)
+	writes, _, err = hearingCommit(out, link, l, r, restoreCmd, modeOff, o.baseline, record)
 	return info, writes, err
 }
 
 // hearingApplyCmd is `qcyctl hearing apply <file> --yes [--accept-floor]
 // [--device-mode]`.
 func hearingApplyCmd(args []string, out io.Writer) error {
-	const usage = "usage: qcyctl hearing apply <result.json> --yes [--accept-floor] [--device-mode] [--no-slot11-backup]"
+	const usage = "usage: qcyctl hearing apply <result.json> --yes [--accept-floor] [--device-mode] [--no-slot11-backup] [--baseline factory|zero]"
 	fs := hearingFlags("apply")
 	yes := fs.Bool("yes", false, "")
 	accept := fs.Bool("accept-floor", false, "")
 	dev := fs.Bool("device-mode", false, "")
 	noS11 := fs.Bool("no-slot11-backup", false, "")
+	baseline := fs.String("baseline", "factory", "")
 	var path string
 	var rest []string
 	for _, a := range args {
@@ -723,7 +765,10 @@ func hearingApplyCmd(args []string, out io.Writer) error {
 	if err := fs.Parse(rest); err != nil || fs.NArg() != 0 || path == "" {
 		return errors.New(usage)
 	}
+	if *baseline != "factory" && *baseline != "zero" {
+		return fmt.Errorf("--baseline must be factory (default) or zero (experiment), got %q", *baseline)
+	}
 	env, done := liveHearingEnv(out)
 	defer done()
-	return hearingApplyFile(env, path, hearingApplyOpts{yes: *yes, acceptFloor: *accept, deviceMode: *dev, noSlot11Backup: *noS11})
+	return hearingApplyFile(env, path, hearingApplyOpts{yes: *yes, acceptFloor: *accept, deviceMode: *dev, noSlot11Backup: *noS11, baseline: *baseline})
 }

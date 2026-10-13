@@ -168,3 +168,31 @@ func TestHearingWriteClampsMasterGain(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestHearingWriteBaselineZeroSends13Bands(t *testing.T) {
+	d, hs := hearTestDaemon(t, true)
+	gains := [hearing.Bands]float64{3, 4, 2, 1, 0, -2, 0, 5}
+	mg := hearing.MasterGain(gains)
+	mg, _ = hearing.ClampMaster(mg)
+	want := hex.EncodeToString(hearing.WriteFrameBands(hearing.Left, hearing.ZeroBaselineBands(gains), mg))
+	v, err := d.handleRequest(request{Cmd: "hearingWrite", Args: map[string]interface{}{
+		"ear": "left", "gains": gains8(3, 4, 2, 1, 0, -2, 0, 5), "baseline": "zero", "confirm": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := v.(*hearingResult); r.Sent != want {
+		t.Fatalf("sent %s want %s", r.Sent, want)
+	}
+	if p := hs.sent(); len(p) != 1 || p[0][3] != 0x5e {
+		t.Fatalf("wire %x", p)
+	}
+	for _, bad := range []interface{}{"one", "ZERO", 1.0} {
+		if _, err := d.handleRequest(request{Cmd: "hearingWrite", Args: map[string]interface{}{
+			"ear": "left", "gains": gains8(0, 0, 0, 0, 0, 0, 0, 0), "baseline": bad, "confirm": true}}); err == nil {
+			t.Fatalf("baseline %v accepted", bad)
+		}
+	}
+	if n := len(hs.sent()); n != 1 {
+		t.Fatalf("%d frames", n)
+	}
+}

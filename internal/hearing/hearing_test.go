@@ -421,3 +421,35 @@ func TestFloorIgnoresNotHeardAboveTheRecordedGain(t *testing.T) {
 		t.Fatalf("bracketed: %d floor=%v", g, f)
 	}
 }
+
+func TestWriteFrameBandsZeroBaseline(t *testing.T) {
+	g := [Bands]float64{3, 4, 2, 1, 0, -2, 0, 5}
+	f := WriteFrameBands(Left, ZeroBaselineBands(g), -10)
+	// FF <bodyLen> 46 <paramLen> 0B <mg> 13 bands: paramLen 7*13+3 = 0x5E
+	if f[0] != 0xff || f[2] != 0x46 || f[3] != 0x5e || f[1] != 0x60 || len(f) != 4+0x5e || f[4] != 0x0b {
+		t.Fatalf("header % x len %d", f[:8], len(f))
+	}
+	body := f[7:] // after FF len cmd paramLen 0B mg(2)
+	for i, b := range FactoryBaseline {
+		o := i * 7
+		freq := int(body[o]) | int(body[o+1])<<8
+		gain := int(int16(uint16(body[o+2]) | uint16(body[o+3])<<8))
+		q := int(body[o+4]) | int(body[o+5])<<8
+		if freq != b.Freq || gain != 0 || q != b.Q || int(body[o+6]) != b.Type {
+			t.Fatalf("baseline band %d: %d Hz %d q %d", i, freq, gain, q)
+		}
+	}
+	// the 8 test bands follow, identical to the ones of the plain frame
+	plain := WriteFrame(Left, g, -10)
+	if string(f[7+5*7:]) != string(plain[7:]) {
+		t.Fatal("the test bands differ from WriteFrame's")
+	}
+	// the 8-band builder is the old frame
+	var eight []FrameBand
+	for i, v := range g {
+		eight = append(eight, FrameBand{Freq: Freqs[i], Gain: v, Q: 70, Type: 2})
+	}
+	if string(WriteFrameBands(Right, eight, -10)) != string(WriteFrame(Right, g, -10)) {
+		t.Fatal("WriteFrameBands(8 bands) != WriteFrame")
+	}
+}

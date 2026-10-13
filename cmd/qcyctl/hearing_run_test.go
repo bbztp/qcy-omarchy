@@ -139,6 +139,11 @@ type fakeLink struct {
 	haveLeft   bool
 	forceShown *[hearing.Bands]int // what the readback shows instead (a divergent left)
 	onWrite    func(n int, c *hearingCall)
+	// what the earbuds report after a "zero" baseline write: "" = 13 bands,
+	// prefix zeros (expected); "prefix18" = the factory baseline prefixed again
+	// (18 bands); "replaced" = 13 bands, factory prefix; "odd" = 12 bands.
+	zeroModel string
+	baselines []string
 }
 
 func (l *fakeLink) rec(s string) {
@@ -197,7 +202,10 @@ func (l *fakeLink) hearingMode(on bool) (*hearingCall, error) {
 	}
 	return &hearingCall{Sent: "ff0345010x"}, nil
 }
-func (l *fakeLink) hearingWrite(ear hearing.Ear, g, o [hearing.Bands]int) (*hearingCall, error) {
+func (l *fakeLink) hearingWrite(ear hearing.Ear, g, o [hearing.Bands]int, baseline string) (*hearingCall, error) {
+	l.mu.Lock()
+	l.baselines = append(l.baselines, baseline)
+	l.mu.Unlock()
 	if err := l.useClosed(); err != nil {
 		return nil, err
 	}
@@ -232,6 +240,9 @@ func (l *fakeLink) hearingWrite(ear hearing.Ear, g, o [hearing.Bands]int) (*hear
 	c := &hearingCall{Sent: "ff", Ack: l.ack, MasterGain: &mg}
 	if !l.noReadback {
 		pl := deviceReadback(shown, mg)
+		if baseline == "zero" {
+			pl = deviceReadbackZero(shown, mg, l.zeroModel)
+		}
 		if l.badReadback {
 			pl = hex.EncodeToString(make([]byte, 143))
 		}
@@ -246,6 +257,47 @@ func (l *fakeLink) hearingWrite(ear hearing.Ear, g, o [hearing.Bands]int) (*hear
 		l.onWrite(n, c)
 	}
 	return c, nil
+}
+
+// deviceReadbackZero models the "zero baseline" experiment's possible outcomes.
+func deviceReadbackZero(g [hearing.Bands]int, master float64, model string) string {
+	b := []byte{11, 0, 0}
+	m := int16(master * 100)
+	b[1], b[2] = byte(m), byte(uint16(m)>>8)
+	put := func(freq int, gainCenti int, q int) {
+		b = append(b, byte(freq), byte(freq>>8), byte(int16(gainCenti)), byte(uint16(int16(gainCenti))>>8), byte(q), byte(q>>8), 2)
+	}
+	factory := []struct{ f, g, q int }{{50, 100, 60}, {200, -650, 60}, {900, -100, 70}, {2800, 200, 120}, {8000, -700, 350}}
+	zeros := func() {
+		for _, f := range factory {
+			put(f.f, 0, f.q)
+		}
+	}
+	prefix := func() {
+		for _, f := range factory {
+			put(f.f, f.g, f.q)
+		}
+	}
+	switch model {
+	case "prefix18":
+		prefix()
+		zeros()
+	case "replaced":
+		prefix()
+	case "odd":
+		zeros()
+		g = [hearing.Bands]int{} // overwritten below: only 7 test bands
+	default:
+		zeros()
+	}
+	n := hearing.Bands
+	if model == "odd" {
+		n = 7
+	}
+	for i := 0; i < n; i++ {
+		put(hearing.Freqs[i], g[i]*100, 70)
+	}
+	return hex.EncodeToString(b)
 }
 
 // deviceReadback is the 0x22 payload measured after 0x46/0x47 index 11: slot
