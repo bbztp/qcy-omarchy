@@ -838,6 +838,8 @@ func main() {
 		err = cmdI18n(args)
 	case "model":
 		err = cmdModel(args)
+	case "hearing":
+		err = cmdHearing(args)
 	default:
 		usage()
 		os.Exit(2)
@@ -876,6 +878,7 @@ func usage() {
   qcyctl i18n <list|bundle|template|set> ...   (plugin languages: list [--json], bundle [<lang>] [--json], template, set <lang|auto>; offline)
   qcyctl model image [--vendor N] [--color <name|index>] [--refresh] [--no-network] [--json]   (the earbuds' images, downloaded once from the QCY CDN into the cache)
   qcyctl model images <on|off|status> [--json]   (allow or forbid those downloads)
+  qcyctl hearing <plan|result|run --dry-run>   (hearing test phase 1: offline plan, curve, master gain and frame bytes; sends nothing)
   qcyctl keys get [seconds]
   qcyctl keys set <keyId:funId> [<keyId:funId> ...] [seconds]
 All setters read back by querying the opcode (FF 03 FE 01 <opcode>) and fail non-zero on mismatch.`)
