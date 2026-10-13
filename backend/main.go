@@ -835,6 +835,8 @@ func main() {
 		err = cmdLibrary(args)
 	case "i18n":
 		err = cmdI18n(args)
+	case "model":
+		err = cmdModel(args)
 	default:
 		usage()
 		os.Exit(2)
@@ -871,6 +873,8 @@ func usage() {
         (-12..+12; only the master gain changes; --full-length is needed when the active slot has bands 10-19, e.g. slot 11)
   qcyctl library <list|show|save|delete|export|import|seed|import-device|apply|compose> ...   (curve library; see README)
   qcyctl i18n <list|bundle|template|set> ...   (plugin languages: list [--json], bundle [<lang>] [--json], template, set <lang|auto>; offline)
+  qcyctl model image [--vendor N] [--color <name|index>] [--refresh] [--no-network] [--json]   (the earbuds' images, downloaded once from the QCY CDN into the cache)
+  qcyctl model images <on|off|status> [--json]   (allow or forbid those downloads)
   qcyctl keys get [seconds]
   qcyctl keys set <keyId:funId> [<keyId:funId> ...] [seconds]
 All setters read back by querying the opcode (FF 03 FE 01 <opcode>) and fail non-zero on mismatch.`)

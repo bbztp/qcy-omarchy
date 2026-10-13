@@ -4,13 +4,17 @@
 Usage: python3 scripts/gen_models.py [product_list.json] [panels_dir] [out.json]
 
 Inputs (not in the repo): the product list (earphones[]) and one
-product/findControlPanels reply per vendorId. Images, HTML, URLs, pairing
-texts and colours are dropped. Output is deterministic.
+product/findControlPanels reply per vendorId. HTML, pairing texts and
+other URLs are dropped; only product image URLs on img.qcymall.com are kept
+(per colour, plus the product's default set). Output is deterministic.
 """
 import glob
 import json
 import os
 import sys
+from urllib.parse import urlsplit
+
+IMAGE_HOST = "img.qcymall.com"
 
 HOME = os.path.expanduser("~")
 REF = os.environ.get("QCY_PANELS_DIR", os.path.join(HOME, "qcy-panels"))
@@ -41,6 +45,39 @@ def inum(v, default=None):
     if n is None or isinstance(n, float):
         return default
     return n
+
+
+def img(v):
+    """An http(s) URL on the QCY image CDN, else None."""
+    if not isinstance(v, str):
+        return None
+    v = v.strip()
+    try:
+        u = urlsplit(v)
+        host = u.hostname
+        u.port  # raises on a malformed port
+    except ValueError:
+        return None
+    if u.scheme not in ("http", "https") or host != IMAGE_HOST or u.username or u.password:
+        return None
+    return v
+
+
+def image_set(d):
+    return {"icon": img(d.get("icon")), "left": img(d.get("leftImg")),
+            "right": img(d.get("rightImg")), "box": img(d.get("boxImg"))}
+
+
+def colors(e):
+    out = []
+    for c in e.get("colors") or []:
+        if not isinstance(c, dict):
+            continue
+        idx = inum(c.get("colorIndex", c.get("colorlndex")))
+        entry = {"name": str(c.get("name", "")), "index": idx, "hide": bool(num(c.get("hide"), 0))}
+        entry.update(image_set(c))
+        out.append(entry)
+    return out
 
 
 def csv(v):
@@ -218,6 +255,8 @@ def main(argv):
                 "hasSwitch": bool(num(e.get("hasSwitch"), 0)),
                 "firmware": None,
                 "panel": None,
+                "images": image_set(e),
+                "colors": colors(e),
             }
     for path in sorted(glob.glob(os.path.join(panels, "*.json"))):
         with open(path, encoding="utf-8") as f:
@@ -229,7 +268,8 @@ def main(argv):
             continue
         m = models.setdefault(str(vid), {
             "title": str(d.get("_title", "")), "subTitle": "", "family": "",
-            "bluetoothVer": 0, "hasSwitch": False, "firmware": None, "panel": None})
+            "bluetoothVer": 0, "hasSwitch": False, "firmware": None, "panel": None,
+            "images": {"icon": None, "left": None, "right": None, "box": None}, "colors": []})
         data = d.get("data")
         if isinstance(data, dict):
             m["firmware"] = {"gte": data.get("firmwareversionGte"), "lte": data.get("firmwareversionLte")}

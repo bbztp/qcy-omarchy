@@ -1,6 +1,9 @@
 package models
 
-import "testing"
+import (
+	"net/url"
+	"testing"
+)
 
 func TestSnapshot(t *testing.T) {
 	if Count() <= 150 {
@@ -54,5 +57,54 @@ func TestSnapshot(t *testing.T) {
 	}
 	if _, ok := Lookup(1); ok {
 		t.Error("vendor 1 must not resolve")
+	}
+}
+
+func TestN70Colors(t *testing.T) {
+	for _, v := range []uint16{23872, 23877} {
+		p, ok := Lookup(v)
+		if !ok {
+			t.Fatalf("%d missing", v)
+		}
+		if len(p.Colors) != 3 {
+			t.Fatalf("%d: %d colors", v, len(p.Colors))
+		}
+		names := []string{"Black", "Titanium", "Purple"}
+		for i, c := range p.Colors {
+			if c.Name != names[i] {
+				t.Errorf("%d color %d name %q", v, i, c.Name)
+			}
+			if c.Index == nil || *c.Index != i {
+				t.Errorf("%d color %d index %v", v, i, c.Index)
+			}
+			if c.Left == "" || c.Right == "" || c.Box == "" || c.Icon == "" {
+				t.Errorf("%d color %d images %+v", v, i, c.Images)
+			}
+		}
+		if p.Images.Left == "" {
+			t.Errorf("%d: no default images", v)
+		}
+	}
+}
+
+func TestImageURLsAreOnTheCDN(t *testing.T) {
+	check := func(s string) {
+		if s == "" {
+			return
+		}
+		u, err := url.Parse(s)
+		if err != nil || u.Hostname() != "img.qcymall.com" || (u.Scheme != "http" && u.Scheme != "https") {
+			t.Errorf("bad image URL %q", s)
+		}
+	}
+	for _, p := range All() {
+		for _, s := range []string{p.Images.Icon, p.Images.Left, p.Images.Right, p.Images.Box} {
+			check(s)
+		}
+		for _, c := range p.Colors {
+			for _, s := range []string{c.Icon, c.Left, c.Right, c.Box} {
+				check(s)
+			}
+		}
 	}
 }

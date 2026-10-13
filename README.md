@@ -108,6 +108,26 @@ warning on stderr. A file named `pt-BR.json` overrides entries of the shipped
 one; `pt.json` is the fallback for any `pt-*`. User files live outside the
 plugin directory, so reinstalling the plugin keeps them.
 
+## Device images
+
+The panel can show your earbuds (left, right, case, icon) in your colour. The
+images are not part of this repository: `qcyctl model image` downloads them on
+demand, the first time they are needed, from QCY's image server
+(`img.qcymall.com`, the same files the QCY app uses; the URLs come from the
+product list embedded in the backend). Only that host is ever contacted, files
+are limited to 2 MiB and checked to be WebP/PNG before they are saved.
+
+They are kept in `~/.cache/qcy-omarchy/images/<vendorId>/<colour>/`
+(`$XDG_CACHE_HOME` is honoured) and are never fetched twice; `--refresh`
+downloads them again. The colour comes from `--color`, or from the file
+`~/.config/qcy-omarchy/color` (a colour name or index, e.g. `Purple` or `2`),
+otherwise it is the product's default colour; the colour the earbuds advertise
+is not used because the scanner does not report it reliably.
+
+To stop all downloads run `qcyctl model images off` (`on` re-enables,
+`status` shows); the panel then uses only what is already cached, or its drawn
+icons. Delete the cache directory to remove the files.
+
 ## Settings
 
 Configurable per widget in `shell.json` (or via the shell's settings UI):

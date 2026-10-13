@@ -1,12 +1,19 @@
 {
  "16737": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "2,9",
   "firmware": {
    "gte": "0.0.0",
    "lte": "1.6.3"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt22_black.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt22_black.png",
+   "left": "http://img.qcymall.com/app_qcy_qt22_black.png",
+   "right": "http://img.qcymall.com/app_qcy_qt22_black.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -706,12 +713,19 @@
  },
  "16738": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt22_black.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt22_black.png",
+   "left": "http://img.qcymall.com/app_qcy_qt22_black.png",
+   "right": "http://img.qcymall.com/app_qcy_qt22_black.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -1411,12 +1425,19 @@
  },
  "16753": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "2,0",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_h2_headphonesapp_black.png",
+   "icon": "http://img.qcymall.com/app_qcy_h2_headphonesapp_black.png",
+   "left": "http://img.qcymall.com/app_qcy_h2_headphonesapp_black.png",
+   "right": "http://img.qcymall.com/app_qcy_h2_headphonesapp_black.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -1944,12 +1965,19 @@
  },
  "16754": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "2",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_h2pro.png",
+   "icon": "http://img.qcymall.com/app_qcy_h2pro_white.png",
+   "left": "http://img.qcymall.com/app_qcy_h2pro.png",
+   "right": "http://img.qcymall.com/app_qcy_h2pro.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -2716,12 +2744,19 @@
  },
  "16755": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "2,4,5",
   "firmware": {
    "gte": "0.0.0.0",
    "lte": "0.8.0.7999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_h3_headphones.png",
+   "icon": "http://img.qcymall.com/app_qcy_h3_headphonesapp_black.png",
+   "left": "http://img.qcymall.com/app_qcy_h3_headphones.png",
+   "right": "http://img.qcymall.com/app_qcy_h3_headphones.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -3369,12 +3404,19 @@
  },
  "16756": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "2",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_h2pro.png",
+   "icon": "http://img.qcymall.com/app_qcy_h2pro_white.png",
+   "left": "http://img.qcymall.com/app_qcy_h2pro.png",
+   "right": "http://img.qcymall.com/app_qcy_h2pro.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -4141,12 +4183,19 @@
  },
  "16757": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "2,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_h3_headphones.png",
+   "icon": "http://img.qcymall.com/app_qcy_h3_headphonesapp_black.png",
+   "left": "http://img.qcymall.com/app_qcy_h3_headphones.png",
+   "right": "http://img.qcymall.com/app_qcy_h3_headphones.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -4794,12 +4843,19 @@
  },
  "16758": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "2,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/h3/app_qcy_h3_lite_headphones.webp",
+   "icon": "http://img.qcymall.com/h3/app_qcy_h3_lite_headphones.webp",
+   "left": "http://img.qcymall.com/h3/app_qcy_h3_lite_headphones.webp",
+   "right": "http://img.qcymall.com/h3/app_qcy_h3_lite_headphones.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -5523,12 +5579,65 @@
  },
  "16759": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png"
+   },
+   {
+    "box": "http://img.qcymall.com/h3pro/white/h3pro_white.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h3pro/white/h3pro_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h3pro/white/h3pro_white.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/h3pro/white/h3pro_white.png"
+   },
+   {
+    "box": "http://img.qcymall.com/h3pro/purple/qcyapp_h3pro_purple.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h3pro/purple/qcyapp_h3pro_purple.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h3pro/purple/qcyapp_h3pro_purple.png",
+    "name": "Purple",
+    "right": "http://img.qcymall.com/h3pro/purple/qcyapp_h3pro_purple.png"
+   },
+   {
+    "box": "http://img.qcymall.com/h3pro/green/h3pro_green.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h3pro/green/h3pro_green.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h3pro/green/h3pro_green.png",
+    "name": "Green",
+    "right": "http://img.qcymall.com/h3pro/green/h3pro_green.png"
+   },
+   {
+    "box": "http://img.qcymall.com/h3pro/blue/h3problue.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h3pro/blue/h3problue.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h3pro/blue/h3problue.png",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/h3pro/blue/h3problue.png"
+   }
+  ],
   "family": "2,4",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png",
+   "icon": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png",
+   "left": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png",
+   "right": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -6397,12 +6506,19 @@
  },
  "16760": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "2,4,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_h3_headphones.png",
+   "icon": "http://img.qcymall.com/app_qcy_h3_headphonesapp_black.png",
+   "left": "http://img.qcymall.com/app_qcy_h3_headphones.png",
+   "right": "http://img.qcymall.com/app_qcy_h3_headphones.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -7071,12 +7187,47 @@
  },
  "16761": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/h7/black/app_qcy_h7_black.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h7/black/app_qcy_h7_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h7/black/app_qcy_h7_black.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/h7/black/app_qcy_h7_black.png"
+   },
+   {
+    "box": "http://img.qcymall.com/h7/white/app_qcy_h7_white.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h7/white/app_qcy_h7_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h7/white/app_qcy_h7_white.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/h7/white/app_qcy_h7_white.png"
+   },
+   {
+    "box": "http://img.qcymall.com/h7/browm/app_qcy_h7_brown.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h7/browm/app_qcy_h7_brown.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h7/browm/app_qcy_h7_brown.png",
+    "name": "Brown",
+    "right": "http://img.qcymall.com/h7/browm/app_qcy_h7_brown.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/h7/black/app_qcy_h7_black.png",
+   "icon": "http://img.qcymall.com/h7/black/app_qcy_h7_black.png",
+   "left": "http://img.qcymall.com/h7/black/app_qcy_h7_black.png",
+   "right": "http://img.qcymall.com/h7/black/app_qcy_h7_black.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -7676,12 +7827,19 @@
  },
  "16762": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "2,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/h3/app_qcy_h3_lite_headphones.webp",
+   "icon": "http://img.qcymall.com/h3/app_qcy_h3_lite_headphones.webp",
+   "left": "http://img.qcymall.com/h3/app_qcy_h3_lite_headphones.webp",
+   "right": "http://img.qcymall.com/h3/app_qcy_h3_lite_headphones.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -8405,12 +8563,38 @@
  },
  "16763": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png"
+   },
+   {
+    "box": "http://img.qcymall.com/h3pro/white/h3pro_white.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h3pro/white/h3pro_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h3pro/white/h3pro_white.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/h3pro/white/h3pro_white.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png",
+   "icon": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png",
+   "left": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png",
+   "right": "http://img.qcymall.com/h3pro/black/qcyapp_h3pro_black.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -9279,12 +9463,47 @@
  },
  "16764": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/h3s/white/h3swhite1.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h3s/white/h3swhite1.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/h3s/white/h3swhite1.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/h3s/white/h3swhite1.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/h3s/black/h3sblack1.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h3s/black/h3sblack1.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/h3s/black/h3sblack1.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/h3s/black/h3sblack1.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/h3s/gray/h3sgray1.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h3s/gray/h3sgray1.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/h3s/gray/h3sgray1.webp",
+    "name": "Gray",
+    "right": "http://img.qcymall.com/h3s/gray/h3sgray1.webp"
+   }
+  ],
   "family": "2,4",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/h3s/white/h3swhite1.webp",
+   "icon": "http://img.qcymall.com/h3s/white/h3swhite1.webp",
+   "left": "http://img.qcymall.com/h3s/white/h3swhite1.webp",
+   "right": "http://img.qcymall.com/h3s/white/h3swhite1.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -10101,12 +10320,38 @@
  },
  "16765": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/h3s/white/h3swhite1.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h3s/white/h3swhite1.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/h3s/white/h3swhite1.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/h3s/white/h3swhite1.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/h3s/black/h3sblack1.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h3s/black/h3sblack1.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/h3s/black/h3sblack1.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/h3s/black/h3sblack1.webp"
+   }
+  ],
   "family": "2,4",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/h3s/white/h3swhite1.webp",
+   "icon": "http://img.qcymall.com/h3s/white/h3swhite1.webp",
+   "left": "http://img.qcymall.com/h3s/white/h3swhite1.webp",
+   "right": "http://img.qcymall.com/h3s/white/h3swhite1.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -10923,12 +11168,19 @@
  },
  "16767": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "2,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_h3_headphones.png",
+   "icon": "http://img.qcymall.com/app_qcy_h3_headphonesapp_black.png",
+   "left": "http://img.qcymall.com/app_qcy_h3_headphones.png",
+   "right": "http://img.qcymall.com/app_qcy_h3_headphones.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -11576,12 +11828,38 @@
  },
  "16818": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/h4gm/black/H4GM_black.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h4gm/black/H4GM_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h4gm/black/H4GM_black.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/h4gm/black/H4GM_black.png"
+   },
+   {
+    "box": "http://img.qcymall.com/h4gm/white/H4GM_white.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h4gm/white/H4GM_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h4gm/white/H4GM_white.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/h4gm/white/H4GM_white.png"
+   }
+  ],
   "family": "2,4",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/h4gm/black/H4GM_black.png",
+   "icon": "http://img.qcymall.com/h4gm/black/H4GM_black.png",
+   "left": "http://img.qcymall.com/h4gm/black/H4GM_black.png",
+   "right": "http://img.qcymall.com/h4gm/black/H4GM_black.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -12208,12 +12486,38 @@
  },
  "16821": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/h8gm/silverblack/H8GMSB_1.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h8gm/silverblack/H8GMSB_1.webp",
+    "index": 0,
+    "left": "http://img.qcymall.com/h8gm/silverblack/H8GMSB_1.webp",
+    "name": "",
+    "right": "http://img.qcymall.com/h8gm/silverblack/H8GMSB_1.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/h8gm/redblack/H8GMRB_1.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h8gm/redblack/H8GMRB_1.webp",
+    "index": 1,
+    "left": "http://img.qcymall.com/h8gm/redblack/H8GMRB_1.webp",
+    "name": "",
+    "right": "http://img.qcymall.com/h8gm/redblack/H8GMRB_1.webp"
+   }
+  ],
   "family": "2,4",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/h8gm/silverblack/H8GMSB_1.webp",
+   "icon": "http://img.qcymall.com/h8gm/silverblack/H8GMSB_1.webp",
+   "left": "http://img.qcymall.com/h8gm/silverblack/H8GMSB_1.webp",
+   "right": "http://img.qcymall.com/h8gm/silverblack/H8GMSB_1.webp"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -12906,12 +13210,38 @@
  },
  "16822": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp",
+    "index": 1,
+    "left": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/h2slite/black/app_qcy_h2slite_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h2slite/black/app_qcy_h2slite_black.webp",
+    "index": 0,
+    "left": "http://img.qcymall.com/h2slite/black/app_qcy_h2slite_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/h2slite/black/app_qcy_h2slite_black.webp"
+   }
+  ],
   "family": "2,4",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp",
+   "icon": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp",
+   "left": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp",
+   "right": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -13604,21 +13934,54 @@
  },
  "16823": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "2,4",
   "firmware": null,
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/H5GM_%20black.png",
+   "icon": "http://img.qcymall.com/H5GM_%20black.png",
+   "left": "http://img.qcymall.com/H5GM_%20black.png",
+   "right": "http://img.qcymall.com/H5GM_%20black.png"
+  },
   "panel": null,
   "subTitle": "HEROAD GT2",
   "title": "HEROAD GT2"
  },
  "16824": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp",
+    "index": 1,
+    "left": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/h2slite/black/app_qcy_h2slite_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h2slite/black/app_qcy_h2slite_black.webp",
+    "index": 0,
+    "left": "http://img.qcymall.com/h2slite/black/app_qcy_h2slite_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/h2slite/black/app_qcy_h2slite_black.webp"
+   }
+  ],
   "family": "2,4",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp",
+   "icon": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp",
+   "left": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp",
+   "right": "http://img.qcymall.com/h2slite/white/app_qcy_h2slite_white.webp"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -14311,12 +14674,19 @@
  },
  "16849": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "2,4,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_h4_headphones_v2.png",
+   "icon": "http://img.qcymall.com/app_qcy_h4_headphonesapp_black_v2.png",
+   "left": "http://img.qcymall.com/app_qcy_h4_headphones_v2.png",
+   "right": "http://img.qcymall.com/app_qcy_h4_headphones_v2.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -14954,12 +15324,19 @@
  },
  "16850": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1,2",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_h4_headphones.png",
+   "icon": "http://img.qcymall.com/app_qcy_h4_headphonesapp_black.png",
+   "left": "http://img.qcymall.com/app_qcy_h4_headphones.png",
+   "right": "http://img.qcymall.com/app_qcy_h4_headphones.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -15597,12 +15974,19 @@
  },
  "18289": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_dt10_box.png",
+   "icon": "http://img.qcymall.com/app_dt10_white.png",
+   "left": "http://img.qcymall.com/app_dt10_left.png",
+   "right": "http://img.qcymall.com/app_dt10_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -16199,12 +16583,19 @@
  },
  "18290": {
   "bluetoothVer": 3,
+  "colors": [],
   "family": "4,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht06_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_ht06_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht06_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht06_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -16801,12 +17192,19 @@
  },
  "18293": {
   "bluetoothVer": 3,
+  "colors": [],
   "family": "3,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt15_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt15_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt15_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt15_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -17397,12 +17795,19 @@
  },
  "18294": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht09_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_ht09_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht09_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht09_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -17881,12 +18286,19 @@
  },
  "18295": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht09_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_ht09_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht09_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht09_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -18365,12 +18777,19 @@
  },
  "18296": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "9",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/qt35/black/qt35_icon.webp",
+   "icon": "http://img.qcymall.com/qt35/black/qt35_b.webp",
+   "left": "http://img.qcymall.com/qt35/black/left.webp",
+   "right": "http://img.qcymall.com/qt35/black/right.webp"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -18919,12 +19338,56 @@
  },
  "18297": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht13/black/app_qcy_ht13_box_black.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht13/black/app_qcy_ht13_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht13/black/app_qcy_ht13_left_black.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht13/black/app_qcy_ht13_right_black.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht13/white/app_qcy_ht13_box_white.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht13/white/app_qcy_ht13_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht13/white/app_qcy_ht13_left_white.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht13/white/app_qcy_ht13_right_white.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht13/blue/app_qcy_ht13_box_blue.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht13/blue/app_qcy_ht13_blue.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht13/blue/app_qcy_ht13_left_blue.png",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/ht13/blue/app_qcy_ht13_right_blue.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht13/green/app_qcy_ht13_box_green.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht13/green/app_qcy_ht13_green.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht13/green/app_qcy_ht13_left_green.png",
+    "name": "Green",
+    "right": "http://img.qcymall.com/ht13/green/app_qcy_ht13_right_green.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht13/blue/app_qcy_ht13_box_blue.png",
+   "icon": "http://img.qcymall.com/ht13/blue/app_qcy_ht13_blue.png",
+   "left": "http://img.qcymall.com/ht13/blue/app_qcy_ht13_left_blue.png",
+   "right": "http://img.qcymall.com/ht13/blue/app_qcy_ht13_right_blue.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -19624,12 +20087,38 @@
  },
  "18298": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht12/black/ht12black_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht12/black/ht12black_icon.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht12/black/ht12black_l.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht12/black/ht12black_r.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht12/white/ht12white_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht12/white/ht12white_icon.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht12/white/ht12white_l.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht12/white/ht12white_r.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0.0",
    "lte": "0.5.2.0"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht12/black/ht12black_box.png",
+   "icon": "http://img.qcymall.com/ht12/black/ht12black_icon.png",
+   "left": "http://img.qcymall.com/ht12/black/ht12black_l.png",
+   "right": "http://img.qcymall.com/ht12/black/ht12black_r.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -20097,12 +20586,56 @@
  },
  "18299": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ct01/black/app_qcy_ct01_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct01/black/app_qcy_ct01_black.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ct01/black/app_qcy_ct01_left_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ct01/black/app_qcy_ct01_right_black.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ct01/white/app_qcy_ct01_box_white.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct01/white/app_qcy_ct01_white.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ct01/white/app_qcy_ct01_left_white.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/ct01/white/app_qcy_ct01_right_white.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ct01/blue/app_qcy_ct01_box_blue.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct01/blue/app_qcy_ct01_blue.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ct01/blue/app_qcy_ct01_left_blue.webp",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/ct01/blue/app_qcy_ct01_right_blue.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ct01/purple/app_qcy_ct01_box_blue.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct01/purple/app_qcy_ct01_purple.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ct01/purple/app_qcy_ct01_left_blue.webp",
+    "name": "Purple",
+    "right": "http://img.qcymall.com/ct01/purple/app_qcy_ct01_right_blue.webp"
+   }
+  ],
   "family": "9",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ct01/black/app_qcy_ct01_box_black.webp",
+   "icon": "http://img.qcymall.com/ct01/black/app_qcy_ct01_black.webp",
+   "left": "http://img.qcymall.com/ct01/black/app_qcy_ct01_left_black.webp",
+   "right": "http://img.qcymall.com/ct01/black/app_qcy_ct01_right_black.webp"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -20592,12 +21125,19 @@
  },
  "18300": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht12/app_qcy_ht12_box.png",
+   "icon": "http://img.qcymall.com/ht12/app_qcy_ht12_black.png",
+   "left": "http://img.qcymall.com/ht12/app_qcy_ht12_left.png",
+   "right": "http://img.qcymall.com/ht12/app_qcy_ht12_right.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -21065,12 +21605,29 @@
  },
  "18301": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ct01/black/qcy_app_ct01_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct01/black/qcy_app_ct01.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct01/black/qcy_app_ct01_left.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ct01/black/qcy_app_ct01_right.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ct01/black/qcy_app_ct01_box.png",
+   "icon": "http://img.qcymall.com/ct01/black/qcy_app_ct01.png",
+   "left": "http://img.qcymall.com/ct01/black/qcy_app_ct01_left.png",
+   "right": "http://img.qcymall.com/ct01/black/qcy_app_ct01_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -21560,12 +22117,19 @@
  },
  "18302": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht13/white/app_qcy_ht13_box_white.png",
+   "icon": "http://img.qcymall.com/ht13/white/app_qcy_ht13_white.png",
+   "left": "http://img.qcymall.com/ht13/white/app_qcy_ht13_left_white.png",
+   "right": "http://img.qcymall.com/ht13/white/app_qcy_ht13_right_white.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -22265,12 +22829,19 @@
  },
  "18303": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "9",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/qt35/white/app_qcy_qt35_box_white.webp",
+   "icon": "http://img.qcymall.com/qt35/white/app_qcy_qt35_white.webp",
+   "left": "http://img.qcymall.com/qt35/white/app_qcy_qt35_left_white.webp",
+   "right": "http://img.qcymall.com/qt35/white/app_qcy_qt35_right_white.webp"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -22819,12 +23390,19 @@
  },
  "18801": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt17_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt17_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt17_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt17_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -23351,12 +23929,19 @@
  },
  "18802": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt17_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt17_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt17_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt17_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -23883,12 +24468,19 @@
  },
  "18803": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_t1d_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_t1d_white.png",
+   "left": "http://img.qcymall.com/app_qcy_t1d_left.png",
+   "right": "http://img.qcymall.com/app_qcy_t1d_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -24441,12 +25033,19 @@
  },
  "18804": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt19_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt19_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt19_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt19_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -25016,12 +25615,19 @@
  },
  "18805": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_t2d_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_t2d_white.png",
+   "left": "http://img.qcymall.com/app_qcy_t2d_left.png",
+   "right": "http://img.qcymall.com/app_qcy_t2d_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -25574,12 +26180,19 @@
  },
  "18806": {
   "bluetoothVer": 3,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt20_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt20_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt20_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt20_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -26139,12 +26752,19 @@
  },
  "18808": {
   "bluetoothVer": 3,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_dt08_box.png",
+   "icon": "http://img.qcymall.com/app_dt08_white.png",
+   "left": "http://img.qcymall.com/app_dt08_left.png",
+   "right": "http://img.qcymall.com/app_dt08_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -26704,12 +27324,19 @@
  },
  "18809": {
   "bluetoothVer": 3,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt21_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt21_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt21_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt21_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -27290,12 +27917,19 @@
  },
  "18810": {
   "bluetoothVer": 3,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_dt08_box.png",
+   "icon": "http://img.qcymall.com/app_dt08_white.png",
+   "left": "http://img.qcymall.com/app_dt08_left.png",
+   "right": "http://img.qcymall.com/app_dt08_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -27855,12 +28489,19 @@
  },
  "18811": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_dt08_box.png",
+   "icon": "http://img.qcymall.com/app_dt08_white.png",
+   "left": "http://img.qcymall.com/app_dt08_left.png",
+   "right": "http://img.qcymall.com/app_dt08_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -28420,21 +29061,35 @@
  },
  "18812": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": null,
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_dt08_box.png",
+   "icon": "http://img.qcymall.com/app_dt08_white.png",
+   "left": "http://img.qcymall.com/app_dt08_left.png",
+   "right": "http://img.qcymall.com/app_dt08_right.png"
+  },
   "panel": null,
   "subTitle": "QCY Ailypods Neo",
   "title": "QCY Ailypods Neo"
  },
  "18813": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_t1d_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_t1d_white.png",
+   "left": "http://img.qcymall.com/app_qcy_t1d_left.png",
+   "right": "http://img.qcymall.com/app_qcy_t1d_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -28987,21 +29642,35 @@
  },
  "18814": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": null,
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_dt08_box.png",
+   "icon": "http://img.qcymall.com/app_dt08_white.png",
+   "left": "http://img.qcymall.com/app_dt08_left.png",
+   "right": "http://img.qcymall.com/app_dt08_right.png"
+  },
   "panel": null,
   "subTitle": "QCY Ailypods Neo",
   "title": "QCY Ailypods Neo"
  },
  "18815": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "0.1.0.6"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/t26/app_qcy_qt26_box.png",
+   "icon": "http://img.qcymall.com/t26/app_qcy_qt26_white.png",
+   "left": "http://img.qcymall.com/t26/app_qcy_qt26_left.png",
+   "right": "http://img.qcymall.com/t26/app_qcy_qt26_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -29584,12 +30253,19 @@
  },
  "18863": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_t2d_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_t2d_white.png",
+   "left": "http://img.qcymall.com/app_qcy_t2d_left.png",
+   "right": "http://img.qcymall.com/app_qcy_t2d_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -29948,12 +30624,19 @@
  },
  "18961": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "1.0.97"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt18_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt18_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt18_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt18_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -30289,12 +30972,19 @@
  },
  "19057": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T5_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T5_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T5_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T5_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -30821,12 +31511,19 @@
  },
  "19058": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt12_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_QT12_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt12_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt12_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -31353,12 +32050,19 @@
  },
  "19059": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt13_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt13_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt13_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt13_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -31928,12 +32632,19 @@
  },
  "19060": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T7_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T7S_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T7_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T7_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -32465,12 +33176,19 @@
  },
  "19061": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T8_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T8_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T8_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T8_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -33002,12 +33720,19 @@
  },
  "19063": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T5_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T5_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T5_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T5_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -33534,12 +34259,19 @@
  },
  "19064": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T8_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T8_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T8_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T8_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -34071,12 +34803,19 @@
  },
  "19065": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T8_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T8_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T8_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T8_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -34608,12 +35347,19 @@
  },
  "19067": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T8_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T8_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T8_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T8_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -35145,12 +35891,19 @@
  },
  "19068": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt13_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt13_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt13_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt13_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -35720,12 +36473,19 @@
  },
  "19069": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt13_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt13_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt13_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt13_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -36295,12 +37055,56 @@
  },
  "19071": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/qt41/black/app_qcy_qt41_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt41/black/app_qcy_qt41.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt41/black/app_qcy_qt41_left.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/qt41/black/app_qcy_qt41_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/qt41/white/app_qcy_qt41white_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt41/white/app_qcy_qt41white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt41/white/app_qcy_qt41white_left.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/qt41/white/app_qcy_qt41white_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/qt41/white/app_qcy_qt41pink_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt41/white/app_qcy_qt41pink.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt41/white/app_qcy_qt41pink_left.png",
+    "name": "Pink",
+    "right": "http://img.qcymall.com/qt41/white/app_qcy_qt41pink_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/qt41/white/app_qcy_qt41blue_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt41/white/app_qcy_qt41blue.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt41/white/app_qcy_qt41blue_left.png",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/qt41/white/app_qcy_qt41blue_right.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/qt41/black/app_qcy_qt41_box.png",
+   "icon": "http://img.qcymall.com/qt41/black/app_qcy_qt41.png",
+   "left": "http://img.qcymall.com/qt41/black/app_qcy_qt41_left.png",
+   "right": "http://img.qcymall.com/qt41/black/app_qcy_qt41_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -36902,12 +37706,19 @@
  },
  "19218": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt16_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt16_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt16_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt16_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -37507,12 +38318,19 @@
  },
  "19219": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt17s_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt17s_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt17s_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt17s_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -38183,21 +39001,35 @@
  },
  "19220": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": null,
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt18_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt18_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt18_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt18_right.png"
+  },
   "panel": null,
   "subTitle": "QCY-T18",
   "title": "T18"
  },
  "19221": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt17s_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt17s_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt17s_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt17s_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -38868,12 +39700,19 @@
  },
  "19313": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T7_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T7S_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T7_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T7_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -39405,12 +40244,19 @@
  },
  "19393": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht03_box_.png",
+   "icon": "http://img.qcymall.com/app_qcy_ht03_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht03_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht03_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -40131,12 +40977,19 @@
  },
  "19394": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht02_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_ht02_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht02_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht02_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -40812,12 +41665,19 @@
  },
  "19396": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht03_box_.png",
+   "icon": "http://img.qcymall.com/app_qcy_ht03_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht03_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht03_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -41538,12 +42398,19 @@
  },
  "19397": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht02_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_ht02_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht02_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht02_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -42219,12 +43086,19 @@
  },
  "19489": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_g1n_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_g1n_white.png",
+   "left": "http://img.qcymall.com/app_qcy_g1n_left.png",
+   "right": "http://img.qcymall.com/app_qcy_g1n_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -43075,12 +43949,19 @@
  },
  "19569": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T8_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T8_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T8_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T8_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -43612,12 +44493,19 @@
  },
  "19570": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt12_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_QT12_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt12_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt12_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -44144,12 +45032,19 @@
  },
  "19571": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T5_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T5_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T5_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T5_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -44676,12 +45571,19 @@
  },
  "19572": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T8_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T8_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T8_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T8_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -45213,12 +46115,19 @@
  },
  "19573": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T7_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T7S_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T7_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T7_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -45750,12 +46659,19 @@
  },
  "19574": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T8_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T8_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T8_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T8_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -46287,12 +47203,19 @@
  },
  "19575": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T8_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T8_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T8_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T8_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -46824,12 +47747,19 @@
  },
  "19576": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T8_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T8_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T8_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T8_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -47361,12 +48291,19 @@
  },
  "19649": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht01_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_HT01_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht01_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht01_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -48092,12 +49029,19 @@
  },
  "19730": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T1S_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T1S_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T1S_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T1S_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -48611,12 +49555,19 @@
  },
  "19732": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt10_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_QT10_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt10_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt10_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -48975,12 +49926,19 @@
  },
  "19733": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T4_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T4_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T4_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T4_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -49494,12 +50452,19 @@
  },
  "19735": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt11s_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt11s_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt11s_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt11s_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -50031,12 +50996,19 @@
  },
  "19745": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T5_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T5_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T5_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T5_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -50568,12 +51540,19 @@
  },
  "19746": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T5_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T5_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T5_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T5_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -51105,12 +52084,19 @@
  },
  "19747": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T6_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T6_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T6_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T6_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -51629,12 +52615,19 @@
  },
  "19748": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T3_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T3_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T3_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T3_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -52161,12 +53154,19 @@
  },
  "19749": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T5_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T5_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T5_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T5_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -52693,12 +53693,19 @@
  },
  "19751": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T4_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T4_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T4_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T4_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -53259,12 +54266,19 @@
  },
  "19761": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T4_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T4_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T4_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T4_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -53783,12 +54797,19 @@
  },
  "19762": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": "http://img.qcymall.com/app_qcy_T5_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T1S_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T1S_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -54147,12 +55168,19 @@
  },
  "19763": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T1S_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T1S_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T1S_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T1S_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -54666,12 +55694,19 @@
  },
  "19764": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_t9_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T9_white.png",
+   "left": "http://img.qcymall.com/app_qcy_t9_left.png",
+   "right": "http://img.qcymall.com/app_qcy_t9_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -55030,12 +56065,19 @@
  },
  "19765": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T6_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T6_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T6_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T6_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -55562,12 +56604,19 @@
  },
  "19777": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "2,4,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "2.0.8"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht05_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_ht05_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht05_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht05_right.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -56333,12 +57382,19 @@
  },
  "19778": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht05_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_ht05_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht05_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht05_right.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -57104,12 +58160,19 @@
  },
  "19779": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "1.0.8"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht07_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_ht07_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht07_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht07_right.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -57883,12 +58946,19 @@
  },
  "19780": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "9",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt25.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt25.png",
+   "left": "http://img.qcymall.com/app_qcy_qt25_white.png",
+   "right": "http://img.qcymall.com/app_qcy_qt25_white.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -58611,12 +59681,19 @@
  },
  "19782": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht07_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_ht07_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht07_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht07_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -59199,12 +60276,19 @@
  },
  "19783": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht07_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_ht07_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht07_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht07_right.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -59978,12 +61062,47 @@
  },
  "19784": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht10/app_qcy_ht10_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht10/app_qcy_ht10_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht10/app_qcy_ht10_left.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht10/app_qcy_ht10_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht10/white/app_qcy_ht10_box.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht10/white/app_qcy_ht10_white.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht10/white/app_qcy_ht10_left.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht10/white/app_qcy_ht10_right.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_box.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_blue.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_left.webp",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_right.webp"
+   }
+  ],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "1.0.55"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht10/app_qcy_ht10_box.png",
+   "icon": "http://img.qcymall.com/ht10/app_qcy_ht10_black.png",
+   "left": "http://img.qcymall.com/ht10/app_qcy_ht10_left.png",
+   "right": "http://img.qcymall.com/ht10/app_qcy_ht10_right.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -60735,12 +61854,19 @@
  },
  "19785": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "2,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_h3_headphones.png",
+   "icon": "http://img.qcymall.com/app_qcy_h3_headphonesapp_black.png",
+   "left": "http://img.qcymall.com/app_qcy_h3_headphones.png",
+   "right": "http://img.qcymall.com/app_qcy_h3_headphones.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -61384,12 +62510,56 @@
  },
  "19786": {
   "bluetoothVer": 12,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht08/app_qcy_ht08_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht08/app_qcy_ht08_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht08/app_qcy_ht08_left.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht08/app_qcy_ht08_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht08/white/ht08w_a.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht08/white/ht08w_b.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht08/white/ht08left.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht08/white/ht08w_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht08/cyan/ht08c.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht08/cyan/ht08c_icon.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht08/cyan/ht08c_lift.png",
+    "name": "Cyan",
+    "right": "http://img.qcymall.com/ht08/cyan/ht08c_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht08/gold/ht08g.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht08/gold/ht08g_icon.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht08/gold/ht08g_lift.png",
+    "name": "Gold",
+    "right": "http://img.qcymall.com/ht08/gold/ht08g_right.png"
+   }
+  ],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "1.0.5"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht08/app_qcy_ht08_box.png",
+   "icon": "http://img.qcymall.com/ht08/app_qcy_ht08_black.png",
+   "left": "http://img.qcymall.com/ht08/app_qcy_ht08_left.png",
+   "right": "http://img.qcymall.com/ht08/app_qcy_ht08_right.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -62103,12 +63273,47 @@
  },
  "19787": {
   "bluetoothVer": 12,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht10/app_qcy_ht10_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht10/app_qcy_ht10_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht10/app_qcy_ht10_left.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht10/app_qcy_ht10_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht10/white/app_qcy_ht10_box.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht10/white/app_qcy_ht10_white.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht10/white/app_qcy_ht10_left.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht10/white/app_qcy_ht10_right.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_box.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_blue.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_left.webp",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_right.webp"
+   }
+  ],
   "family": "5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "2.0.54"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht10/app_qcy_ht10_box.png",
+   "icon": "http://img.qcymall.com/ht10/app_qcy_ht10_black.png",
+   "left": "http://img.qcymall.com/ht10/app_qcy_ht10_left.png",
+   "right": "http://img.qcymall.com/ht10/app_qcy_ht10_right.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -62870,12 +64075,47 @@
  },
  "19788": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht10/app_qcy_ht10_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht10/app_qcy_ht10_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht10/app_qcy_ht10_left.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht10/app_qcy_ht10_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht10/white/app_qcy_ht10_box.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht10/white/app_qcy_ht10_white.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht10/white/app_qcy_ht10_left.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht10/white/app_qcy_ht10_right.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_box.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_blue.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_left.webp",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_right.webp"
+   }
+  ],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "1.0.55"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht10/app_qcy_ht10_box.png",
+   "icon": "http://img.qcymall.com/ht10/app_qcy_ht10_black.png",
+   "left": "http://img.qcymall.com/ht10/app_qcy_ht10_left.png",
+   "right": "http://img.qcymall.com/ht10/app_qcy_ht10_right.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -63627,12 +64867,47 @@
  },
  "19789": {
   "bluetoothVer": 12,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht10/app_qcy_ht10_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht10/app_qcy_ht10_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht10/app_qcy_ht10_left.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht10/app_qcy_ht10_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht10/white/app_qcy_ht10_box.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht10/white/app_qcy_ht10_white.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht10/white/app_qcy_ht10_left.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht10/white/app_qcy_ht10_right.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_box.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_blue.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_left.webp",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/ht10/blue/app_qcy_ht10_right.webp"
+   }
+  ],
   "family": "5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "2.0.54"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht10/app_qcy_ht10_box.png",
+   "icon": "http://img.qcymall.com/ht10/app_qcy_ht10_black.png",
+   "left": "http://img.qcymall.com/ht10/app_qcy_ht10_left.png",
+   "right": "http://img.qcymall.com/ht10/app_qcy_ht10_right.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -64394,12 +65669,56 @@
  },
  "19790": {
   "bluetoothVer": 12,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht08/app_qcy_ht08_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht08/app_qcy_ht08_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht08/app_qcy_ht08_left.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht08/app_qcy_ht08_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht08/white/ht08w_a.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht08/white/ht08w_b.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht08/white/ht08left.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht08/white/ht08w_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht08/cyan/ht08c.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht08/cyan/ht08c_icon.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht08/cyan/ht08c_lift.png",
+    "name": "Cyan",
+    "right": "http://img.qcymall.com/ht08/cyan/ht08c_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht08/gold/ht08g.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht08/gold/ht08g_icon.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht08/gold/ht08g_lift.png",
+    "name": "Gold",
+    "right": "http://img.qcymall.com/ht08/gold/ht08g_right.png"
+   }
+  ],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht08/app_qcy_ht08_box.png",
+   "icon": "http://img.qcymall.com/ht08/app_qcy_ht08_black.png",
+   "left": "http://img.qcymall.com/ht08/app_qcy_ht08_left.png",
+   "right": "http://img.qcymall.com/ht08/app_qcy_ht08_right.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -65138,12 +66457,56 @@
  },
  "19791": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ct02/black/app_qcy_ct02_box_black.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct02/black/app_qcy_ct02_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct02/black/app_qcy_ct02_left_black.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ct02/black/app_qcy_ct02_right_black.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct02/white/app_qcy_ct02_box_white.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct02/white/app_qcy_ct02_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct02/white/app_qcy_ct02_left_white.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/ct02/white/app_qcy_ct02_right_white.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct02/blue/app_qcy_ct02_box_blue.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct02/blue/app_qcy_ct02_blue.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct02/blue/app_qcy_ct02_left_blue.png",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/ct02/blue/app_qcy_ct02_right_blue.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct02/green/app_qcy_ct02_box_green.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct02/green/app_qcy_ct02_green.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct02/green/app_qcy_ct02_left_green.png",
+    "name": "Green",
+    "right": "http://img.qcymall.com/ct02/green/app_qcy_ct02_right_green.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ct02/black/app_qcy_ct02_box_black.png",
+   "icon": "http://img.qcymall.com/ct02/black/app_qcy_ct02_black.png",
+   "left": "http://img.qcymall.com/ct02/black/app_qcy_ct02_left_black.png",
+   "right": "http://img.qcymall.com/ct02/black/app_qcy_ct02_right_black.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -66119,12 +67482,47 @@
  },
  "19794": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/qt33/app_qt33_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt33/app_qt33_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt33/app_qt33_left.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/qt33/app_qt33_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/qt33/white/app_qcy_qt33_white_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt33/white/app_qcy_qt33_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt33/white/app_qcy_qt33_white_left.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/qt33/white/app_qcy_qt33_white_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/qt33/purple/app_qcy_qt33_purple_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt33/purple/app_qcy_qt33_purple.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt33/purple/app_qcy_qt33_purple_left.png",
+    "name": "Purple",
+    "right": "http://img.qcymall.com/qt33/purple/app_qcy_qt33_purple_right.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/qt33/app_qt33_box.png",
+   "icon": "http://img.qcymall.com/qt33/app_qt33_white.png",
+   "left": "http://img.qcymall.com/qt33/app_qt33_left.png",
+   "right": "http://img.qcymall.com/qt33/app_qt33_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -66812,12 +68210,19 @@
  },
  "19795": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/qt33/app_qt33_box.png",
+   "icon": "http://img.qcymall.com/qt33/app_qt33_white.png",
+   "left": "http://img.qcymall.com/qt33/app_qt33_left.png",
+   "right": "http://img.qcymall.com/qt33/app_qt33_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -67505,12 +68910,56 @@
  },
  "19796": {
   "bluetoothVer": 12,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/qt33s/white/app_qcy_qt33s_box_slivery.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt33s/white/app_qcy_qt33s_slivery.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt33s/white/app_qcy_qt33s_left_slivery.png",
+    "name": "Slivery",
+    "right": "http://img.qcymall.com/qt33s/white/app_qcy_qt33s_right_slivery.png"
+   },
+   {
+    "box": "http://img.qcymall.com/qt33s/red/app_qcy_qt33s_box_red.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt33s/red/app_qcy_qt33s_red.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt33s/red/app_qcy_qt33s_left_red.png",
+    "name": "Red",
+    "right": "http://img.qcymall.com/qt33s/red/app_qcy_qt33s_right_red.png"
+   },
+   {
+    "box": "http://img.qcymall.com/qt33s/black/app_qcy_qt33s_box_black.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt33s/black/app_qcy_qt33s_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt33s/black/app_qcy_qt33s_left_black.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/qt33s/black/app_qcy_qt33s_right_black.png"
+   },
+   {
+    "box": "http://img.qcymall.com/qt33s/white20250820/app_qcy_qt33s_box_white.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt33s/white20250820/app_qcy_qt33s_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt33s/white20250820/app_qcy_qt33s_left_white.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/qt33s/white20250820/app_qcy_qt33s_right_white.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/qt33s/white/app_qcy_qt33s_box_slivery.png",
+   "icon": "http://img.qcymall.com/qt33s/white/app_qcy_qt33s_slivery.png",
+   "left": "http://img.qcymall.com/qt33s/white/app_qcy_qt33s_left_slivery.png",
+   "right": "http://img.qcymall.com/qt33s/white/app_qcy_qt33s_right_slivery.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -68179,12 +69628,65 @@
  },
  "19797": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_box_white.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_left_white.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_right_white.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06/color/pink_2025_0616/app_qcy_ct06_box_pink.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06/color/pink_2025_0616/app_qcy_ct06_pink.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct06/color/pink_2025_0616/app_qcy_ct06_left_pink.png",
+    "name": "Pink",
+    "right": "http://img.qcymall.com/ct06/color/pink_2025_0616/app_qcy_ct06_right_pink.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06/color/grey_2025_0616/app_qcy_ct06_box_gray.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06/color/grey_2025_0616/app_qcy_ct06_gray.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct06/color/grey_2025_0616/app_qcy_ct06_left_gray.png",
+    "name": "Grey",
+    "right": "http://img.qcymall.com/ct06/color/grey_2025_0616/app_qcy_ct06_right_gray.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06/color/blue_2025_0616/app_qcy_ct06_box_blue.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06/color/blue_2025_0616/app_qcy_ct06_blue.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct06/color/blue_2025_0616/app_qcy_ct06_left_blue.png",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/ct06/color/blue_2025_0616/app_qcy_ct06_right_blue.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06/color/purple_2025_0616/app_qcy_ct06_box_purple.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06/color/purple_2025_0616/app_qcy_ct06_purple.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct06/color/purple_2025_0616/app_qcy_ct06_left_purple.png",
+    "name": "Purple",
+    "right": "http://img.qcymall.com/ct06/color/purple_2025_0616/app_qcy_ct06_right_purple.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_box_white.png",
+   "icon": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_white.png",
+   "left": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_left_white.png",
+   "right": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_right_white.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -68911,12 +70413,47 @@
  },
  "19798": {
   "bluetoothVer": 16,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ct07/black/app_qcy_ct07_box_black.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct07/black/app_qcy_ct07_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct07/black/app_qcy_ct07_left_black.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ct07/black/app_qcy_ct07_right_black.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct07/silvery/app_qcy_ct07_box_silvery.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct07/silvery/app_qcy_ct07_silvery.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct07/silvery/app_qcy_ct07_left_silvery.png",
+    "name": "Silvery",
+    "right": "http://img.qcymall.com/ct07/silvery/app_qcy_ct07_right_silvery.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct07/green/app_qcy_ct07_box_green.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct07/green/app_qcy_ct07_green.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct07/green/app_qcy_ct07_left_green.png",
+    "name": "Green",
+    "right": "http://img.qcymall.com/ct07/green/app_qcy_ct07_right_green.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ct07/black/app_qcy_ct07_box_black.png",
+   "icon": "http://img.qcymall.com/ct07/black/app_qcy_ct07_black.png",
+   "left": "http://img.qcymall.com/ct07/black/app_qcy_ct07_left_black.png",
+   "right": "http://img.qcymall.com/ct07/black/app_qcy_ct07_right_black.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -69729,12 +71266,65 @@
  },
  "19799": {
   "bluetoothVer": 16,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_box_white.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_left_white.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_right_white.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06/color/pink_2025_0616/app_qcy_ct06_box_pink.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06/color/pink_2025_0616/app_qcy_ct06_pink.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct06/color/pink_2025_0616/app_qcy_ct06_left_pink.png",
+    "name": "Pink",
+    "right": "http://img.qcymall.com/ct06/color/pink_2025_0616/app_qcy_ct06_right_pink.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06/color/grey_2025_0616/app_qcy_ct06_box_gray.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06/color/grey_2025_0616/app_qcy_ct06_gray.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct06/color/grey_2025_0616/app_qcy_ct06_left_gray.png",
+    "name": "Grey",
+    "right": "http://img.qcymall.com/ct06/color/grey_2025_0616/app_qcy_ct06_right_gray.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06/color/blue_2025_0616/app_qcy_ct06_box_blue.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06/color/blue_2025_0616/app_qcy_ct06_blue.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct06/color/blue_2025_0616/app_qcy_ct06_left_blue.png",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/ct06/color/blue_2025_0616/app_qcy_ct06_right_blue.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06/color/purple_2025_0616/app_qcy_ct06_box_purple.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06/color/purple_2025_0616/app_qcy_ct06_purple.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ct06/color/purple_2025_0616/app_qcy_ct06_left_purple.png",
+    "name": "Purple",
+    "right": "http://img.qcymall.com/ct06/color/purple_2025_0616/app_qcy_ct06_right_purple.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_box_white.png",
+   "icon": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_white.png",
+   "left": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_left_white.png",
+   "right": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_right_white.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -70461,12 +72051,65 @@
  },
  "19801": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_box_white.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_white.png",
+    "index": 0,
+    "left": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_left_white.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_right_white.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06/color/pink_2025_0616/app_qcy_ct06_box_pink.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06/color/pink_2025_0616/app_qcy_ct06_pink.png",
+    "index": 1,
+    "left": "http://img.qcymall.com/ct06/color/pink_2025_0616/app_qcy_ct06_left_pink.png",
+    "name": "Pink",
+    "right": "http://img.qcymall.com/ct06/color/pink_2025_0616/app_qcy_ct06_right_pink.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06/color/grey_2025_0616/app_qcy_ct06_box_gray.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06/color/grey_2025_0616/app_qcy_ct06_gray.png",
+    "index": 2,
+    "left": "http://img.qcymall.com/ct06/color/grey_2025_0616/app_qcy_ct06_left_gray.png",
+    "name": "Grey",
+    "right": "http://img.qcymall.com/ct06/color/grey_2025_0616/app_qcy_ct06_right_gray.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06/color/blue_2025_0616/app_qcy_ct06_box_blue.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06/color/blue_2025_0616/app_qcy_ct06_blue.png",
+    "index": 3,
+    "left": "http://img.qcymall.com/ct06/color/blue_2025_0616/app_qcy_ct06_left_blue.png",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/ct06/color/blue_2025_0616/app_qcy_ct06_right_blue.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06/color/purple_2025_0616/app_qcy_ct06_box_purple.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06/color/purple_2025_0616/app_qcy_ct06_purple.png",
+    "index": 4,
+    "left": "http://img.qcymall.com/ct06/color/purple_2025_0616/app_qcy_ct06_left_purple.png",
+    "name": "Purple",
+    "right": "http://img.qcymall.com/ct06/color/purple_2025_0616/app_qcy_ct06_right_purple.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_box_white.png",
+   "icon": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_white.png",
+   "left": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_left_white.png",
+   "right": "http://img.qcymall.com/ct06/color/white_2025_0616/app_qcy_ct06_right_white.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -71193,12 +72836,47 @@
  },
  "19802": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ct07/black/app_qcy_ct07_box_black.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct07/black/app_qcy_ct07_black.png",
+    "index": 0,
+    "left": "http://img.qcymall.com/ct07/black/app_qcy_ct07_left_black.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ct07/black/app_qcy_ct07_right_black.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct07/silvery/app_qcy_ct07_box_silvery.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct07/silvery/app_qcy_ct07_silvery.png",
+    "index": 1,
+    "left": "http://img.qcymall.com/ct07/silvery/app_qcy_ct07_left_silvery.png",
+    "name": "Silvery",
+    "right": "http://img.qcymall.com/ct07/silvery/app_qcy_ct07_right_silvery.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ct07/green/app_qcy_ct07_box_green.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct07/green/app_qcy_ct07_green.png",
+    "index": 2,
+    "left": "http://img.qcymall.com/ct07/green/app_qcy_ct07_left_green.png",
+    "name": "Green",
+    "right": "http://img.qcymall.com/ct07/green/app_qcy_ct07_right_green.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ct07/black/app_qcy_ct07_box_black.png",
+   "icon": "http://img.qcymall.com/ct07/black/app_qcy_ct07_black.png",
+   "left": "http://img.qcymall.com/ct07/black/app_qcy_ct07_left_black.png",
+   "right": "http://img.qcymall.com/ct07/black/app_qcy_ct07_right_black.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -72011,12 +73689,47 @@
  },
  "19803": {
   "bluetoothVer": 16,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ct06s/black/app_qcy_ct06s_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06s/black/app_qcy_ct06s_black.webp",
+    "index": 0,
+    "left": "http://img.qcymall.com/ct06s/black/app_qcy_ct06s_left_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ct06s/black/app_qcy_ct06s_right_black.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06s/gray/app_qcy_ct06s_box_gray.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06s/gray/app_qcy_ct06s_gray.webp",
+    "index": 1,
+    "left": "http://img.qcymall.com/ct06s/gray/app_qcy_ct06s_left_gray.webp",
+    "name": "Grey",
+    "right": "http://img.qcymall.com/ct06s/gray/app_qcy_ct06s_right_gray.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_box_white.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_white.webp",
+    "index": 2,
+    "left": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_left_white.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_right_white.webp"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_box_white.webp",
+   "icon": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_white.webp",
+   "left": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_left_white.webp",
+   "right": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_right_white.webp"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -72737,12 +74450,47 @@
  },
  "19804": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ct06s/black/app_qcy_ct06s_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06s/black/app_qcy_ct06s_black.webp",
+    "index": 0,
+    "left": "http://img.qcymall.com/ct06s/black/app_qcy_ct06s_left_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ct06s/black/app_qcy_ct06s_right_black.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06s/gray/app_qcy_ct06s_box_gray.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06s/gray/app_qcy_ct06s_gray.webp",
+    "index": 1,
+    "left": "http://img.qcymall.com/ct06s/gray/app_qcy_ct06s_left_gray.webp",
+    "name": "Grey",
+    "right": "http://img.qcymall.com/ct06s/gray/app_qcy_ct06s_right_gray.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_box_white.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_white.webp",
+    "index": 2,
+    "left": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_left_white.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_right_white.webp"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_box_white.webp",
+   "icon": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_white.webp",
+   "left": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_left_white.webp",
+   "right": "http://img.qcymall.com/ct06s/white/app_qcy_ct06s_right_white.webp"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -73463,12 +75211,56 @@
  },
  "19805": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/HT22/black/HT23_black_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT22/black/HT23_black.png",
+    "index": 0,
+    "left": "http://img.qcymall.com/HT22/black/HT23_black_L.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/HT22/black/HT23_black_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT22/white/HT23_white_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT22/white/HT23_white.png",
+    "index": 1,
+    "left": "http://img.qcymall.com/HT22/white/HT23_white_L.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/HT22/white/HT23_white_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT22/iceblue/HT23_iceblue_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT22/iceblue/HT23_iceblue.png",
+    "index": 2,
+    "left": "http://img.qcymall.com/HT22/iceblue/HT23_iceblue_L.png",
+    "name": "Iceblue",
+    "right": "http://img.qcymall.com/HT22/iceblue/HT23_iceblue_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT22/golden/HT23_golden_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT22/golden/HT23_golden.png",
+    "index": 3,
+    "left": "http://img.qcymall.com/HT22/golden/HT23_golden_L.png",
+    "name": "Golden",
+    "right": "http://img.qcymall.com/HT22/golden/HT23_golden_R.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/HT22/black/HT23_black_box.png",
+   "icon": "http://img.qcymall.com/HT22/black/HT23_black.png",
+   "left": "http://img.qcymall.com/HT22/black/HT23_black_L.png",
+   "right": "http://img.qcymall.com/HT22/black/HT23_black_R.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -74401,12 +76193,19 @@
  },
  "19825": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T7_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T7S_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T7_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T7_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -74925,12 +76724,19 @@
  },
  "19826": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T8_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T8_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T8_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T8_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -75449,12 +77255,19 @@
  },
  "19841": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T7_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T7S_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T7_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T7_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -75986,12 +77799,19 @@
  },
  "19842": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T8_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T8_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T8_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T8_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -76601,12 +78421,19 @@
  },
  "19846": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt12_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_QT12_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt12_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt12_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -77133,12 +78960,19 @@
  },
  "19857": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_t9_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T9_white.png",
+   "left": "http://img.qcymall.com/app_qcy_t9_left.png",
+   "right": "http://img.qcymall.com/app_qcy_t9_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -77657,12 +79491,19 @@
  },
  "19858": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T7_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T7S_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T7_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T7_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -78194,12 +80035,19 @@
  },
  "19859": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T8_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T8_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T8_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T8_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -78731,12 +80579,19 @@
  },
  "19860": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_t1c_box.png",
+   "icon": "http://img.qcymall.com/T1CC_20200922173857.png",
+   "left": "http://img.qcymall.com/app_qcy_t1c_left.png",
+   "right": "http://img.qcymall.com/app_qcy_t1c_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -79095,12 +80950,19 @@
  },
  "19861": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T4_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_M10_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T4_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T4_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -79459,12 +81321,19 @@
  },
  "19862": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T1S_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T1S_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T1S_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T1S_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -79978,12 +81847,19 @@
  },
  "19863": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T1S_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T1S_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T1S_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T1S_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -80342,12 +82218,19 @@
  },
  "19865": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt12s_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_QT12S_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt12s_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt12s_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -80942,12 +82825,19 @@
  },
  "19866": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt13_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt13_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt13_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt13_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -81517,12 +83407,19 @@
  },
  "19873": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht01_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_HT01_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht01_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht01_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -81815,12 +83712,19 @@
  },
  "19889": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_T8_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_T8_white.png",
+   "left": "http://img.qcymall.com/app_qcy_T8_left.png",
+   "right": "http://img.qcymall.com/app_qcy_T8_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -82339,12 +84243,19 @@
  },
  "19905": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt10_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_QT10_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt10_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt10_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -82923,12 +84834,19 @@
  },
  "19906": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt10_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_QT11_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt10_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt10_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -83528,12 +85446,19 @@
  },
  "19908": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt12s_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_QT12S_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt12s_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt12s_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -84128,12 +86053,19 @@
  },
  "19909": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt10_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_QT11_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt10_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt10_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -84733,12 +86665,19 @@
  },
  "19921": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht03_box_.png",
+   "icon": "http://img.qcymall.com/app_qcy_ht03_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht03_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht03_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -85474,12 +87413,19 @@
  },
  "22897": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "3,4",
   "firmware": {
    "gte": "0.0.0.0",
    "lte": "0.1.0.0"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/t26/app_qcy_qt26_box.png",
+   "icon": "http://img.qcymall.com/t26/app_qcy_qt26_white.png",
+   "left": "http://img.qcymall.com/t26/app_qcy_qt26_left.png",
+   "right": "http://img.qcymall.com/t26/app_qcy_qt26_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -86062,12 +88008,19 @@
  },
  "23153": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/t26/app_qcy_qt26_box.png",
+   "icon": "http://img.qcymall.com/t26/app_qcy_qt26_white.png",
+   "left": "http://img.qcymall.com/t26/app_qcy_qt26_left.png",
+   "right": "http://img.qcymall.com/t26/app_qcy_qt26_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -86536,12 +88489,47 @@
  },
  "23154": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/t30/app_qcy_qt30_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/t30/app_qcy_qt30_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/t30/app_qcy_qt30_left.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/t30/app_qcy_qt30_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/qt30/white/app_qcy_qt30_box.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt30/white/app_qcy_qt30_white.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/qt30/white/app_qcy_qt30_left.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/qt30/white/app_qcy_qt30_right.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/qt30/blue/app_qcy_qt30_box.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt30/blue/app_qcy_qt30_white.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/qt30/blue/app_qcy_qt30_left.webp",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/qt30/blue/app_qcy_qt30_right.webp"
+   }
+  ],
   "family": "9",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/t30/app_qcy_qt30_box.png",
+   "icon": "http://img.qcymall.com/t30/app_qcy_qt30_white.png",
+   "left": "http://img.qcymall.com/t30/app_qcy_qt30_left.png",
+   "right": "http://img.qcymall.com/t30/app_qcy_qt30_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -87072,12 +89060,19 @@
  },
  "23155": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "3,4",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/qt31/white/app_qcy_qt31_box.png",
+   "icon": "http://img.qcymall.com/qt31/white/app_qcy_qt31_white.png",
+   "left": "http://img.qcymall.com/qt31/white/app_qcy_qt31_left.png",
+   "right": "http://img.qcymall.com/qt31/white/app_qcy_qt31_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -87558,12 +89553,19 @@
  },
  "23156": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/t26/app_qcy_qt26_box.png",
+   "icon": "http://img.qcymall.com/t26/app_qcy_qt26_white.png",
+   "left": "http://img.qcymall.com/t26/app_qcy_qt26_left.png",
+   "right": "http://img.qcymall.com/t26/app_qcy_qt26_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -88032,12 +90034,19 @@
  },
  "23157": {
   "bluetoothVer": 3,
+  "colors": [],
   "family": "3,4",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/qt32/app_qcy_qt32_box.webp",
+   "icon": "http://img.qcymall.com/qt32/app_qcy_qt32_white.webp",
+   "left": "http://img.qcymall.com/qt32/app_qcy_qt32_left.webp",
+   "right": "http://img.qcymall.com/qt32/app_qcy_qt32_right.webp"
+  },
   "panel": {
    "anc": null,
    "autoOff": null,
@@ -88632,12 +90641,19 @@
  },
  "23158": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "3,4",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/t26/app_qcy_qt26_box.png",
+   "icon": "http://img.qcymall.com/t26/app_qcy_qt26_white.png",
+   "left": "http://img.qcymall.com/t26/app_qcy_qt26_left.png",
+   "right": "http://img.qcymall.com/t26/app_qcy_qt26_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -89106,12 +91122,19 @@
  },
  "23159": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/t30/app_qcy_qt30_box.png",
+   "icon": "http://img.qcymall.com/t30/app_qcy_qt30_white.png",
+   "left": "http://img.qcymall.com/t30/app_qcy_qt30_left.png",
+   "right": "http://img.qcymall.com/t30/app_qcy_qt30_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -89642,12 +91665,19 @@
  },
  "23160": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/koqt31/white/app_qcy_koqt31_box_white.webp",
+   "icon": "http://img.qcymall.com/koqt31/white/app_qcy_koqt31_white.webp",
+   "left": "http://img.qcymall.com/koqt31/white/app_qcy_koqt31_left_white.webp",
+   "right": "http://img.qcymall.com/koqt31/white/app_qcy_koqt31_right_white.webp"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -90128,12 +92158,47 @@
  },
  "23872": {
   "bluetoothVer": 16,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht18/black/app_qcy_ht18_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht18/black/app_qcy_ht18_black.webp",
+    "index": 0,
+    "left": "http://img.qcymall.com/ht18/black/app_qcy_ht18_left_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht18/black/app_qcy_ht18_right_black.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_box_titanium.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_titanium.webp",
+    "index": 1,
+    "left": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_left_titanium.webp",
+    "name": "Titanium",
+    "right": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_right_titanium.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_box_purple.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_purple.webp",
+    "index": 2,
+    "left": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_left_purple.webp",
+    "name": "Purple",
+    "right": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_right_purple.webp"
+   }
+  ],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht18/black/app_qcy_ht18_box_black.webp",
+   "icon": "http://img.qcymall.com/ht18/black/app_qcy_ht18_black.webp",
+   "left": "http://img.qcymall.com/ht18/black/app_qcy_ht18_left_black.webp",
+   "right": "http://img.qcymall.com/ht18/black/app_qcy_ht18_right_black.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -91052,12 +93117,38 @@
  },
  "23873": {
   "bluetoothVer": 16,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_black.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_left_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_right_black.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_box_Titanium.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_Titanium.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_left_Titanium.webp",
+    "name": "Titanium",
+    "right": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_right_Titanium.webp"
+   }
+  ],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_box_black.webp",
+   "icon": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_black.webp",
+   "left": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_left_black.webp",
+   "right": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_right_black.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -92050,12 +94141,56 @@
  },
  "23874": {
   "bluetoothVer": 16,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht19/black/app_qcy_ht19_box_black.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht19/black/app_qcy_ht19_black.png",
+    "index": 0,
+    "left": "http://img.qcymall.com/ht19/black/app_qcy_ht19_left_black.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht19/black/app_qcy_ht19_right_black.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht19/titanium/app_qcy_ht19_box_titanium.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht19/titanium/app_qcy_ht19_titanium.png",
+    "index": 1,
+    "left": "http://img.qcymall.com/ht19/titanium/app_qcy_ht19_left_titanium.png",
+    "name": "Titanium",
+    "right": "http://img.qcymall.com/ht19/titanium/app_qcy_ht19_right_titanium.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht19/white/app_qcy_ht19_box_white.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht19/white/app_qcy_ht19_white.webp",
+    "index": 2,
+    "left": "http://img.qcymall.com/ht19/white/app_qcy_ht19_left_white.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht19/white/app_qcy_ht19_right_white.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht19/blue/app_qcy_ht19_box_blue.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht19/blue/app_qcy_ht19_blue.png",
+    "index": 3,
+    "left": "http://img.qcymall.com/ht19/blue/app_qcy_ht19_left_blue.png",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/ht19/blue/app_qcy_ht19_right_blue.png"
+   }
+  ],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht19/black/app_qcy_ht19_box_black.png",
+   "icon": "http://img.qcymall.com/ht19/black/app_qcy_ht19_black.png",
+   "left": "http://img.qcymall.com/ht19/black/app_qcy_ht19_left_black.png",
+   "right": "http://img.qcymall.com/ht19/black/app_qcy_ht19_right_black.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -93190,21 +95325,100 @@
  },
  "23875": {
   "bluetoothVer": 16,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht08/app_qcy_ht08_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht08/app_qcy_ht08_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht08/app_qcy_ht08_left.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht08/app_qcy_ht08_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht08/white/ht08w_a.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht08/white/ht08w_b.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht08/white/ht08left.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht08/white/ht08w_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht08/cyan/ht08c.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht08/cyan/ht08c_icon.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht08/cyan/ht08c_lift.png",
+    "name": "Cyan",
+    "right": "http://img.qcymall.com/ht08/cyan/ht08c_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht08/gold/ht08g.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht08/gold/ht08g_icon.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht08/gold/ht08g_lift.png",
+    "name": "Gold",
+    "right": "http://img.qcymall.com/ht08/gold/ht08g_right.png"
+   }
+  ],
   "family": "1,5",
   "firmware": null,
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht08/app_qcy_ht08_box.png",
+   "icon": "http://img.qcymall.com/ht08/app_qcy_ht08_black.png",
+   "left": "http://img.qcymall.com/ht08/app_qcy_ht08_left.png",
+   "right": "http://img.qcymall.com/ht08/app_qcy_ht08_right.png"
+  },
   "panel": null,
   "subTitle": "CT03",
   "title": "CT03"
  },
  "23877": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht18/black/app_qcy_ht18_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht18/black/app_qcy_ht18_black.webp",
+    "index": 0,
+    "left": "http://img.qcymall.com/ht18/black/app_qcy_ht18_left_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht18/black/app_qcy_ht18_right_black.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_box_titanium.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_titanium.webp",
+    "index": 1,
+    "left": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_left_titanium.webp",
+    "name": "Titanium",
+    "right": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_right_titanium.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_box_purple.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_purple.webp",
+    "index": 2,
+    "left": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_left_purple.webp",
+    "name": "Purple",
+    "right": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_right_purple.webp"
+   }
+  ],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht18/black/app_qcy_ht18_box_black.webp",
+   "icon": "http://img.qcymall.com/ht18/black/app_qcy_ht18_black.webp",
+   "left": "http://img.qcymall.com/ht18/black/app_qcy_ht18_left_black.webp",
+   "right": "http://img.qcymall.com/ht18/black/app_qcy_ht18_right_black.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -94123,12 +96337,38 @@
  },
  "23878": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_black.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_left_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_right_black.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_box_Titanium.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_Titanium.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_left_Titanium.webp",
+    "name": "Titanium",
+    "right": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_right_Titanium.webp"
+   }
+  ],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_box_black.webp",
+   "icon": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_black.webp",
+   "left": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_left_black.webp",
+   "right": "http://img.qcymall.com/ht11/titanium/app_qcy_ht11_right_black.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -95121,12 +97361,56 @@
  },
  "23879": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht19/black/app_qcy_ht19_box_black.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht19/black/app_qcy_ht19_black.png",
+    "index": 0,
+    "left": "http://img.qcymall.com/ht19/black/app_qcy_ht19_left_black.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht19/black/app_qcy_ht19_right_black.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht19/titanium/app_qcy_ht19_box_titanium.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht19/titanium/app_qcy_ht19_titanium.png",
+    "index": 1,
+    "left": "http://img.qcymall.com/ht19/titanium/app_qcy_ht19_left_titanium.png",
+    "name": "Titanium",
+    "right": "http://img.qcymall.com/ht19/titanium/app_qcy_ht19_right_titanium.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht19/white/app_qcy_ht19_box_white.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht19/white/app_qcy_ht19_white.webp",
+    "index": 2,
+    "left": "http://img.qcymall.com/ht19/white/app_qcy_ht19_left_white.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht19/white/app_qcy_ht19_right_white.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht19/blue/app_qcy_ht19_box_blue.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht19/blue/app_qcy_ht19_blue.png",
+    "index": 3,
+    "left": "http://img.qcymall.com/ht19/blue/app_qcy_ht19_left_blue.png",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/ht19/blue/app_qcy_ht19_right_blue.png"
+   }
+  ],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht19/black/app_qcy_ht19_box_black.png",
+   "icon": "http://img.qcymall.com/ht19/black/app_qcy_ht19_black.png",
+   "left": "http://img.qcymall.com/ht19/black/app_qcy_ht19_left_black.png",
+   "right": "http://img.qcymall.com/ht19/black/app_qcy_ht19_right_black.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -96261,12 +98545,47 @@
  },
  "23880": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht18/black/app_qcy_ht18_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht18/black/app_qcy_ht18_black.webp",
+    "index": 0,
+    "left": "http://img.qcymall.com/ht18/black/app_qcy_ht18_left_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht18/black/app_qcy_ht18_right_black.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_box_titanium.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_titanium.webp",
+    "index": 1,
+    "left": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_left_titanium.webp",
+    "name": "Titanium",
+    "right": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_right_titanium.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_box_purple.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_purple.webp",
+    "index": 2,
+    "left": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_left_purple.webp",
+    "name": "Purple",
+    "right": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_right_purple.webp"
+   }
+  ],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht18/black/app_qcy_ht18_box_black.webp",
+   "icon": "http://img.qcymall.com/ht18/black/app_qcy_ht18_black.webp",
+   "left": "http://img.qcymall.com/ht18/black/app_qcy_ht18_left_black.webp",
+   "right": "http://img.qcymall.com/ht18/black/app_qcy_ht18_right_black.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -97310,12 +99629,47 @@
  },
  "23881": {
   "bluetoothVer": 16,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht18/black/app_qcy_ht18_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht18/black/app_qcy_ht18_black.webp",
+    "index": 0,
+    "left": "http://img.qcymall.com/ht18/black/app_qcy_ht18_left_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht18/black/app_qcy_ht18_right_black.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_box_titanium.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_titanium.webp",
+    "index": 1,
+    "left": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_left_titanium.webp",
+    "name": "Titanium",
+    "right": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_right_titanium.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_box_purple.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_purple.webp",
+    "index": 2,
+    "left": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_left_purple.webp",
+    "name": "Purple",
+    "right": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_right_purple.webp"
+   }
+  ],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht18/black/app_qcy_ht18_box_black.webp",
+   "icon": "http://img.qcymall.com/ht18/black/app_qcy_ht18_black.webp",
+   "left": "http://img.qcymall.com/ht18/black/app_qcy_ht18_left_black.webp",
+   "right": "http://img.qcymall.com/ht18/black/app_qcy_ht18_right_black.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -98359,12 +100713,56 @@
  },
  "23883": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht19/black/app_qcy_ht19_box_black.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht19/black/app_qcy_ht19_black.png",
+    "index": 0,
+    "left": "http://img.qcymall.com/ht19/black/app_qcy_ht19_left_black.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht19/black/app_qcy_ht19_right_black.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht19/titanium/app_qcy_ht19_box_titanium.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht19/titanium/app_qcy_ht19_titanium.png",
+    "index": 1,
+    "left": "http://img.qcymall.com/ht19/titanium/app_qcy_ht19_left_titanium.png",
+    "name": "Titanium",
+    "right": "http://img.qcymall.com/ht19/titanium/app_qcy_ht19_right_titanium.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht19/white/app_qcy_ht19_box_white.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht19/white/app_qcy_ht19_white.webp",
+    "index": 2,
+    "left": "http://img.qcymall.com/ht19/white/app_qcy_ht19_left_white.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht19/white/app_qcy_ht19_right_white.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht19/blue/app_qcy_ht19_box_blue.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht19/blue/app_qcy_ht19_blue.png",
+    "index": 3,
+    "left": "http://img.qcymall.com/ht19/blue/app_qcy_ht19_left_blue.png",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/ht19/blue/app_qcy_ht19_right_blue.png"
+   }
+  ],
   "family": "1,5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht19/black/app_qcy_ht19_box_black.png",
+   "icon": "http://img.qcymall.com/ht19/black/app_qcy_ht19_black.png",
+   "left": "http://img.qcymall.com/ht19/black/app_qcy_ht19_left_black.png",
+   "right": "http://img.qcymall.com/ht19/black/app_qcy_ht19_right_black.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -99499,21 +101897,100 @@
  },
  "23885": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht18/black/app_qcy_ht18_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht18/black/app_qcy_ht18_black.webp",
+    "index": 0,
+    "left": "http://img.qcymall.com/ht18/black/app_qcy_ht18_left_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht18/black/app_qcy_ht18_right_black.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_box_titanium.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_titanium.webp",
+    "index": 1,
+    "left": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_left_titanium.webp",
+    "name": "Titanium",
+    "right": "http://img.qcymall.com/ht18/titanium/app_qcy_ht18_right_titanium.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_box_purple.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_purple.webp",
+    "index": 2,
+    "left": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_left_purple.webp",
+    "name": "Purple",
+    "right": "http://img.qcymall.com/ht18/purple/app_qcy_ht18_right_purple.webp"
+   }
+  ],
   "family": "1,5",
   "firmware": null,
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht18/black/app_qcy_ht18_box_black.webp",
+   "icon": "http://img.qcymall.com/ht18/black/app_qcy_ht18_black.webp",
+   "left": "http://img.qcymall.com/ht18/black/app_qcy_ht18_left_black.webp",
+   "right": "http://img.qcymall.com/ht18/black/app_qcy_ht18_right_black.webp"
+  },
   "panel": null,
   "subTitle": "HT27",
   "title": "HT27"
  },
  "32881": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht16/pic/black/box.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht16/pic/black/icon.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht16/pic/black/l.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht16/pic/black/R.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht16/pic/white/box.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht16/pic/white/icon.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht16/pic/white/L.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht16/pic/white/R.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht16/pic/ht16wblue/app_qcy_ht16_box_skyblue.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht16/pic/ht16wblue/app_qcy_ht16_skyblue.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht16/pic/ht16wblue/app_qcy_ht16_left_skyblue.png",
+    "name": "SkyBlue",
+    "right": "http://img.qcymall.com/ht16/pic/ht16wblue/app_qcy_ht16_right_skyblue.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht16/pic/ht16skyblue/app_qcy_ht16_box_wblue.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht16/pic/ht16skyblue/app_qcy_ht16_wblue.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht16/pic/ht16skyblue/app_qcy_ht16_left_wblue.png",
+    "name": "AquaBlue",
+    "right": "http://img.qcymall.com/ht16/pic/ht16skyblue/app_qcy_ht16_right_wblue.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht16/pic/black/box.webp",
+   "icon": "http://img.qcymall.com/ht16/pic/black/icon.webp",
+   "left": "http://img.qcymall.com/ht16/pic/black/l.webp",
+   "right": "http://img.qcymall.com/ht16/pic/black/R.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -100269,12 +102746,56 @@
  },
  "32882": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht15/black/app_qcy_ht15_box_black.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht15/black/app_qcy_ht15_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht15/black/app_qcy_ht15_left_black.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht15/black/app_qcy_ht15_right_black.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht15/white/app_qcy_ht15_box_white.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht15/white/app_qcy_ht15_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht15/white/app_qcy_ht15_left_white.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht15/white/app_qcy_ht15_right_white.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht15/bgreen/app_qcy_ht15_box_green.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht15/bgreen/app_qcy_ht15_green.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht15/bgreen/app_qcy_ht15_left_green.png",
+    "name": "DarkGreen",
+    "right": "http://img.qcymall.com/ht15/bgreen/app_qcy_ht15_right_green.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht15/blue/app_qcy_ht15_box_blue.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht15/blue/app_qcy_ht15_blue.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht15/blue/app_qcy_ht15_left_blue.png",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/ht15/blue/app_qcy_ht15_right_blue.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht15/black/app_qcy_ht15_box_black.png",
+   "icon": "http://img.qcymall.com/ht15/black/app_qcy_ht15_black.png",
+   "left": "http://img.qcymall.com/ht15/black/app_qcy_ht15_left_black.png",
+   "right": "http://img.qcymall.com/ht15/black/app_qcy_ht15_right_black.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -100867,12 +103388,56 @@
  },
  "32883": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht16/pic/black/box.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht16/pic/black/icon.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht16/pic/black/l.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht16/pic/black/R.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht16/pic/white/box.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht16/pic/white/icon.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/ht16/pic/white/L.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht16/pic/white/R.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht16/pic/ht16wblue/app_qcy_ht16_box_skyblue.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht16/pic/ht16wblue/app_qcy_ht16_skyblue.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht16/pic/ht16wblue/app_qcy_ht16_left_skyblue.png",
+    "name": "SkyBlue",
+    "right": "http://img.qcymall.com/ht16/pic/ht16wblue/app_qcy_ht16_right_skyblue.png"
+   },
+   {
+    "box": "http://img.qcymall.com/ht16/pic/ht16skyblue/app_qcy_ht16_box_wblue.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht16/pic/ht16skyblue/app_qcy_ht16_wblue.png",
+    "index": null,
+    "left": "http://img.qcymall.com/ht16/pic/ht16skyblue/app_qcy_ht16_left_wblue.png",
+    "name": "AquaBlue",
+    "right": "http://img.qcymall.com/ht16/pic/ht16skyblue/app_qcy_ht16_right_wblue.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht16/pic/black/box.webp",
+   "icon": "http://img.qcymall.com/ht16/pic/black/icon.webp",
+   "left": "http://img.qcymall.com/ht16/pic/black/l.webp",
+   "right": "http://img.qcymall.com/ht16/pic/black/R.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -101628,12 +104193,56 @@
  },
  "32884": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/HT20/black/HT20_black_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/black/HT20_black_01.png",
+    "index": 0,
+    "left": "http://img.qcymall.com/HT20/black/HT20_black_L.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/HT20/black/HT20_black_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT20/white/HT20_white_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/white/HT20_white_01.png",
+    "index": 1,
+    "left": "http://img.qcymall.com/HT20/white/HT20_white_L.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/HT20/white/HT20_white_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT20/purple/HT20_purple_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/purple/HT20_purple_01.png",
+    "index": 2,
+    "left": "http://img.qcymall.com/HT20/purple/HT20_purple_L.png",
+    "name": "Purple",
+    "right": "http://img.qcymall.com/HT20/purple/HT20_purple_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT20/blue/HT20_blue_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/blue/HT20_blue_01.png",
+    "index": 3,
+    "left": "http://img.qcymall.com/HT20/blue/HT20_blue_L.png",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/HT20/blue/HT20_blue_R.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "2.0.1"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/HT20/black/HT20_black_02.png",
+   "icon": "http://img.qcymall.com/HT20/black/HT20_black_01.png",
+   "left": "http://img.qcymall.com/HT20/black/HT20_black_L.png",
+   "right": "http://img.qcymall.com/HT20/black/HT20_black_R.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -102361,12 +104970,56 @@
  },
  "32885": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/HT20/black/HT20_black_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/black/HT20_black_01.png",
+    "index": 0,
+    "left": "http://img.qcymall.com/HT20/black/HT20_black_L.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/HT20/black/HT20_black_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT20/white/HT20_white_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/white/HT20_white_01.png",
+    "index": 1,
+    "left": "http://img.qcymall.com/HT20/white/HT20_white_L.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/HT20/white/HT20_white_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT20/purple/HT20_purple_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/purple/HT20_purple_01.png",
+    "index": 2,
+    "left": "http://img.qcymall.com/HT20/purple/HT20_purple_L.png",
+    "name": "Purple",
+    "right": "http://img.qcymall.com/HT20/purple/HT20_purple_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT20/blue/HT20_blue_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/blue/HT20_blue_01.png",
+    "index": 3,
+    "left": "http://img.qcymall.com/HT20/blue/HT20_blue_L.png",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/HT20/blue/HT20_blue_R.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/HT20/black/HT20_black_02.png",
+   "icon": "http://img.qcymall.com/HT20/black/HT20_black_01.png",
+   "left": "http://img.qcymall.com/HT20/black/HT20_black_L.png",
+   "right": "http://img.qcymall.com/HT20/black/HT20_black_R.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -103094,12 +105747,56 @@
  },
  "32886": {
   "bluetoothVer": 16,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/HT22/black/HT23_black_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT22/black/HT23_black.png",
+    "index": 0,
+    "left": "http://img.qcymall.com/HT22/black/HT23_black_L.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/HT22/black/HT23_black_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT22/white/HT23_white_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT22/white/HT23_white.png",
+    "index": 1,
+    "left": "http://img.qcymall.com/HT22/white/HT23_white_L.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/HT22/white/HT23_white_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT22/iceblue/HT23_iceblue_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT22/iceblue/HT23_iceblue.png",
+    "index": 2,
+    "left": "http://img.qcymall.com/HT22/iceblue/HT23_iceblue_L.png",
+    "name": "Iceblue",
+    "right": "http://img.qcymall.com/HT22/iceblue/HT23_iceblue_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT22/golden/HT23_golden_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT22/golden/HT23_golden.png",
+    "index": 3,
+    "left": "http://img.qcymall.com/HT22/golden/HT23_golden_L.png",
+    "name": "Golden",
+    "right": "http://img.qcymall.com/HT22/golden/HT23_golden_R.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "2.0.4"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/HT22/black/HT23_black_box.png",
+   "icon": "http://img.qcymall.com/HT22/black/HT23_black.png",
+   "left": "http://img.qcymall.com/HT22/black/HT23_black_L.png",
+   "right": "http://img.qcymall.com/HT22/black/HT23_black_R.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -103833,12 +106530,56 @@
  },
  "32887": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht23/black/app_qcy_ht23_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht23/black/app_qcy_ht23_black.webp",
+    "index": 0,
+    "left": "http://img.qcymall.com/ht23/black/app_qcy_ht23_left_black.webp",
+    "name": "",
+    "right": "http://img.qcymall.com/ht23/black/app_qcy_ht23_right_black.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht23/white/app_qcy_ht23_box_white.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht23/white/app_qcy_ht23_white.webp",
+    "index": 1,
+    "left": "http://img.qcymall.com/ht23/white/app_qcy_ht23_left_white.webp",
+    "name": "",
+    "right": "http://img.qcymall.com/ht23/white/app_qcy_ht23_right_white.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht23/blue/app_qcy_ht23_box_blue.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht23/blue/app_qcy_ht23_blue.webp",
+    "index": 2,
+    "left": "http://img.qcymall.com/ht23/blue/app_qcy_ht23_left_blue.webp",
+    "name": "",
+    "right": "http://img.qcymall.com/ht23/blue/app_qcy_ht23_right_blue.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht23/lblue/app_qcy_ht23_box_lblue.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht23/lblue/app_qcy_ht23_lblue.webp",
+    "index": 3,
+    "left": "http://img.qcymall.com/ht23/lblue/app_qcy_ht23_left_lblue.webp",
+    "name": "",
+    "right": "http://img.qcymall.com/ht23/lblue/app_qcy_ht23_right_lblue.webp"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht23/black/app_qcy_ht23_box_black.webp",
+   "icon": "http://img.qcymall.com/ht23/black/app_qcy_ht23_black.webp",
+   "left": "http://img.qcymall.com/ht23/black/app_qcy_ht23_left_black.webp",
+   "right": "http://img.qcymall.com/ht23/black/app_qcy_ht23_right_black.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -104570,12 +107311,56 @@
  },
  "32889": {
   "bluetoothVer": 12,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/HT20/black/HT20_black_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/black/HT20_black_01.png",
+    "index": 0,
+    "left": "http://img.qcymall.com/HT20/black/HT20_black_L.png",
+    "name": "",
+    "right": "http://img.qcymall.com/HT20/black/HT20_black_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT20/white/HT20_white_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/white/HT20_white_01.png",
+    "index": 1,
+    "left": "http://img.qcymall.com/HT20/white/HT20_white_L.png",
+    "name": "",
+    "right": "http://img.qcymall.com/HT20/white/HT20_white_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT20/purple/HT20_purple_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/purple/HT20_purple_01.png",
+    "index": 2,
+    "left": "http://img.qcymall.com/HT20/purple/HT20_purple_L.png",
+    "name": "",
+    "right": "http://img.qcymall.com/HT20/purple/HT20_purple_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT20/blue/HT20_blue_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/blue/HT20_blue_01.png",
+    "index": 3,
+    "left": "http://img.qcymall.com/HT20/blue/HT20_blue_L.png",
+    "name": "",
+    "right": "http://img.qcymall.com/HT20/blue/HT20_blue_R.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "2.2.8"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/HT20/black/HT20_black_02.png",
+   "icon": "http://img.qcymall.com/HT20/black/HT20_black_01.png",
+   "left": "http://img.qcymall.com/HT20/black/HT20_black_L.png",
+   "right": "http://img.qcymall.com/HT20/black/HT20_black_R.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -105353,12 +108138,56 @@
  },
  "32890": {
   "bluetoothVer": 16,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/CT12/white/CT12_white_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/CT12/white/CT12_white_01.png",
+    "index": 0,
+    "left": "http://img.qcymall.com/CT12/white/CT12_white_L.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/CT12/white/CT12_white_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/CT12/gray/CT12_gray_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/CT12/gray/CT12_gray_01.png",
+    "index": 2,
+    "left": "http://img.qcymall.com/CT12/gray/CT12_gray_L.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/CT12/gray/CT12_gray_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/CT12/pink/CT12_pink_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/CT12/pink/CT12_pink_01.png",
+    "index": 2,
+    "left": "http://img.qcymall.com/CT12/pink/CT12_pink_L.png",
+    "name": "Pink",
+    "right": "http://img.qcymall.com/CT12/pink/CT12_pink_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/CT12/blue/CT12_blue_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/CT12/blue/CT12_blue_01.png",
+    "index": 3,
+    "left": "http://img.qcymall.com/CT12/blue/CT12_blue_L.png",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/CT12/blue/CT12_blue_R.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/CT12/white/CT12_white_02.png",
+   "icon": "http://img.qcymall.com/CT12/white/CT12_white_01.png",
+   "left": "http://img.qcymall.com/CT12/white/CT12_white_L.png",
+   "right": "http://img.qcymall.com/CT12/white/CT12_white_R.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -106033,12 +108862,56 @@
  },
  "32891": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/HT21/black/app_qcy_ht21_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT21/black/app_qcy_ht21_black.webp",
+    "index": 0,
+    "left": "http://img.qcymall.com/HT21/black/app_qcy_ht21_left_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/HT21/black/app_qcy_ht21_right_black.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/HT21/white/app_qcy_ht21_box_bwhite.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT21/white/app_qcy_ht21_white.webp",
+    "index": 1,
+    "left": "http://img.qcymall.com/HT21/white/app_qcy_ht21_left_white.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/HT21/white/app_qcy_ht21_right_white.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/HT21/iceblue/app_qcy_ht21_box_iceblue.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT21/iceblue/app_qcy_ht21_iceblue.webp",
+    "index": 2,
+    "left": "http://img.qcymall.com/HT21/iceblue/app_qcy_ht21_left_iceblue.webp",
+    "name": "iceblue",
+    "right": "http://img.qcymall.com/HT21/iceblue/app_qcy_ht21_right_iceblue.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/HT21/blue/app_qcy_ht21_box_blue.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT21/blue/app_qcy_ht21_blue.webp",
+    "index": 3,
+    "left": "http://img.qcymall.com/HT21/blue/app_qcy_ht21_left_blue.webp",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/HT21/blue/app_qcy_ht21_right_blue.webp"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "2.0.7"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/HT21/black/app_qcy_ht21_box_black.webp",
+   "icon": "http://img.qcymall.com/HT21/black/app_qcy_ht21_black.webp",
+   "left": "http://img.qcymall.com/HT21/black/app_qcy_ht21_left_black.webp",
+   "right": "http://img.qcymall.com/HT21/black/app_qcy_ht21_right_black.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -106789,12 +109662,56 @@
  },
  "32892": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/HT20/black/HT20_black_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/black/HT20_black_01.png",
+    "index": 0,
+    "left": "http://img.qcymall.com/HT20/black/HT20_black_L.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/HT20/black/HT20_black_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT20/white/HT20_white_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/white/HT20_white_01.png",
+    "index": 1,
+    "left": "http://img.qcymall.com/HT20/white/HT20_white_L.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/HT20/white/HT20_white_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT20/purple/HT20_purple_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/purple/HT20_purple_01.png",
+    "index": 2,
+    "left": "http://img.qcymall.com/HT20/purple/HT20_purple_L.png",
+    "name": "Purple",
+    "right": "http://img.qcymall.com/HT20/purple/HT20_purple_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT20/blue/HT20_blue_02.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT20/blue/HT20_blue_01.png",
+    "index": 3,
+    "left": "http://img.qcymall.com/HT20/blue/HT20_blue_L.png",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/HT20/blue/HT20_blue_R.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/HT20/black/HT20_black_02.png",
+   "icon": "http://img.qcymall.com/HT20/black/HT20_black_01.png",
+   "left": "http://img.qcymall.com/HT20/black/HT20_black_L.png",
+   "right": "http://img.qcymall.com/HT20/black/HT20_black_R.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -107567,12 +110484,56 @@
  },
  "32893": {
   "bluetoothVer": 16,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/HT22/black/HT23_black_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT22/black/HT23_black.png",
+    "index": 0,
+    "left": "http://img.qcymall.com/HT22/black/HT23_black_L.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/HT22/black/HT23_black_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT22/white/HT23_white_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT22/white/HT23_white.png",
+    "index": 1,
+    "left": "http://img.qcymall.com/HT22/white/HT23_white_L.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/HT22/white/HT23_white_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT22/iceblue/HT23_iceblue_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT22/iceblue/HT23_iceblue.png",
+    "index": 2,
+    "left": "http://img.qcymall.com/HT22/iceblue/HT23_iceblue_L.png",
+    "name": "Iceblue",
+    "right": "http://img.qcymall.com/HT22/iceblue/HT23_iceblue_R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/HT22/golden/HT23_golden_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT22/golden/HT23_golden.png",
+    "index": 3,
+    "left": "http://img.qcymall.com/HT22/golden/HT23_golden_L.png",
+    "name": "Golden",
+    "right": "http://img.qcymall.com/HT22/golden/HT23_golden_R.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "2.0.4"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/HT22/black/HT23_black_box.png",
+   "icon": "http://img.qcymall.com/HT22/black/HT23_black.png",
+   "left": "http://img.qcymall.com/HT22/black/HT23_black_L.png",
+   "right": "http://img.qcymall.com/HT22/black/HT23_black_R.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -108306,12 +111267,65 @@
  },
  "32894": {
   "bluetoothVer": 16,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/HT21/black/app_qcy_ht21_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT21/black/app_qcy_ht21_black.webp",
+    "index": 0,
+    "left": "http://img.qcymall.com/HT21/black/app_qcy_ht21_left_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/HT21/black/app_qcy_ht21_right_black.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/HT21/white/app_qcy_ht21_box_bwhite.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT21/white/app_qcy_ht21_white.webp",
+    "index": 1,
+    "left": "http://img.qcymall.com/HT21/white/app_qcy_ht21_left_white.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/HT21/white/app_qcy_ht21_right_white.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/HT21/iceblue/app_qcy_ht21_box_iceblue.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT21/iceblue/app_qcy_ht21_iceblue.webp",
+    "index": 2,
+    "left": "http://img.qcymall.com/HT21/iceblue/app_qcy_ht21_left_iceblue.webp",
+    "name": "iceblue",
+    "right": "http://img.qcymall.com/HT21/iceblue/app_qcy_ht21_right_iceblue.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/HT21/blue/app_qcy_ht21_box_blue.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT21/blue/app_qcy_ht21_blue.webp",
+    "index": 3,
+    "left": "http://img.qcymall.com/HT21/blue/app_qcy_ht21_left_blue.webp",
+    "name": "Blue",
+    "right": "http://img.qcymall.com/HT21/blue/app_qcy_ht21_right_blue.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/HT21/ti/app_qcy_ht21_box_ti.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/HT21/ti/app_qcy_ht21_ti.webp",
+    "index": 4,
+    "left": "http://img.qcymall.com/HT21/ti/app_qcy_ht21_left_ti.webp",
+    "name": "Ti",
+    "right": "http://img.qcymall.com/HT21/ti/app_qcy_ht21_right_ti.webp"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "2.0.7"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/HT21/black/app_qcy_ht21_box_black.webp",
+   "icon": "http://img.qcymall.com/HT21/black/app_qcy_ht21_black.webp",
+   "left": "http://img.qcymall.com/HT21/black/app_qcy_ht21_left_black.webp",
+   "right": "http://img.qcymall.com/HT21/black/app_qcy_ht21_right_black.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -109062,138 +112076,262 @@
  },
  "35569": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY Watch GTS"
  },
  "35570": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY  GTS1080"
  },
  "35572": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY Watch GTS"
  },
  "35573": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY Watch GS"
  },
  "35574": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY Watch GT"
  },
  "35575": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY  VOICE"
  },
  "35576": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY GT PRO"
  },
  "35577": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY Watch GT"
  },
  "35578": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY GT PRO"
  },
  "35579": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY Watch GS"
  },
  "35825": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY Watch GTC"
  },
  "35826": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY SW300"
  },
  "36081": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY Watch Elite"
  },
  "36082": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY Watch Elite"
  },
  "36977": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/ht23/black/app_qcy_ht23_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht23/black/app_qcy_ht23_black.webp",
+    "index": 0,
+    "left": "http://img.qcymall.com/ht23/black/app_qcy_ht23_left_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/ht23/black/app_qcy_ht23_right_black.webp"
+   },
+   {
+    "box": "http://img.qcymall.com/ht23/white/app_qcy_ht23_box_white.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/ht23/white/app_qcy_ht23_white.webp",
+    "index": 1,
+    "left": "http://img.qcymall.com/ht23/white/app_qcy_ht23_left_white.webp",
+    "name": "White",
+    "right": "http://img.qcymall.com/ht23/white/app_qcy_ht23_right_white.webp"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/ht23/black/app_qcy_ht23_box_black.webp",
+   "icon": "http://img.qcymall.com/ht23/black/app_qcy_ht23_black.webp",
+   "left": "http://img.qcymall.com/ht23/black/app_qcy_ht23_left_black.webp",
+   "right": "http://img.qcymall.com/ht23/black/app_qcy_ht23_right_black.webp"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -109925,66 +113063,115 @@
  },
  "39665": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY Watch GTR"
  },
  "39666": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY Active GX"
  },
  "43761": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY Watch GT2"
  },
  "43762": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY Watch GS2"
  },
  "43763": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY GT MAX"
  },
  "43764": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY GS MAX"
  },
  "4577": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "2",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_c1.png",
+   "icon": "http://img.qcymall.com/app_qcy_c1_white.png",
+   "left": "http://img.qcymall.com/app_qcy_c1.png",
+   "right": "http://img.qcymall.com/app_qcy_c1.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -110667,12 +113854,19 @@
  },
  "4578": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "3",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_c2.png",
+   "icon": "http://img.qcymall.com/app_qcy_c2_white.png",
+   "left": "http://img.qcymall.com/app_qcy_c2.png",
+   "right": "http://img.qcymall.com/app_qcy_c2.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -111355,12 +114549,19 @@
  },
  "4579": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "9",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt25.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt25.png",
+   "left": "http://img.qcymall.com/app_qcy_qt25_white.png",
+   "right": "http://img.qcymall.com/app_qcy_qt25_white.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -112175,12 +115376,19 @@
  },
  "4580": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "5",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_c1.png",
+   "icon": "http://img.qcymall.com/app_qcy_c1_white.png",
+   "left": "http://img.qcymall.com/app_qcy_c1.png",
+   "right": "http://img.qcymall.com/app_qcy_c1.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -112863,12 +116071,19 @@
  },
  "4581": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "6",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_c2.png",
+   "icon": "http://img.qcymall.com/app_qcy_c2_white.png",
+   "left": "http://img.qcymall.com/app_qcy_c2.png",
+   "right": "http://img.qcymall.com/app_qcy_c2.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -113551,12 +116766,56 @@
  },
  "4583": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/h5/color/app_qcy_h5_white.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h5/color/app_qcy_h5_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h5/color/app_qcy_h5_white.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/h5/color/app_qcy_h5_white.png"
+   },
+   {
+    "box": "http://img.qcymall.com/h5/color/app_qcy_h5_black.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h5/color/app_qcy_h5_black.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h5/color/app_qcy_h5_black.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/h5/color/app_qcy_h5_black.png"
+   },
+   {
+    "box": "http://img.qcymall.com/h5/color/app_qcy_h5_red.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h5/color/app_qcy_h5_red.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h5/color/app_qcy_h5_red.png",
+    "name": "Red",
+    "right": "http://img.qcymall.com/h5/color/app_qcy_h5_red.png"
+   },
+   {
+    "box": "http://img.qcymall.com/h5/color/app_qcy_h5_brown.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/h5/color/app_qcy_h5_brown.png",
+    "index": null,
+    "left": "http://img.qcymall.com/h5/color/app_qcy_h5_brown.png",
+    "name": "Brown",
+    "right": "http://img.qcymall.com/h5/color/app_qcy_h5_brown.png"
+   }
+  ],
   "family": "2,4",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/h5/color/app_qcy_h5_white.png",
+   "icon": "http://img.qcymall.com/h5/color/app_qcy_h5_white.png",
+   "left": "http://img.qcymall.com/h5/color/app_qcy_h5_white.png",
+   "right": "http://img.qcymall.com/h5/color/app_qcy_h5_white.png"
+  },
   "panel": {
    "anc": {
     "modes": [
@@ -114325,39 +117584,67 @@
  },
  "47860": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY Active GT"
  },
  "512": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "BR1"
  },
  "51953": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": null,
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": null,
   "subTitle": "",
   "title": "QCY Urban GS"
  },
  "6513": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "3",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/qt27/black/app_qcy_qt27_box.webp",
+   "icon": "http://img.qcymall.com/qt27/black/app_qcy_qt27_white.webp",
+   "left": "http://img.qcymall.com/qt27/black/app_qcy_qt27_left.webp",
+   "right": "http://img.qcymall.com/qt27/black/app_qcy_qt27_right.webp"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -114935,12 +118222,38 @@
  },
  "6514": {
   "bluetoothVer": 3,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/app_qcy_qt29_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/app_qcy_qt29_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/app_qcy_qt29_left.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/app_qcy_qt29_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/app_qcy_qt29_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/app_qcy_qt29_black.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/app_qcy_qt29_left_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/app_qcy_qt29_right_black.webp"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt29_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt29_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt29_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt29_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -115475,12 +118788,19 @@
  },
  "6515": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt29_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt29_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt29_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt29_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -116015,12 +119335,19 @@
  },
  "6516": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht07_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_ht07_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht07_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht07_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -116598,12 +119925,38 @@
  },
  "6517": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/app_qcy_qt29_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/app_qcy_qt29_white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/app_qcy_qt29_left.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/app_qcy_qt29_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/app_qcy_qt29_box_black.webp",
+    "hide": false,
+    "icon": "http://img.qcymall.com/app_qcy_qt29_black.webp",
+    "index": null,
+    "left": "http://img.qcymall.com/app_qcy_qt29_left_black.webp",
+    "name": "Black",
+    "right": "http://img.qcymall.com/app_qcy_qt29_right_black.webp"
+   }
+  ],
   "family": "3,4",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_qt29_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_qt29_white.png",
+   "left": "http://img.qcymall.com/app_qcy_qt29_left.png",
+   "right": "http://img.qcymall.com/app_qcy_qt29_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -117138,12 +120491,56 @@
  },
  "6518": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/qt43/black/qt43_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt43/black/qt43_icon.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt43/black/qt43_l.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/qt43/black/qt43_r.png"
+   },
+   {
+    "box": "http://img.qcymall.com/qt43/white/box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt43/white/2.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt43/white/L.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/qt43/white/R.png"
+   },
+   {
+    "box": "http://img.qcymall.com/qt43/qt43wathetblue/qt43wathetblue_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt43/qt43wathetblue/qt43wathetblue_icon.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt43/qt43wathetblue/qt43wathetblue_l.png",
+    "name": "Wathetblue",
+    "right": "http://img.qcymall.com/qt43/qt43wathetblue/qt43wathetblue_r.png"
+   },
+   {
+    "box": "http://img.qcymall.com/qt43/qt43darkblue/qt43darkblue_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt43/qt43darkblue/qt43darkblue_icon.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt43/qt43darkblue/qt43darkblue_l.png",
+    "name": "Darkblue",
+    "right": "http://img.qcymall.com/qt43/qt43darkblue/qt43darkblue_r.png"
+   }
+  ],
   "family": "3",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/qt43/black/qt43_box.png",
+   "icon": "http://img.qcymall.com/qt43/black/qt43_icon.png",
+   "left": "http://img.qcymall.com/qt43/black/qt43_l.png",
+   "right": "http://img.qcymall.com/qt43/black/qt43_r.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -117745,12 +121142,38 @@
  },
  "6519": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/qt43/black/qt43_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt43/black/qt43_icon.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt43/black/qt43_l.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/qt43/black/qt43_r.png"
+   },
+   {
+    "box": "http://img.qcymall.com/qt43/white/box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt43/white/2.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt43/white/L.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/qt43/white/R.png"
+   }
+  ],
   "family": "3",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/qt43/black/qt43_box.png",
+   "icon": "http://img.qcymall.com/qt43/black/qt43_icon.png",
+   "left": "http://img.qcymall.com/qt43/black/qt43_l.png",
+   "right": "http://img.qcymall.com/qt43/black/qt43_r.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -118352,12 +121775,38 @@
  },
  "6520": {
   "bluetoothVer": 0,
+  "colors": [
+   {
+    "box": "http://img.qcymall.com/qt41/black/app_qcy_qt41_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt41/black/app_qcy_qt41.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt41/black/app_qcy_qt41_left.png",
+    "name": "Black",
+    "right": "http://img.qcymall.com/qt41/black/app_qcy_qt41_right.png"
+   },
+   {
+    "box": "http://img.qcymall.com/qt41/white/app_qcy_qt41white_box.png",
+    "hide": false,
+    "icon": "http://img.qcymall.com/qt41/white/app_qcy_qt41white.png",
+    "index": null,
+    "left": "http://img.qcymall.com/qt41/white/app_qcy_qt41white_left.png",
+    "name": "White",
+    "right": "http://img.qcymall.com/qt41/white/app_qcy_qt41white_right.png"
+   }
+  ],
   "family": "1",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/qt41/black/app_qcy_qt41_box.png",
+   "icon": "http://img.qcymall.com/qt41/black/app_qcy_qt41.png",
+   "left": "http://img.qcymall.com/qt41/black/app_qcy_qt41_left.png",
+   "right": "http://img.qcymall.com/qt41/black/app_qcy_qt41_right.png"
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -118959,21 +122408,35 @@
  },
  "6577": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "1",
   "firmware": null,
   "hasSwitch": true,
+  "images": {
+   "box": "http://img.qcymall.com/app_qcy_ht07_box.png",
+   "icon": "http://img.qcymall.com/app_qcy_ht07_white.png",
+   "left": "http://img.qcymall.com/app_qcy_ht07_left.png",
+   "right": "http://img.qcymall.com/app_qcy_ht07_right.png"
+  },
   "panel": null,
   "subTitle": "QCY AilyPodsBuds Lite",
   "title": "QCY AilyPodsBuds Lite"
  },
  "768": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -119281,12 +122744,19 @@
  },
  "769": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -119723,12 +123193,19 @@
  },
  "770": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -120036,12 +123513,19 @@
  },
  "771": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": {
    "anc": null,
    "autoOff": {
@@ -120396,12 +123880,19 @@
  },
  "772": {
   "bluetoothVer": 0,
+  "colors": [],
   "family": "",
   "firmware": {
    "gte": "0.0.0",
    "lte": "999.999.999"
   },
   "hasSwitch": false,
+  "images": {
+   "box": null,
+   "icon": null,
+   "left": null,
+   "right": null
+  },
   "panel": {
    "anc": null,
    "autoOff": {

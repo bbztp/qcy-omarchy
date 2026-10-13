@@ -131,6 +131,24 @@ type Firmware struct {
 	Lte string `json:"lte"`
 }
 
+// Images are the product image URLs (all on img.qcymall.com); empty when the
+// product list has none.
+type Images struct {
+	Icon  string `json:"icon"`
+	Left  string `json:"left"`
+	Right string `json:"right"`
+	Box   string `json:"box"`
+}
+
+// Color is one colour variant of a product. Index is the colorIndex the earbuds
+// advertise, nil when the product list does not give it.
+type Color struct {
+	Name  string `json:"name"`
+	Index *int   `json:"index"`
+	Hide  bool   `json:"hide"`
+	Images
+}
+
 // Product is one vendorId. Panel is nil when the server has no panel for it.
 type Product struct {
 	VendorID     uint16    `json:"-"`
@@ -141,6 +159,10 @@ type Product struct {
 	HasSwitch    bool      `json:"hasSwitch"`
 	Firmware     *Firmware `json:"firmware"`
 	Panel        *Panel    `json:"panel"`
+	// Images is the product's default image set; Colors the variants, in the
+	// product list's order.
+	Images Images  `json:"images"`
+	Colors []Color `json:"colors"`
 }
 
 var (
