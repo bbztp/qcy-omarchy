@@ -1971,7 +1971,7 @@ func (d *daemon) writeKeys(raw []byte) error {
 	if err != nil {
 		return err
 	}
-	if len(got) < len(raw) || !bytes.Equal(got[:len(raw)], raw) {
+	if !protocol.KeysConfirmed(raw, got) {
 		return fmt.Errorf("keys set readback mismatch: want %x got %x", raw, got)
 	}
 	return nil
