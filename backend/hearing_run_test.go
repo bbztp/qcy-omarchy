@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -121,6 +123,11 @@ type fakeLink struct {
 	nWrites     int
 	snapPayload string
 	pingPanic   bool
+	onMode      func(on bool)
+	modeOffErr  error
+	ack         bool
+	noReadback  bool
+	badReadback bool
 }
 
 func (l *fakeLink) rec(s string) {
@@ -136,6 +143,12 @@ func (l *fakeLink) hearingMode(on bool) (*hearingCall, error) {
 		l.rec("mode:on")
 	} else {
 		l.rec("mode:off")
+	}
+	if l.onMode != nil {
+		l.onMode(on)
+	}
+	if !on && l.modeOffErr != nil {
+		return nil, l.modeOffErr
 	}
 	if on && l.modeErr != nil {
 		return nil, l.modeErr
@@ -154,7 +167,35 @@ func (l *fakeLink) hearingWrite(ear hearing.Ear, g, o [hearing.Bands]int) (*hear
 	if l.writeErr != nil {
 		return nil, l.writeErr
 	}
-	return &hearingCall{Sent: "ff", Ack: false}, nil
+	// The device reports the curve it was given (slot 11, same band layout
+	// as the 0x46 body) unless the test says otherwise.
+	mg := hearing.MasterGain(toF(g))
+	if m2 := hearing.MasterGain(toF(o)); m2 < mg {
+		mg = m2
+	}
+	mg, _ = hearing.ClampMaster(mg)
+	c := &hearingCall{Sent: "ff", Ack: l.ack, MasterGain: &mg}
+	if !l.noReadback {
+		pl := hex.EncodeToString(hearing.WriteFrame(ear, toF(g), mg)[4:])
+		if l.badReadback {
+			pl = hex.EncodeToString(make([]byte, 143))
+		}
+		c.Readback = &struct {
+			Slot       int     `json:"slot"`
+			Effect     string  `json:"effect,omitempty"`
+			MasterGain float64 `json:"masterGain"`
+			Payload    string  `json:"payload"`
+		}{Slot: 11, Effect: "Experiência auditiva", MasterGain: mg, Payload: pl}
+	}
+	return c, nil
+}
+
+func toF(g [hearing.Bands]int) [hearing.Bands]float64 {
+	var o [hearing.Bands]float64
+	for i, v := range g {
+		o[i] = float64(v)
+	}
+	return o
 }
 func (l *fakeLink) eqRead() (*qcycore.EqSnapshot, error) {
 	if l.eqErr != nil {
@@ -178,13 +219,32 @@ func (l *fakeLink) list() string {
 type fakePlayer struct {
 	mu            sync.Mutex
 	started, stop int
+	// deadAtStart: the Nth start (1-based) is dead at once; all: every start.
+	deadAtStart map[int]bool
+	allDead     bool
+	// stopErr: the Nth tone's stop reports a failed playback.
+	stopErr map[int]error
+	// deadCh: the Nth start's dead channel is handed to the test, which
+	// closes it when it wants the tone to die.
+	deadCh map[int]chan struct{}
 }
 
-func (p *fakePlayer) Start(sink string, ear hearing.Ear, freq int, level float64) (func() error, error) {
+func (p *fakePlayer) Start(sink string, ear hearing.Ear, freq int, level float64) (func() error, <-chan struct{}, error) {
 	p.mu.Lock()
 	p.started++
+	n := p.started
+	dead := make(chan struct{})
+	if p.deadAtStart[n] || p.allDead {
+		close(dead)
+	}
+	if p.deadCh != nil {
+		if _, ok := p.deadCh[n]; ok {
+			p.deadCh[n] = dead
+		}
+	}
+	err := p.stopErr[n]
 	p.mu.Unlock()
-	return func() error { p.mu.Lock(); p.stop++; p.mu.Unlock(); return nil }, nil
+	return func() error { p.mu.Lock(); p.stop++; p.mu.Unlock(); return err }, dead, nil
 }
 
 type fnKeys struct{ next func() (byte, error) }
@@ -396,18 +456,20 @@ func TestHearingRunApplyWithoutYesWritesNothing(t *testing.T) {
 	}
 }
 
-func TestHearingRunBackupFailureAbortsWrite(t *testing.T) {
+func TestHearingRunBackupFailureDirAbortsBeforeAnything(t *testing.T) {
 	r := newRig(t, cycleKeys())
 	f := filepath.Join(t.TempDir(), "afile")
 	os.WriteFile(f, nil, 0o600)
 	r.env.configDir = func() (string, error) { return f, nil } // MkdirAll under a file fails
 	o := opts()
 	o.apply, o.yes = true, true
-	err := hearingRunLive(r.env, o)
-	if err == nil || strings.Contains(r.link.list(), "write") {
-		t.Fatalf("err %v events %s", err, r.link.list())
+	if err := hearingRunLive(r.env, o); err == nil {
+		t.Fatal("expected error")
 	}
-	r.assertRestored(t)
+	r.untouched(t)
+	if r.ex.count(" pause") != 0 {
+		t.Fatal("music paused before the backup")
+	}
 }
 
 func TestHearingRunAbortKeyRestoresEverything(t *testing.T) {
@@ -707,7 +769,7 @@ func TestHearingRunApplyImpliesDeviceMode(t *testing.T) {
 	}
 }
 
-func TestHearingRunBackupFailuresAbortBeforeAnyWrite(t *testing.T) {
+func TestHearingRunBackupFailuresAbortBeforeAnythingElse(t *testing.T) {
 	for name, setup := range map[string]func(r *rig){
 		"eqRead":  func(r *rig) { r.link.eqErr = errors.New("no eq") },
 		"library": func(r *rig) { r.saveErr = errors.New("disk full") },
@@ -717,17 +779,103 @@ func TestHearingRunBackupFailuresAbortBeforeAnyWrite(t *testing.T) {
 			setup(r)
 			o := opts()
 			o.apply, o.yes = true, true
-			if err := hearingRunLive(r.env, o); err == nil || strings.Contains(r.link.list(), "write") {
-				t.Fatalf("%v %s", err, r.link.list())
+			if err := hearingRunLive(r.env, o); err == nil {
+				t.Fatal("expected error")
 			}
-			if name == "eqRead" {
-				if r.ex.count("set-") != 0 || r.ex.count(" pause") != 0 || r.link.list() != "" {
-					t.Fatal("side effects before the EQ read failed")
-				}
-				return
+			// Neither 0x45, nor volume, nor music, nor a tone.
+			r.untouched(t)
+			if r.ex.count(" pause") != 0 {
+				t.Fatal("music paused before the backup")
+			}
+		})
+	}
+}
+
+func TestHearingRunBackupIsPersistedBeforeModeOn(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	var atModeOn bool
+	r.link.onMode = func(on bool) {
+		if on {
+			ents, _ := os.ReadDir(filepath.Join(r.cfg, "backups"))
+			atModeOn = len(ents) == 1 && len(r.saved) == 1
+		}
+	}
+	o := opts()
+	o.apply, o.yes = true, true
+	if err := hearingRunLive(r.env, o); err != nil {
+		t.Fatal(err)
+	}
+	if !atModeOn {
+		t.Fatal("backup was not on disk when 0x45 was sent")
+	}
+}
+
+func TestHearingRunModeOffFailurePrintsRestoreCommand(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	r.link.modeOffErr = errors.New("link lost")
+	o := opts()
+	o.apply, o.yes = true, true
+	if err := hearingRunLive(r.env, o); err != nil {
+		t.Fatal(err)
+	}
+	out := r.out.String()
+	i := strings.Index(out, "could not switch the test mode off")
+	if i < 0 || !strings.Contains(out[i:], "qcyctl library apply backup-antes-do-teste-auditivo-") {
+		t.Fatal(out)
+	}
+}
+
+func TestHearingRunUnconfirmedWriteIsNotSuccess(t *testing.T) {
+	for name, setup := range map[string]func(l *fakeLink){
+		"no echo, wrong readback": func(l *fakeLink) { l.badReadback = true },
+		"no echo, no readback":    func(l *fakeLink) { l.noReadback = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t, cycleKeys())
+			setup(r.link)
+			o := opts()
+			o.apply, o.yes = true, true
+			err := hearingRunLive(r.env, o)
+			out := r.out.String()
+			if err == nil || !strings.Contains(err.Error(), "NOT CONFIRMED") || !strings.Contains(out, "NOT CONFIRMED") ||
+				!strings.Contains(out, "qcyctl library apply backup-antes-do-teste-auditivo-") {
+				t.Fatalf("%v\n%s", err, out)
 			}
 			r.assertRestored(t)
 		})
+	}
+	// An echo alone confirms.
+	r := newRig(t, cycleKeys())
+	r.link.ack, r.link.noReadback = true, true
+	o := opts()
+	o.apply, o.yes = true, true
+	if err := hearingRunLive(r.env, o); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWriteConfirmedMatchesBandsAndMaster(t *testing.T) {
+	g := [hearing.Bands]int{3, 4, 2, 1, 0, -2, 0, 5}
+	mg := -10.0
+	pl := hex.EncodeToString(hearing.WriteFrame(hearing.Left, toF(g), mg)[4:])
+	call := &hearingCall{MasterGain: &mg}
+	call.Readback = &struct {
+		Slot       int     `json:"slot"`
+		Effect     string  `json:"effect,omitempty"`
+		MasterGain float64 `json:"masterGain"`
+		Payload    string  `json:"payload"`
+	}{Slot: 11, MasterGain: -10, Payload: pl}
+	if !writeConfirmed(call, g) {
+		t.Fatal("matching readback rejected")
+	}
+	g2 := g
+	g2[7] = 6
+	if writeConfirmed(call, g2) {
+		t.Fatal("a different band accepted")
+	}
+	call.Readback.MasterGain = -9
+	if writeConfirmed(call, g) {
+		t.Fatal("a different master accepted")
 	}
 }
 
@@ -797,7 +945,7 @@ func TestPwcatStopNeverHangs(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	stop, err := pwcatPlayer{bin: bin}.Start("sink", hearing.Left, 1000, -60)
+	stop, _, err := pwcatPlayer{bin: bin}.Start("sink", hearing.Left, 1000, -60)
 	if err != nil {
 		t.Skip("cannot run a shell script here:", err)
 	}
@@ -850,4 +998,154 @@ func TestHearingRunCmdFlags(t *testing.T) {
 	if err := hearingMain([]string{"run"}, &b); err == nil || !strings.Contains(err.Error(), errHardwareDisabled.Error()) {
 		t.Fatalf("real run reached outside the sandbox: %v", err)
 	}
+}
+
+// answersIn reads the answers recorded in the --out file.
+func answersIn(t *testing.T, path string) int {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var o struct{ Answers []json.RawMessage }
+	if err := json.Unmarshal(b, &o); err != nil {
+		t.Fatal(err)
+	}
+	return len(o.Answers)
+}
+
+func TestHearingRunDeadToneDiscardsAnswerAndRepeats(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	r.pl.deadAtStart = map[int]bool{1: true, 5: true}
+	o := opts()
+	o.outFile = filepath.Join(t.TempDir(), "r.json")
+	if err := hearingRunLive(r.env, o); err != nil {
+		t.Fatal(err)
+	}
+	// every start either produced one recorded answer or was discarded.
+	if got, want := answersIn(t, o.outFile), r.pl.startedCount()-2; got != want {
+		t.Fatalf("answers %d, tones started %d (2 died)", got, r.pl.startedCount())
+	}
+	if strings.Count(r.out.String(), "answer discarded") != 2 {
+		t.Fatal(r.out.String())
+	}
+	r.assertRestored(t)
+}
+
+func TestHearingRunToneDyingMidWaitIgnoresLateKey(t *testing.T) {
+	gate := make(chan struct{})
+	n := 0
+	keys := fnKeys{func() (byte, error) {
+		<-gate
+		n++
+		if n%3 == 0 {
+			return 'h', nil
+		}
+		return 'n', nil
+	}}
+	r := newRig(t, keys)
+	r.pl.deadCh = map[int]chan struct{}{1: nil}
+	o := opts()
+	o.outFile = filepath.Join(t.TempDir(), "r.json")
+	go func() {
+		// the first tone dies while the listener has not answered yet
+		for {
+			r.pl.mu.Lock()
+			ch := r.pl.deadCh[1]
+			r.pl.mu.Unlock()
+			if ch != nil {
+				close(ch)
+				close(gate)
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	if err := hearingRunLive(r.env, o); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.out.String(), "answer discarded") {
+		t.Fatal(r.out.String())
+	}
+	if got, want := answersIn(t, o.outFile), r.pl.startedCount()-1; got != want {
+		t.Fatalf("answers %d, tones %d", got, r.pl.startedCount())
+	}
+	r.assertRestored(t)
+}
+
+func TestHearingRunStopErrorInvalidatesAnswer(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	r.pl.stopErr = map[int]error{1: errors.New("broken pipe")}
+	o := opts()
+	o.outFile = filepath.Join(t.TempDir(), "r.json")
+	if err := hearingRunLive(r.env, o); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := answersIn(t, o.outFile), r.pl.startedCount()-1; got != want {
+		t.Fatalf("answers %d, tones %d", got, r.pl.startedCount())
+	}
+}
+
+func TestHearingRunPlayerAlwaysDeadAbortsAfterRetries(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	r.pl.allDead = true
+	o := opts()
+	o.apply, o.yes = true, true
+	o.outFile = filepath.Join(t.TempDir(), "r.json")
+	err := hearingRunLive(r.env, o)
+	if err == nil || !strings.Contains(err.Error(), "kept failing") {
+		t.Fatal(err)
+	}
+	if n := r.pl.startedCount(); n != 1+maxToneRetries {
+		t.Fatalf("tone started %d times", n)
+	}
+	if strings.Contains(r.link.list(), "write") {
+		t.Fatal("wrote after a failed test")
+	}
+	if _, e := os.Stat(o.outFile); e == nil {
+		t.Fatal("no result may be saved for an aborted test")
+	}
+	r.assertRestored(t)
+}
+
+func TestToneDeathIsReportedByPwcat(t *testing.T) {
+	// A pw-cat that exits at once: dead closes and stop reports the failure.
+	bin := filepath.Join(t.TempDir(), "fake-pw-cat")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stop, dead, err := pwcatPlayer{bin: bin}.Start("sink", hearing.Left, 1000, -60)
+	if err != nil {
+		t.Skip(err)
+	}
+	select {
+	case <-dead:
+	case <-time.After(3 * time.Second):
+		t.Fatal("dead never closed")
+	}
+	done := make(chan struct{})
+	go func() { _ = stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stop hung")
+	}
+}
+
+// A pw-cat that dies in the middle of the tone closes dead.
+func TestPwcatDyingMidToneClosesDead(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "fake-pw-cat")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nsleep 0.3\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stop, dead, err := pwcatPlayer{bin: bin}.Start("sink", hearing.Left, 1000, -60)
+	if err != nil {
+		t.Skip(err)
+	}
+	select {
+	case <-dead:
+	case <-time.After(3 * time.Second):
+		t.Fatal("dead never closed")
+	}
+	_ = stop()
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,9 +64,12 @@ type hearingCall struct {
 }
 
 // tonePlayer plays one continuous tone until the returned stop is called.
-// stop must return in bounded time.
+// stop must return in bounded time and returns an error when the tone did not
+// play cleanly (the player died or a write failed). dead is closed as soon as
+// the tone can no longer be heard (player exited, writer failed): an answer
+// given then is not a measurement.
 type tonePlayer interface {
-	Start(sink string, ear hearing.Ear, freq int, levelDB float64) (stop func() error, err error)
+	Start(sink string, ear hearing.Ear, freq int, levelDB float64) (stop func() error, dead <-chan struct{}, err error)
 }
 
 // keySource blocks for one key; io.EOF ends the test.
@@ -321,6 +325,13 @@ func mprisFor(env hearingEnv) (*mprisCtl, error) {
 
 var errInterrupted = errors.New("interrupted")
 
+// errToneDead: the tone stopped playing while waiting for the answer.
+var errToneDead = errors.New("tone died")
+
+// maxToneRetries is how many times a band's tone is replayed after dying
+// before the test aborts.
+const maxToneRetries = 2
+
 type heardRec struct {
 	Tone  hearing.Tone `json:"tone"`
 	Heard bool         `json:"heard"`
@@ -410,12 +421,34 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		return errors.New("hearing run is only for a verified model (this earbud is not)")
 	}
 	var eqBefore *qcycore.EqSnapshot
+	var restoreCmd, backupPath string
 	if o.apply && o.yes {
 		// The active curve, raw, before anything (test mode included) can
 		// change it: it is what the backup and the library entry hold.
 		if eqBefore, err = link.eqRead(); err != nil {
 			return fmt.Errorf("backup: cannot read the active EQ, nothing was done: %w", err)
 		}
+		// Persist the backup NOW, before anything audible and before 0x45:
+		// a failure here leaves the earbuds untouched.
+		cfg, e := env.configDir()
+		if e != nil {
+			return fmt.Errorf("backup: %w", e)
+		}
+		stamp := env.now().Format("20060102-150405")
+		libID, e := env.saveCurve("backup antes do teste auditivo "+stamp, eqBefore)
+		if e != nil {
+			return fmt.Errorf("backup: library entry failed, nothing was done: %w", e)
+		}
+		restoreCmd = "qcyctl library apply " + libID + " --yes"
+		dir := filepath.Join(cfg, "backups")
+		if e := os.MkdirAll(dir, 0o700); e != nil {
+			return fmt.Errorf("backup: %w", e)
+		}
+		backupPath = filepath.Join(dir, "hearing-before-"+stamp+".json")
+		if e := writeJSONFile(backupPath, hearingBackup{Timestamp: stamp, Status: st, Eq: eqBefore, Library: libID, Restore: restoreCmd}); e != nil {
+			return fmt.Errorf("backup failed, nothing was done: %w", e)
+		}
+		fmt.Fprintf(out, "backup: %s\nlibrary entry: %s (slot %d)\nto restore the previous state: %s\n", backupPath, libID, eqBefore.Slot, restoreCmd)
 	}
 	if !env.have("pactl") || !env.have("pw-cat") {
 		return errors.New("hearing run needs pactl and pw-cat (PipeWire) in PATH")
@@ -485,15 +518,21 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	}()
 
 	var stopTone func() error
+	// stopNow stops the tone and returns the player's verdict (nil when none
+	// was playing).
+	stopNow := func() error {
+		if stopTone == nil {
+			return nil
+		}
+		e := stopTone()
+		stopTone = nil
+		return e
+	}
 	endTone := func() {
-		if stopTone != nil {
-			if e := stopTone(); e != nil {
-				warnf("tone: %v", e)
-			}
-			stopTone = nil
+		if e := stopNow(); e != nil {
+			warnf("tone: %v", e)
 		}
 	}
-	undo = append(undo, endTone)
 
 	// Music: pause what is Playing (resume only that), confirm it is paused,
 	// then refuse to go on while any stream still plays into the sink.
@@ -586,7 +625,11 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		}
 		modeOn = false
 		if _, e := link.hearingMode(false); e != nil {
-			warnf("could not switch the test mode off (%v); run: qcyctl hearing mode off --yes", e)
+			msg := "run: qcyctl hearing mode off --yes"
+			if restoreCmd != "" {
+				msg += "; to restore the previous state: " + restoreCmd
+			}
+			warnf("could not switch the test mode off (%v); %s", e, msg)
 		}
 	}
 	undo = append(undo, modeOff)
@@ -624,6 +667,10 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		undo = append(undo, func() { close(stopPing); wg.Wait() })
 	}
 
+	// The tone is the first thing the cleanup silences, before the volume is
+	// put back and the music resumed (undo runs last-registered first).
+	undo = append(undo, endTone)
+
 	// 3. The staircase.
 	keyCh := make(chan byte, 16)
 	keyErr := make(chan error, 1)
@@ -642,8 +689,15 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			keyCh <- k
 		}
 	}()
-	waitKey := func() (byte, error) {
+	waitKey := func(dead <-chan struct{}) (byte, error) {
+		select { // a dead tone wins over a queued key
+		case <-dead:
+			return 0, errToneDead
+		default:
+		}
 		select {
+		case <-dead:
+			return 0, errToneDead
 		case k := <-keyCh:
 			return k, nil
 		case e := <-keyErr:
@@ -680,6 +734,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	fmt.Fprintln(out, "keys: h/Enter = I hear it   n/space = I do not   r = repeat   q = abort")
 	sess := hearing.NewSession(o.soundDB)
 	var answers []heardRec
+	fails := map[int]int{}
 	for !sess.Done() {
 		t := sess.Current()
 		fmt.Fprintf(out, "[%2d] %-5s ear  band %d/%d  %5d Hz  step %+d  %6.1f dBFS ... ", len(answers)+1, t.Ear, t.Band+1, hearing.Bands, t.Freq, t.Gain, t.LevelDB)
@@ -694,15 +749,20 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 				fmt.Fprintln(out)
 				return e
 			}
-			stop, e := env.player.Start(sink, t.Ear, t.Freq, t.LevelDB)
+			stop, dead, e := env.player.Start(sink, t.Ear, t.Freq, t.LevelDB)
 			if e != nil {
 				return fmt.Errorf("play tone: %w", e)
 			}
 			stopTone = stop
 			var key byte
+			died := false
 		keyLoop:
 			for {
-				k, e := waitKey()
+				k, e := waitKey(dead)
+				if errors.Is(e, errToneDead) {
+					died = true
+					break keyLoop
+				}
 				if e != nil {
 					endTone()
 					fmt.Fprintln(out)
@@ -714,11 +774,34 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 					break keyLoop
 				}
 			}
-			endTone()
-			switch key {
-			case 'q', 'Q':
+			if !died {
+				select {
+				case <-dead:
+					died = true
+				default:
+				}
+			}
+			stopErr := stopNow()
+			if key == 'q' || key == 'Q' {
 				fmt.Fprintln(out, "aborted")
 				return errors.New("aborted by the listener (q); nothing was written")
+			}
+			if stopErr != nil {
+				died = true
+			}
+			if died {
+				// The tone was not (fully) played: the answer, if any, is not
+				// a measurement. Replay it, a bounded number of times.
+				id := int(t.Ear)*hearing.Bands + t.Band
+				fails[id]++
+				if fails[id] > maxToneRetries {
+					fmt.Fprintln(out)
+					return fmt.Errorf("the tone player kept failing at %s ear %d Hz (%v); aborted, nothing was written", t.Ear, t.Freq, stopErr)
+				}
+				fmt.Fprintf(out, "tone interrupted, answer discarded, repeating (%d/%d) ... ", fails[id], maxToneRetries)
+				continue
+			}
+			switch key {
 			case 'r', 'R':
 				fmt.Fprint(out, "repeat ... ")
 			case 'h', 'H', '\r', '\n':
@@ -766,29 +849,10 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			_ = save()
 			return e
 		}
-		cfg, e := env.configDir()
-		if e != nil {
-			return fmt.Errorf("backup: %w", e)
-		}
-		stamp := env.now().Format("20060102-150405")
-		libID, e := env.saveCurve("backup antes do teste auditivo "+stamp, eqBefore)
-		if e != nil {
-			return fmt.Errorf("backup: library entry failed, nothing was written to the earbuds: %w", e)
-		}
-		restore := "qcyctl library apply " + libID + " --yes"
-		dir := filepath.Join(cfg, "backups")
-		if e := os.MkdirAll(dir, 0o700); e != nil {
-			return fmt.Errorf("backup: %w", e)
-		}
-		bk := filepath.Join(dir, "hearing-before-"+stamp+".json")
-		if e := writeJSONFile(bk, hearingBackup{Timestamp: stamp, Status: st, Eq: eqBefore, Library: libID, Restore: restore}); e != nil {
-			return fmt.Errorf("backup failed, nothing was written to the earbuds: %w", e)
-		}
-		rec.Backup, rec.Restore = bk, restore
-		fmt.Fprintf(out, "backup: %s\nlibrary entry: %s (slot %d)\n", bk, libID, eqBefore.Slot)
-
+		rec.Backup, rec.Restore = backupPath, restoreCmd
 		var li, ri [hearing.Bands]int = l, r
 		wrote := 0
+		var unconfirmed []string
 		for _, w := range []struct {
 			ear         hearing.Ear
 			gains, peer [hearing.Bands]int
@@ -800,7 +864,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 				if wrote > 0 {
 					state = "MIXED STATE: the left ear was written and the right was not"
 				}
-				fmt.Fprintf(out, "ERROR writing the %s ear: %v\n%s; to restore the previous state: %s\n", w.ear, e, state, restore)
+				fmt.Fprintf(out, "ERROR writing the %s ear: %v\n%s; to restore the previous state: %s\n", w.ear, e, state, restoreCmd)
 				return fmt.Errorf("write %s ear: %w", w.ear, e)
 			}
 			wrote++
@@ -812,8 +876,11 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 				fmt.Fprintf(out, "  readback failed: %s", c.ReadbackError)
 			}
 			fmt.Fprintln(out)
+			if !writeConfirmed(c, w.gains) {
+				unconfirmed = append(unconfirmed, w.ear.String())
+				fmt.Fprintf(out, "NOT CONFIRMED: the earbuds sent no echo for the %s ear and the 0x22 readback does not show the written curve; to restore the previous state: %s\n", w.ear, restoreCmd)
+			}
 		}
-		rec.Applied = true
 		modeOff()
 		if snap, e := link.eqRead(); e != nil {
 			warnf("final read: %v", e)
@@ -821,13 +888,53 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			rec.Final = snap
 			fmt.Fprintf(out, "device now reports: slot %d %q masterGain %.2f dB, %d bands\n", snap.Slot, snap.Effect, snap.MasterGain, len(snap.Bands))
 		}
-		fmt.Fprintf(out, "to restore the previous state: %s\n", restore)
+		if len(unconfirmed) > 0 {
+			_ = save()
+			return fmt.Errorf("write NOT CONFIRMED for the %s ear: the result may not have been applied (restore: %s)", strings.Join(unconfirmed, " and "), restoreCmd)
+		}
+		rec.Applied = true
+		fmt.Fprintf(out, "to restore the previous state: %s\n", restoreCmd)
 	case o.apply:
 		fmt.Fprintln(out, "--apply needs --yes: nothing was written to the earbuds.")
 	default:
 		fmt.Fprintln(out, "nothing was written to the earbuds (use --apply --yes to write).")
 	}
 	return save()
+}
+
+// writeConfirmed: the device echoed the opcode, or its 0x22 readback shows the
+// master gain and the eight written bands (matched by frequency, within 0.1 dB).
+func writeConfirmed(c *hearingCall, gains [hearing.Bands]int) bool {
+	if c.Ack {
+		return true
+	}
+	if c.Readback == nil || c.MasterGain == nil {
+		return false
+	}
+	if d := c.Readback.MasterGain - *c.MasterGain; d > 0.051 || d < -0.051 {
+		return false
+	}
+	p, err := hex.DecodeString(c.Readback.Payload)
+	if err != nil {
+		return false
+	}
+	snap, err := qcycore.DecodeEq(p)
+	if err != nil {
+		return false
+	}
+	for i, g := range gains {
+		ok := false
+		for _, b := range snap.Bands {
+			if b.Freq == hearing.Freqs[i] && b.Gain-float64(g) < 0.101 && float64(g)-b.Gain < 0.101 {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func writeJSONFile(path string, v interface{}) error {
@@ -906,14 +1013,14 @@ const (
 	toneStopGrace     = 600 * time.Millisecond
 )
 
-func (p pwcatPlayer) Start(sink string, ear hearing.Ear, freq int, levelDB float64) (func() error, error) {
+func (p pwcatPlayer) Start(sink string, ear hearing.Ear, freq int, levelDB float64) (func() error, <-chan struct{}, error) {
 	bin := p.bin
 	if bin == "" {
 		bin = "pw-cat"
 	}
 	pr, pw, err := os.Pipe()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	shrinkPipe(pw)
 	cmd := exec.Command(bin, "--playback", "--target", sink,
@@ -923,9 +1030,15 @@ func (p pwcatPlayer) Start(sink string, ear hearing.Ear, freq int, levelDB float
 	if err := cmd.Start(); err != nil {
 		pr.Close()
 		pw.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	pr.Close()
+	dead := make(chan struct{})
+	var deadOnce sync.Once
+	markDead := func() { deadOnce.Do(func() { close(dead) }) }
+	exited := make(chan struct{})
+	go func() { _ = cmd.Wait(); markDead(); close(exited) }()
+
 	synth := hearing.NewSynth(ear, freq, levelDB)
 	ramp := hearing.RampSamples()
 	quit := make(chan struct{})
@@ -933,11 +1046,15 @@ func (p pwcatPlayer) Start(sink string, ear hearing.Ear, freq int, levelDB float
 	write := func(b []byte) error {
 		_ = pw.SetWriteDeadline(time.Now().Add(toneWriteDeadline))
 		_, e := pw.Write(b)
+		if e != nil {
+			markDead()
+		}
 		return e
 	}
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
+				markDead()
 				done <- fmt.Errorf("tone writer panicked: %v", r)
 			}
 		}()
@@ -958,7 +1075,7 @@ func (p pwcatPlayer) Start(sink string, ear hearing.Ear, freq int, levelDB float
 			}
 		}
 	}()
-	return func() error {
+	stop := func() error {
 		close(quit)
 		var werr error
 		select {
@@ -973,8 +1090,6 @@ func (p pwcatPlayer) Start(sink string, ear hearing.Ear, freq int, levelDB float
 			}
 		}
 		pw.Close()
-		exited := make(chan struct{})
-		go func() { _ = cmd.Wait(); close(exited) }()
 		select {
 		case <-exited:
 		case <-time.After(toneStopGrace):
@@ -985,15 +1100,16 @@ func (p pwcatPlayer) Start(sink string, ear hearing.Ear, freq int, levelDB float
 			}
 		}
 		return werr
-	}, nil
+	}
+	return stop, dead, nil
 }
 
 // guardedPlayer refuses to play while hardware is disabled (tests).
 type guardedPlayer struct{ tonePlayer }
 
-func (g guardedPlayer) Start(sink string, ear hearing.Ear, freq int, level float64) (func() error, error) {
+func (g guardedPlayer) Start(sink string, ear hearing.Ear, freq int, level float64) (func() error, <-chan struct{}, error) {
 	if err := refuseHardware(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	return g.tonePlayer.Start(sink, ear, freq, level)
 }
