@@ -1086,8 +1086,8 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 		// them; on units that stay silent the capability is false and the UI
 		// never offers the control.
 		"spatial": 0x2D, "fit": 0x11,
-		// Wear-sensor sensitivity: [1 medium, 2 normal, 3 high]. Read from the
-		// vendor app; not yet confirmed on hardware (PROTOCOL.md).
+		// Wear-sensor sensitivity: [1 medium, 2 normal, 3 high]. Frame
+		// FF 03 48 01 p, verified on the N70 2026-10-13 (PROTOCOL.md).
 		"wearSensitivity": 0x48,
 		// Find my earbuds = make the indicator LED blink. An audible tone is
 		// useless here: a lost earbud is by definition not in your ear, so it
@@ -1181,10 +1181,9 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 }
 
 // promptVolWritable switches the 0x1D prompt-volume write on. The earlier
-// "ignores every value" measurement used a one-byte frame and values outside
-// the list the vendor app sends; the app's frame (FF 04 1D 02 <v> 00, v in
-// 4/6/8/10) is not yet confirmed on hardware. Set false to restore the
-// read-only behaviour.
+// "ignores every value" measurement used a one-byte frame; the app's frame
+// (FF 04 1D 02 <v> 00, v in 4/6/8/10) is verified on the N70 (2026-10-13).
+// Set false to restore the read-only behaviour.
 const promptVolWritable = true
 
 // n70PromptVolumeSteps is the value list the vendor server gives the N70
@@ -1226,8 +1225,8 @@ func prepareSetter(action string, params, expect []byte) ([]byte, []byte, error)
 }
 
 // fitStart / fitStop are the frames the vendor app sends for the ear-tip fit
-// test (FF 05 11 03 01 01 01 / FF 05 11 03 00 00 00). Not yet confirmed on
-// hardware.
+// test (FF 05 11 03 01 01 01 / FF 05 11 03 00 00 00), verified on the N70
+// 2026-10-13.
 var (
 	fitStart = []byte{1, 1, 1}
 	fitStop  = []byte{0, 0, 0}
@@ -1624,9 +1623,9 @@ func buildReadOnlyCmds() map[string]string {
 		"ldac": "writing it reboots the earbuds (undocumented firmware fault)",
 	}
 	if !promptVolWritable {
-		// 0x1D read back 06 0f (value 6, max 15) for every one-byte value
-		// written. The app's two-byte frame is behind promptVolWritable.
-		m["promptVol"] = "reports a sane maximum but ignores every value written"
+		// One-byte writes to 0x1D were ignored (read back 06 0f). The
+		// two-byte frame FF 04 1D 02 v 00 is verified on the N70 (2026-10-13).
+		m["promptVol"] = "one-byte writes were ignored; the two-byte frame is not in use"
 	}
 	return m
 }
