@@ -694,3 +694,24 @@ recent entry with slot 11) with a note stating when that copy was read. With no
 copy and no active slot 11 the write is refused unless `--no-slot11-backup` is
 given. Restore with `qcyctl library apply <id> --yes`.
 
+**Measured on a MeloBuds N70 (first real write of 0x46/0x47 index 11).** The
+earbuds sent NO echo for 0x46 or 0x47 (`ack=false` for both). Afterwards the
+0x22 reports slot 11 active ("Experiência auditiva"), the written master gain
+(-10 dB) and 13 bands: positions 0-4 are the 5 bands of the default effect
+(50/200/900/2800/8000 Hz, Q 60/60/70/120/350, which the firmware prefixes) and
+positions 5-12 are the 8 test bands (63..8000 Hz, Q 70, type 2) with the gains
+of the LEFT ear. The right ear, written last, does not appear: the 0x22 reports
+one ear only. Consequences for the tool:
+
+- the readback is compared **by position** (the last 8 bands; 13 or a bare 8 are
+  accepted), never by frequency: the default effect's 8000 Hz band collides
+  with the test's 8000 Hz band;
+- the left ear is confirmed by that readback (master within 0.05 dB, bands
+  within 0.1 dB); the right ear has no independent reading and is reported as
+  "left confirmed by readback; right sent, not independently verifiable (0x22
+  reports the left ear)". That is a PARTIAL confirmation and counts as success
+  (exit 0, the `experiencia-auditiva` card is updated with a note saying so),
+  provided the right-write readback shows the left curve just confirmed and the
+  written master. If the left does not match, or the readback shows something
+  else, the result is "NOT CONFIRMED" as before.
+

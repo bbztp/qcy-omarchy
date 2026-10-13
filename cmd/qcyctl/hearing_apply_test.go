@@ -874,3 +874,107 @@ func TestSlot11BackupCloneIsThePreviousVersionThenTheCardIsReplaced(t *testing.T
 		t.Fatalf("the card was not replaced: %+v", cur)
 	}
 }
+
+// ---------- readback of the measured device model ----------
+
+func call13(t *testing.T, shown [hearing.Bands]int, master float64) *hearingCall {
+	t.Helper()
+	mg := master
+	c := &hearingCall{MasterGain: &mg}
+	c.Readback = &struct {
+		Slot       int     `json:"slot"`
+		Effect     string  `json:"effect,omitempty"`
+		MasterGain float64 `json:"masterGain"`
+		Payload    string  `json:"payload"`
+	}{Slot: 11, MasterGain: master, Payload: deviceReadback(shown, master)}
+	return c
+}
+
+func TestWriteConfirmedReadsTheLast8BandsByPosition(t *testing.T) {
+	left := [hearing.Bands]int{-4, -4, -2, -6, -1, -1, -1, -2}
+	c := call13(t, left, -10)
+	if !writeConfirmed(c, left) {
+		t.Fatal("the 13-band readback (5 default-effect bands + 8 test bands) was not accepted")
+	}
+	// The 8000 Hz band of the default effect has gain -7: matching it by
+	// frequency would let a wrong 8000 Hz test band through.
+	wrong := left
+	wrong[7] = -7 // what the prefix band says
+	c2 := call13(t, left, -10)
+	if writeConfirmed(c2, wrong) {
+		t.Fatal("matched by frequency against the default effect's 8000 Hz band")
+	}
+	// and the other way round: the test band says -2, the prefix -7
+	if !writeConfirmed(call13(t, left, -10), left) {
+		t.Fatal("rejected the genuine tail")
+	}
+	// one band off, or the master off: not confirmed
+	off := left
+	off[3] = -5
+	if writeConfirmed(call13(t, off, -10), left) {
+		t.Fatal("a divergent band was accepted")
+	}
+	cm := call13(t, left, -10)
+	cm.Readback.MasterGain = -9
+	if writeConfirmed(cm, left) {
+		t.Fatal("a divergent master was accepted")
+	}
+	// 12 or 14 bands are not a layout we know
+	c3 := call13(t, left, -10)
+	c3.Readback.Payload = c3.Readback.Payload[:len(c3.Readback.Payload)-14]
+	if writeConfirmed(c3, left) {
+		t.Fatal("an unknown band count was accepted")
+	}
+}
+
+// What the device really does: no echo, the 0x22 shows the LEFT ear. The left
+// is confirmed by readback and the right is sent but not independently
+// verifiable: success, exit 0, the card is updated with a note saying so.
+func TestHearingApplyLeftConfirmedRightUnverifiableIsSuccess(t *testing.T) {
+	r := newRig(t, nil)
+	p := resultFileFrom(t, func(i int) bool { return i%2 == 0 }, nil)
+	if l, rr, _, _, err := loadHearingResult(p); err != nil || l == rr {
+		t.Fatalf("the test needs two different ears: %v %v %v", l, rr, err)
+	}
+	err := hearingApplyFile(r.env, p, hearingApplyOpts{yes: true, acceptFloor: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := r.out.String()
+	if !strings.Contains(out, "left confirmed by readback; right sent, not independently verifiable (0x22 reports the left ear)") ||
+		strings.Contains(out, "NOT CONFIRMED") {
+		t.Fatal(out)
+	}
+	if len(r.recorded) != 1 || !strings.Contains(r.recorded[0].Note, "não verificável de forma independente") {
+		t.Fatalf("recorded %d", len(r.recorded))
+	}
+}
+
+func TestHearingApplyDivergentLeftIsNotConfirmed(t *testing.T) {
+	r := newRig(t, nil)
+	other := [hearing.Bands]int{1, 1, 1, 1, 1, 1, 1, 1}
+	r.link.forceShown = &other
+	err := hearingApplyFile(r.env, resultFileFrom(t, func(i int) bool { return i%2 == 0 }, nil), hearingApplyOpts{yes: true, acceptFloor: true})
+	if err == nil || !strings.Contains(err.Error(), "NOT CONFIRMED") || len(r.recorded) != 0 {
+		t.Fatalf("%v recorded %d", err, len(r.recorded))
+	}
+	if !strings.Contains(r.out.String(), "NOT CONFIRMED") {
+		t.Fatal(r.out.String())
+	}
+}
+
+// If the readback after the right write shows neither the right nor the left
+// curve it is not "unverifiable", it is wrong.
+func TestHearingApplyRightReadbackShowingSomethingElseIsNotConfirmed(t *testing.T) {
+	r := newRig(t, nil)
+	r.link.onWrite = func(n int, c *hearingCall) {
+		if n == 2 { // the right write
+			junk := [hearing.Bands]int{5, 5, 5, 5, 5, 5, 5, 5}
+			c.Readback.Payload = deviceReadback(junk, *c.MasterGain)
+		}
+	}
+	err := hearingApplyFile(r.env, resultFileFrom(t, func(i int) bool { return i%2 == 0 }, nil), hearingApplyOpts{yes: true, acceptFloor: true})
+	if err == nil || !strings.Contains(err.Error(), "NOT CONFIRMED for the right ear") || len(r.recorded) != 0 {
+		t.Fatalf("%v", err)
+	}
+}

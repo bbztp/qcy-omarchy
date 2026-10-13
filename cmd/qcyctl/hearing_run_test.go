@@ -134,6 +134,11 @@ type fakeLink struct {
 	ack            bool
 	noReadback     bool
 	badReadback    bool
+	// the device model: the 0x22 shows the left ear's curve
+	leftGains  [hearing.Bands]int
+	haveLeft   bool
+	forceShown *[hearing.Bands]int // what the readback shows instead (a divergent left)
+	onWrite    func(n int, c *hearingCall)
 }
 
 func (l *fakeLink) rec(s string) {
@@ -207,16 +212,26 @@ func (l *fakeLink) hearingWrite(ear hearing.Ear, g, o [hearing.Bands]int) (*hear
 	if l.writeErr != nil {
 		return nil, l.writeErr
 	}
-	// The device reports the curve it was given (slot 11, same band layout
-	// as the 0x46 body) unless the test says otherwise.
+	// The device model measured on the N70: no echo, and the 0x22 afterwards
+	// reports slot 11 with 13 bands (the 5 of the default effect, then the 8
+	// test bands) of the LEFT ear only, the right one never shows up.
 	mg := hearing.MasterGain(toF(g))
 	if m2 := hearing.MasterGain(toF(o)); m2 < mg {
 		mg = m2
 	}
 	mg, _ = hearing.ClampMaster(mg)
+	l.mu.Lock()
+	if ear == hearing.Left || !l.haveLeft {
+		l.leftGains, l.haveLeft = g, true
+	}
+	shown := l.leftGains
+	if l.forceShown != nil {
+		shown = *l.forceShown
+	}
+	l.mu.Unlock()
 	c := &hearingCall{Sent: "ff", Ack: l.ack, MasterGain: &mg}
 	if !l.noReadback {
-		pl := hex.EncodeToString(hearing.WriteFrame(ear, toF(g), mg)[4:])
+		pl := deviceReadback(shown, mg)
 		if l.badReadback {
 			pl = hex.EncodeToString(make([]byte, 143))
 		}
@@ -227,7 +242,31 @@ func (l *fakeLink) hearingWrite(ear hearing.Ear, g, o [hearing.Bands]int) (*hear
 			Payload    string  `json:"payload"`
 		}{Slot: 11, Effect: "Experiência auditiva", MasterGain: mg, Payload: pl}
 	}
+	if l.onWrite != nil {
+		l.onWrite(n, c)
+	}
 	return c, nil
+}
+
+// deviceReadback is the 0x22 payload measured after 0x46/0x47 index 11: slot
+// 11, the master gain, the 5 bands of the default effect (the 8000 Hz one
+// collides with the last test band), then the 8 test bands (Q 70, type 2).
+func deviceReadback(g [hearing.Bands]int, master float64) string {
+	b := []byte{11, 0, 0}
+	m := int16(master * 100)
+	b[1], b[2] = byte(m), byte(uint16(m)>>8)
+	put := func(freq int, gainCenti int, q int, typ byte) {
+		b = append(b, byte(freq), byte(freq>>8), byte(int16(gainCenti)), byte(uint16(int16(gainCenti))>>8), byte(q), byte(q>>8), typ)
+	}
+	put(50, 100, 60, 2)
+	put(200, -650, 60, 2)
+	put(900, -100, 70, 2)
+	put(2800, 200, 120, 2)
+	put(8000, -700, 350, 2)
+	for i, v := range g {
+		put(hearing.Freqs[i], v*100, 70, 2)
+	}
+	return hex.EncodeToString(b)
 }
 
 func toF(g [hearing.Bands]int) [hearing.Bands]float64 {

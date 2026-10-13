@@ -875,40 +875,80 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	return save()
 }
 
-// writeConfirmed: the device echoed the opcode, or its 0x22 readback shows the
-// master gain and the eight written bands (matched by frequency, within 0.1 dB).
-func writeConfirmed(c *hearingCall, gains [hearing.Bands]int) bool {
-	if c.Ack {
-		return true
-	}
-	if c.Readback == nil || c.MasterGain == nil {
-		return false
-	}
-	if d := c.Readback.MasterGain - *c.MasterGain; d > 0.051 || d < -0.051 {
-		return false
+// readbackTail returns the eight test bands of a 0x22 readback. Measured on
+// the N70 after 0x46/0x47 index 11: slot 11 active, 13 bands = the 5 bands of
+// the default effect (50/200/900/2800/8000 Hz) at positions 0-4 followed by
+// the 8 test bands at positions 5-12; a bare 8-band payload is accepted too.
+// The tail is taken BY POSITION: the 8000 Hz band of the default effect would
+// collide with the 8000 Hz test band in a lookup by frequency.
+func readbackTail(c *hearingCall) ([]qcycore.EqBand, bool) {
+	if c.Readback == nil {
+		return nil, false
 	}
 	p, err := hex.DecodeString(c.Readback.Payload)
 	if err != nil {
-		return false
+		return nil, false
 	}
 	snap, err := qcycore.DecodeEq(p)
 	if err != nil {
+		return nil, false
+	}
+	n := len(snap.Bands)
+	if n != hearing.Bands && n != 5+hearing.Bands {
+		return nil, false
+	}
+	return snap.Bands[n-hearing.Bands:], true
+}
+
+// tailMatches compares the tail positionally with whole-dB gains (0.1 dB).
+func tailMatches(tail []qcycore.EqBand, gains [hearing.Bands]int) bool {
+	if len(tail) != hearing.Bands {
 		return false
 	}
 	for i, g := range gains {
-		ok := false
-		for _, b := range snap.Bands {
-			if b.Freq == hearing.Freqs[i] && b.Gain-float64(g) < 0.101 && float64(g)-b.Gain < 0.101 {
-				ok = true
-				break
-			}
-		}
-		if !ok {
+		if tail[i].Freq != hearing.Freqs[i] || tail[i].Gain-float64(g) > 0.101 || float64(g)-tail[i].Gain > 0.101 {
 			return false
 		}
 	}
 	return true
 }
+
+// readbackMasterMatches: the readback's master gain is the one written (0.05 dB).
+func readbackMasterMatches(c *hearingCall) bool {
+	if c.Readback == nil || c.MasterGain == nil {
+		return false
+	}
+	d := c.Readback.MasterGain - *c.MasterGain
+	return d <= 0.051 && d >= -0.051
+}
+
+// writeConfirmed: the device echoed the opcode, or its 0x22 readback shows the
+// master gain and the eight written bands (positionally, within 0.1 dB).
+func writeConfirmed(c *hearingCall, gains [hearing.Bands]int) bool {
+	if c.Ack {
+		return true
+	}
+	if !readbackMasterMatches(c) {
+		return false
+	}
+	tail, ok := readbackTail(c)
+	return ok && tailMatches(tail, gains)
+}
+
+// rightUnverifiable: the 0x22 reports ONE ear (measured: the left one), so
+// after the right ear is written its curve never shows up. The right write is
+// accepted as "sent, not independently verifiable" only when the readback is
+// recognisably the left curve that was just confirmed, with the written master.
+func rightUnverifiable(c *hearingCall, left [hearing.Bands]int) bool {
+	if !readbackMasterMatches(c) {
+		return false
+	}
+	tail, ok := readbackTail(c)
+	return ok && tailMatches(tail, left)
+}
+
+// earsNote is the state text stored with a partially confirmed result.
+const partialConfirmNote = "esquerda confirmada pelo readback do 0x22; direita enviada, não verificável de forma independente (o 0x22 reporta a orelha esquerda)"
 
 // printFloor prints the per-ear gains with the floor bands marked and returns
 // how many bands are at the floor.

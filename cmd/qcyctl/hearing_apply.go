@@ -253,6 +253,7 @@ func printBackup(out io.Writer, in hearingBackupInfo) {
 func hearingCommit(out io.Writer, link hearingLink, l, r [hearing.Bands]int, restoreCmd string, modeOff func(), record func(master float64, state string) (bool, error)) (writes []*hearingCall, final *qcycore.EqSnapshot, err error) {
 	wrote := 0
 	var unconfirmed []string
+	leftOK, partial := false, false
 	for _, w := range []struct {
 		ear         hearing.Ear
 		gains, peer [hearing.Bands]int
@@ -275,7 +276,15 @@ func hearingCommit(out io.Writer, link hearingLink, l, r [hearing.Bands]int, res
 			fmt.Fprintf(out, "  readback failed: %s", c.ReadbackError)
 		}
 		fmt.Fprintln(out)
-		if !writeConfirmed(c, w.gains) {
+		switch {
+		case writeConfirmed(c, w.gains):
+			if w.ear == hearing.Left {
+				leftOK = true
+			}
+		case w.ear == hearing.Right && leftOK && rightUnverifiable(c, l):
+			partial = true
+			fmt.Fprintln(out, "left confirmed by readback; right sent, not independently verifiable (0x22 reports the left ear)")
+		default:
 			unconfirmed = append(unconfirmed, w.ear.String())
 			fmt.Fprintf(out, "NOT CONFIRMED: the earbuds sent no echo for the %s ear and the 0x22 readback does not show the written curve; to restore the previous state: %s\n", w.ear, restoreCmd)
 		}
@@ -295,7 +304,11 @@ func hearingCommit(out io.Writer, link hearingLink, l, r [hearing.Bands]int, res
 		}
 		return writes, final, fmt.Errorf("write NOT CONFIRMED for the %s ear: the result may not have been applied (restore: %s)", strings.Join(unconfirmed, " and "), restoreCmd)
 	}
-	fmt.Fprintf(out, "applied. to restore the previous state: %s\n", restoreCmd)
+	if partial {
+		fmt.Fprintf(out, "applied (left confirmed by readback; right sent, not independently verifiable). to restore the previous state: %s\n", restoreCmd)
+	} else {
+		fmt.Fprintf(out, "applied. to restore the previous state: %s\n", restoreCmd)
+	}
 	if record != nil {
 		master := computeResult(toFloats(l), toFloats(r)).MasterGain
 		state := "confirmado pelo eco do aparelho"
@@ -303,6 +316,9 @@ func hearingCommit(out io.Writer, link hearingLink, l, r [hearing.Bands]int, res
 			if !w.Ack {
 				state = "confirmado pelo readback do 0x22"
 			}
+		}
+		if partial {
+			state = partialConfirmNote
 		}
 		// The earbuds are written; a library failure must not look like a
 		// failed write, and nothing is undone.
