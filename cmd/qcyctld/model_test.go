@@ -243,7 +243,7 @@ func TestStatusModelCarriesKeyActions(t *testing.T) {
 	if !ok {
 		t.Fatalf("model has no keyActions: %v", m)
 	}
-	for _, k := range []string{"01", "02", "03", "04", "05", "06", "09", "0a"} {
+	for _, k := range []string{"01", "02", "03", "04", "05", "06", "07", "08", "09", "0a"} {
 		if len(ka[k]) == 0 {
 			t.Errorf("key %s has no actions: %v", k, ka)
 		}
@@ -259,6 +259,16 @@ func TestStatusModelCarriesKeyActions(t *testing.T) {
 	}
 	if !have[0] || !have[1] || !have[11] {
 		t.Errorf("actions of key 01: %v", ka["01"])
+	}
+	// The quadruple keys are not in the panel but carry the same list.
+	for _, k := range []string{"07", "08"} {
+		got := map[int]bool{}
+		for _, a := range ka[k] {
+			got[a["id"].(int)] = true
+		}
+		if len(got) != len(have) || !got[0] {
+			t.Errorf("actions of key %s: %v, want those of key 01", k, ka[k])
+		}
 	}
 }
 

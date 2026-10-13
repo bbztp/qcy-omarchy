@@ -617,6 +617,11 @@ in-call gestures) and the high byte a function (`0x00` none, `0x01` play/pause,
 `0x07` game mode, `0x08`–`0x0a` call handling, `0x0b` ANC mode, as the N70 panel declares it). Ids outside
 those ranges are shown as raw hex rather than guessed at.
 
+The N70 panel does not list the quadruple keys (`0x07`, `0x08`), but the
+firmware accepts them: writing `07:01` applied and `07:00` restored it. The
+daemon therefore reports, in `model.keyActions`, the same action list for
+`07` and `08` as for the other music keys. The in-call keys stay read-only.
+
 ## Model detection
 
 The protocol carries no model name, so the daemon picks the model in this order

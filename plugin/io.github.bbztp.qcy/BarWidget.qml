@@ -995,7 +995,7 @@ Panel {
   // 000D. Ids follow Quicky's KeyID/FuncID vocabulary; an id outside it is shown
   // as-is rather than guessed at.
   readonly property var funcNames: ({
-    0x00: Qcy.tr("Disabled"), 0x01: Qcy.tr("Play/pause"), 0x02: Qcy.tr("Previous"), 0x03: Qcy.tr("Next"),
+    0x00: Qcy.tr("No function"), 0x01: Qcy.tr("Play/pause"), 0x02: Qcy.tr("Previous"), 0x03: Qcy.tr("Next"),
     0x04: Qcy.tr("Voice assistant"), 0x05: Qcy.tr("Volume +"), 0x06: Qcy.tr("Volume −"),
     0x07: Qcy.tr("Game mode"), 0x08: Qcy.tr("Answer"), 0x09: Qcy.tr("Reject"),
     0x0a: Qcy.tr("Hold call"), 0x0b: Qcy.tr("ANC mode")
@@ -1023,10 +1023,9 @@ Panel {
   property var _touchEff: []          // the same with `touchDone` applied
 
   // Editing: key id -> function id held after a confirmed write, until the
-  // next read replaces it; the key id whose action list is open; and the
-  // state of the last write ("" | running | ok | error).
+  // next read replaces it; and the state of the last write
+  // ("" | running | ok | error).
   property var touchDone: ({})
-  property int touchPick: -1
   property string touchState: ""
   property string touchMessage: ""
 
@@ -1105,15 +1104,22 @@ Panel {
     return root.funcNames[a.id] || String(a.name)
   }
 
+  // Dropdown options for a key: "No function" always first, then the panel's
+  // actions in their own order.
+  function touchOptions(kid) {
+    var opts = [{ value: "0", label: root.funcNames[0] }]
+    var list = root.touchActions(kid)
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === 0) continue
+      opts.push({ value: String(list[i].id), label: root.touchActionLabel(list[i]) })
+    }
+    return opts
+  }
+
   // Writes are for verified models that declare the music-key actions; one
   // write at a time.
   readonly property bool touchCanEdit: !!(unitModel && unitModel.verified === true && unitModel.keyActions)
     && root.touchState !== "running"
-
-  function touchTogglePick(kid) {
-    if (!root.touchCanEdit || kid < 0) return
-    root.touchPick = root.touchPick === kid ? -1 : kid
-  }
 
   // Sends the music keys as one table (the leading run of 0x01..0x0a pairs, the
   // order the earbuds report them in), with the chosen action in its place.
@@ -1128,7 +1134,6 @@ Panel {
     }
     if (!found) return
     var args = ["keys", "set", root.hex2(kid) + ":" + root.hex2(fid)]
-    root.touchPick = -1
     root.touchState = "running"
     root.touchMessage = ""
     Qcy.set("Touch controls", args, function (code, out, err) {
@@ -2794,32 +2799,12 @@ Panel {
                         && root.touchActions(touchRow.modelData.lk).length > 0
                       rightEditable: root.touchCanEdit && touchRow.modelData.rk >= 0
                         && root.touchActions(touchRow.modelData.rk).length > 0
-                      leftActive: touchRow.modelData.lk >= 0 && root.touchPick === touchRow.modelData.lk
-                      rightActive: touchRow.modelData.rk >= 0 && root.touchPick === touchRow.modelData.rk
-                      onLeftClicked: root.touchTogglePick(touchRow.modelData.lk)
-                      onRightClicked: root.touchTogglePick(touchRow.modelData.rk)
-                    }
-
-                    // The panel's actions for the cell that was clicked; the
-                    // current one is highlighted and a choice applies at once.
-                    Flow {
-                      width: parent.width
-                      spacing: Style.space(6)
-                      visible: touchRow.modelData.lk >= 0 && touchRow.modelData.rk >= 0
-                        ? (root.touchPick === touchRow.modelData.lk || root.touchPick === touchRow.modelData.rk)
-                        : (touchRow.modelData.lk >= 0 && root.touchPick === touchRow.modelData.lk)
-                          || (touchRow.modelData.rk >= 0 && root.touchPick === touchRow.modelData.rk)
-
-                      Repeater {
-                        model: root.touchPick >= 0 ? root.touchActions(root.touchPick) : []
-                        Chip {
-                          required property var modelData
-                          label: root.touchActionLabel(modelData)
-                          active: modelData.id === (root.touchPick === touchRow.modelData.lk
-                            ? touchRow.modelData.lf : touchRow.modelData.rf)
-                          onClicked: root.touchSet(root.touchPick, modelData.id)
-                        }
-                      }
+                      leftOptions: touchRow.modelData.lk >= 0 ? root.touchOptions(touchRow.modelData.lk) : []
+                      rightOptions: touchRow.modelData.rk >= 0 ? root.touchOptions(touchRow.modelData.rk) : []
+                      leftValue: String(touchRow.modelData.lf)
+                      rightValue: String(touchRow.modelData.rf)
+                      onLeftPicked: function (v) { root.touchSet(touchRow.modelData.lk, parseInt(v)) }
+                      onRightPicked: function (v) { root.touchSet(touchRow.modelData.rk, parseInt(v)) }
                     }
                   }
                 }
@@ -3528,8 +3513,8 @@ Panel {
 
   // One gesture of the remap table: the gesture on the left, then the action
   // for the Left and Right earbud. Each side elides instead of colliding with
-  // its neighbour. `header` renders the column titles instead. A side that is
-  // editable is a button: it signals a click and shows hover / open state.
+  // its neighbour. `header` renders the column titles instead. An editable side
+  // is a dropdown of the actions; choosing one emits `*Picked(value)`.
   component TouchCell: Row {
     id: cell
     required property string gesture
@@ -3538,17 +3523,20 @@ Panel {
     property bool header: false
     property bool leftEditable: false
     property bool rightEditable: false
-    property bool leftActive: false
-    property bool rightActive: false
-    signal leftClicked()
-    signal rightClicked()
+    property var leftOptions: []
+    property var rightOptions: []
+    property string leftValue: ""
+    property string rightValue: ""
+    signal leftPicked(string value)
+    signal rightPicked(string value)
     readonly property real gestureW: Style.space(96)
     readonly property real sideW: Math.max(0, (cell.width - cell.gestureW - Style.space(16)) / 2)
     spacing: Style.space(8)
 
     Text {
       width: cell.gestureW
-      topPadding: Style.space(4)
+      anchors.verticalCenter: cell.header ? undefined : parent.verticalCenter
+      topPadding: cell.header ? Style.space(4) : 0
       text: cell.gesture
       color: root.muted
       font.family: root.textFamily
@@ -3560,60 +3548,66 @@ Panel {
       text: cell.leftText
       header: cell.header
       editable: cell.leftEditable
-      open: cell.leftActive
-      onClicked: cell.leftClicked()
+      options: cell.leftOptions
+      value: cell.leftValue
+      onPicked: function (v) { cell.leftPicked(v) }
     }
     TouchSide {
       width: cell.sideW
       text: cell.rightText
       header: cell.header
       editable: cell.rightEditable
-      open: cell.rightActive
-      onClicked: cell.rightClicked()
+      options: cell.rightOptions
+      value: cell.rightValue
+      onPicked: function (v) { cell.rightPicked(v) }
     }
   }
 
-  // One side of a TouchCell.
+  // One side of a TouchCell: plain text, or a dropdown when editable.
   component TouchSide: Item {
     id: side
     required property string text
     property bool header: false
     property bool editable: false
-    property bool open: false
-    signal clicked()
+    property var options: []
+    property string value: ""
+    signal picked(string value)
 
-    implicitHeight: sideLabel.implicitHeight + Style.space(8)
+    implicitHeight: side.editable ? sideDrop.implicitHeight : sideLabel.implicitHeight + Style.space(8)
 
-    Rectangle {
-      anchors.fill: parent
-      radius: Style.cornerRadius
-      visible: side.editable
-      // At rest the soft lifted surface of a Chip marks the cell as a button.
-      color: side.open ? Style.selectedFillFor(root.foreground, root.accent)
-                       : (sideMouse.containsMouse ? Style.hoverFillFor(root.foreground, root.accent) : root.cardFill)
-    }
     Text {
       id: sideLabel
+      visible: !side.editable
       anchors.left: parent.left
       anchors.right: parent.right
       anchors.leftMargin: Style.space(6)
       anchors.rightMargin: Style.space(6)
       anchors.verticalCenter: parent.verticalCenter
       text: side.text
-      color: side.header ? root.muted : (side.open ? root.accent : root.foreground)
+      color: side.header ? root.muted : root.foreground
       font.family: root.textFamily
       font.pixelSize: side.header ? Style.font.caption : Style.font.bodySmall
       font.bold: side.header
       font.letterSpacing: side.header ? 1.2 : 0
       elide: Text.ElideRight
     }
-    MouseArea {
-      id: sideMouse
-      anchors.fill: parent
-      enabled: side.editable
-      hoverEnabled: true
-      cursorShape: side.editable ? Qt.PointingHandCursor : Qt.ArrowCursor
-      onClicked: side.clicked()
+    Dropdown {
+      id: sideDrop
+      visible: side.editable
+      anchors.left: parent.left
+      anchors.right: parent.right
+      showLabel: false
+      rowHeight: Style.space(30)
+      foreground: root.foreground
+      accent: root.accent
+      fontFamily: root.textFamily
+      options: side.options
+      value: side.value
+      onChanged: function (v) {
+        // Keep showing what the earbuds report; a confirmed write updates it.
+        sideDrop.value = Qt.binding(function () { return side.value })
+        side.picked(v)
+      }
     }
   }
 

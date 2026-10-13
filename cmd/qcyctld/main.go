@@ -1862,6 +1862,16 @@ func keyActionsFor(vendorID uint16) map[string][]map[string]interface{} {
 			}
 		}
 	}
+	// The quadruple-tap keys (0x07 left, 0x08 right) are not listed by the
+	// panel but the firmware accepts them (a write of 0x07 was applied and
+	// reverted on hardware); they take the list of the group's other keys.
+	if tmpl, ok := out["01"]; ok {
+		for _, k := range []string{"07", "08"} {
+			if _, have := out[k]; !have {
+				out[k] = tmpl
+			}
+		}
+	}
 	return out
 }
 
