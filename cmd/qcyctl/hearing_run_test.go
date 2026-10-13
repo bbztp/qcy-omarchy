@@ -1227,8 +1227,10 @@ func TestHearingRunCmdFlags(t *testing.T) {
 			t.Errorf("%v accepted", args)
 		}
 	}
-	// A valid real run in the test sandbox stops at the hardware guard.
-	if err := hearingMain([]string{"run"}, &b); err == nil || !strings.Contains(err.Error(), errHardwareDisabled.Error()) {
+	// A valid real run in the test sandbox stops at the hardware guard, or
+	// earlier when the audio tools are not installed (CI runners).
+	if err := hearingMain([]string{"run"}, &b); err == nil ||
+		(!strings.Contains(err.Error(), errHardwareDisabled.Error()) && !strings.Contains(err.Error(), "needs pactl and pw-cat")) {
 		t.Fatalf("real run reached outside the sandbox: %v", err)
 	}
 }
