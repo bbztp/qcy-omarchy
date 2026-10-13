@@ -638,7 +638,11 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	if err != nil {
 		return fmt.Errorf("hearing run needs the qcyctld daemon: %w", err)
 	}
-	defer link.Close()
+	// Closed by the undo chain, NOT by a loose defer: a deferred Close would
+	// run before the chain (LIFO) and the test-mode off frame would hit a
+	// closed connection. Registered here, it runs after everything registered
+	// later (tone, mode off, volume).
+	undo = append(undo, func() { _ = link.Close() })
 	verified, err := link.capabilities()
 	if err != nil {
 		return fmt.Errorf("capabilities: %w", err)
@@ -1486,6 +1490,10 @@ func liveExec(name string, args ...string) (string, error) {
 // liveMonitor records ~0.4 s of one sink-input with parec (read only).
 // --monitor-stream taps the stream before the sink's volume and mute, so a
 // quiet sink does not hide it; the stream's own volume still applies.
+// Evidence (measured live, sink at 30%): the plain sink monitor read a peak of
+// 15047 from ANOTHER stream (Brave), while --monitor-stream=<index> isolated
+// our -50 dBFS tone and read 38, i.e. pre-sink-volume (post-volume it would
+// have been about 1).
 func liveMonitor(sink, streamID string) ([]byte, error) {
 	if err := refuseHardware(); err != nil {
 		return nil, err

@@ -127,10 +127,13 @@ type fakeLink struct {
 	onMode      func(on bool)
 	statusCalls int
 	eqCalls     int
-	modeOffErr  error
-	ack         bool
-	noReadback  bool
-	badReadback bool
+	closed      bool
+	// usedAfterClose: some call hit the link after Close.
+	usedAfterClose bool
+	modeOffErr     error
+	ack            bool
+	noReadback     bool
+	badReadback    bool
 }
 
 func (l *fakeLink) rec(s string) {
@@ -138,14 +141,41 @@ func (l *fakeLink) rec(s string) {
 	l.events = append(l.events, s)
 	l.mu.Unlock()
 }
+
+// useClosed reports (and records) a call made after Close, which fails like a
+// real closed socket would.
+func (l *fakeLink) useClosed() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		l.usedAfterClose = true
+		return errors.New("use of closed connection")
+	}
+	return nil
+}
+
 func (l *fakeLink) status() (map[string]interface{}, error) {
+	if err := l.useClosed(); err != nil {
+		return nil, err
+	}
 	l.mu.Lock()
 	l.statusCalls++
 	l.mu.Unlock()
 	return map[string]interface{}{"model": map[string]interface{}{"verified": l.verified}, "eq": map[string]interface{}{"slot": 6}}, nil
 }
-func (l *fakeLink) capabilities() (bool, error) { return l.verified, nil }
+func (l *fakeLink) capabilities() (bool, error) {
+	if err := l.useClosed(); err != nil {
+		return false, err
+	}
+	return l.verified, nil
+}
 func (l *fakeLink) hearingMode(on bool) (*hearingCall, error) {
+	if err := l.useClosed(); err != nil {
+		if !on {
+			l.rec("mode:off-FAILED-closed")
+		}
+		return nil, err
+	}
 	if on {
 		l.rec("mode:on")
 	} else {
@@ -163,6 +193,9 @@ func (l *fakeLink) hearingMode(on bool) (*hearingCall, error) {
 	return &hearingCall{Sent: "ff0345010x"}, nil
 }
 func (l *fakeLink) hearingWrite(ear hearing.Ear, g, o [hearing.Bands]int) (*hearingCall, error) {
+	if err := l.useClosed(); err != nil {
+		return nil, err
+	}
 	l.rec("write:" + ear.String())
 	l.mu.Lock()
 	l.nWrites++
@@ -205,6 +238,9 @@ func toF(g [hearing.Bands]int) [hearing.Bands]float64 {
 	return o
 }
 func (l *fakeLink) eqRead() (*qcycore.EqSnapshot, error) {
+	if err := l.useClosed(); err != nil {
+		return nil, err
+	}
 	l.mu.Lock()
 	l.eqCalls++
 	l.mu.Unlock()
@@ -218,7 +254,12 @@ func (l *fakeLink) ping() {
 		panic("ping boom")
 	}
 }
-func (l *fakeLink) Close() error { return nil }
+func (l *fakeLink) Close() error {
+	l.mu.Lock()
+	l.closed = true
+	l.mu.Unlock()
+	return nil
+}
 
 func (l *fakeLink) list() string {
 	l.mu.Lock()
@@ -1045,7 +1086,7 @@ func TestPwcatStopNeverHangs(t *testing.T) {
 
 func TestHearingModeCmd(t *testing.T) {
 	lk := &fakeLink{}
-	dial := func() (hearingLink, error) { return lk, nil }
+	dial := func() (hearingLink, error) { lk.closed = false; return lk, nil } // a fresh connection per call
 	var b bytes.Buffer
 	for _, args := range [][]string{{"on"}, {"--yes"}, {"maybe", "--yes"}, {}} {
 		if err := hearingModeCmd(args, &b, dial); err == nil {
@@ -1773,4 +1814,57 @@ func TestHearingRunUnknownKeysAreIgnored(t *testing.T) {
 	if strings.Contains(r.out.String(), "repeat ... ") {
 		t.Fatal("an unknown key restarted the tone")
 	}
+}
+
+// The test-mode off frame must go out while the connection is still open, on
+// every way out of the run (the link is closed LAST).
+func TestHearingRunModeOffIsSentBeforeTheLinkIsClosed(t *testing.T) {
+	check := func(t *testing.T, r *rig, wantErr bool, err error) {
+		t.Helper()
+		if (err != nil) != wantErr {
+			t.Fatalf("err = %v", err)
+		}
+		ev := r.link.list()
+		if !strings.Contains(ev, "mode:on") || !strings.HasSuffix(ev, "mode:off") {
+			t.Fatalf("events %s", ev)
+		}
+		if r.link.usedAfterClose || strings.Contains(ev, "FAILED") {
+			t.Fatalf("a call hit the closed connection: %s", ev)
+		}
+		if !r.link.closed {
+			t.Fatal("the link was never closed")
+		}
+	}
+	t.Run("normal end", func(t *testing.T) {
+		r := newRig(t, cycleKeys())
+		err := hearingRunLive(r.env, opts())
+		check(t, r, false, err)
+	})
+	t.Run("abort key", func(t *testing.T) {
+		r := newRig(t, nil)
+		r.env.keys = func() (keySource, func(), error) { return pacedKeys(r.pl, "nq"), func() { *r.ttyRestored++ }, nil }
+		err := hearingRunLive(r.env, opts())
+		check(t, r, true, err)
+	})
+	t.Run("error", func(t *testing.T) {
+		r := newRig(t, cycleKeys())
+		r.link.failWriteOn = 1
+		o := opts()
+		o.apply, o.yes = true, true
+		err := hearingRunLive(r.env, o)
+		check(t, r, true, err)
+	})
+	t.Run("sigint", func(t *testing.T) {
+		block := make(chan struct{})
+		t.Cleanup(func() { close(block) })
+		r := newRig(t, fnKeys{func() (byte, error) { <-block; return 0, io.EOF }})
+		sigs := make(chan os.Signal, 1)
+		r.env.sigs = sigs
+		go func() {
+			waitStarted(r.pl, 1)
+			sigs <- syscall.SIGINT
+		}()
+		err := hearingRunLive(r.env, opts())
+		check(t, r, true, err)
+	})
 }
