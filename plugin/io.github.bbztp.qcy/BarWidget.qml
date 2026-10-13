@@ -101,6 +101,74 @@ Panel {
   }
   // Tone of a charging battery: the accent pulled toward the foreground.
   readonly property color chargeColor: root.mix(root.accent, root.foreground, 0.45)
+  // ---- equalizer colours (the big plot and the card thumbnails) ----
+  // Only the data elements use the spectrum; panels stay on theme colours.
+  // The spectrum runs bass -> treble (red, orange, yellow, green, cyan, blue,
+  // violet); a boost is saturated, a cut is muted. Lightness follows the
+  // theme so the marks keep contrast on a light or a dark panel.
+  readonly property bool darkPanel: (0.299 * foreground.r + 0.587 * foreground.g + 0.114 * foreground.b) > 0.5
+  // t in 0..1 along the bands, db the band's gain.
+  function eqColor(t, db, alpha) {
+    var boost = db >= 0
+    var l = root.darkPanel ? (boost ? 0.62 : 0.5) : (boost ? 0.42 : 0.5)
+    return Qt.hsla(0.76 * Math.max(0, Math.min(1, t)), boost ? 0.9 : 0.35, l, alpha === undefined ? 1 : alpha)
+  }
+  // Text colour of a gain in dB: green for a boost, orange for a cut.
+  function gainColor(db) {
+    if (!(Math.abs(db) > 0)) return root.muted
+    var l = root.darkPanel ? 0.62 : 0.36
+    return db > 0 ? Qt.hsla(0.36, 0.7, l, 1) : Qt.hsla(0.06, 0.8, l, 1)
+  }
+  // Horizontal bass -> treble gradient for the curve line and its fill.
+  function eqSpectrum(ctx, w, alpha) {
+    var g = ctx.createLinearGradient(0, 0, w, 0)
+    for (var s = 0; s <= 6; s++) g.addColorStop(s / 6, root.eqColor(s / 6, 1, alpha))
+    return g
+  }
+  // Catmull-Rom through pts as cubic segments, kept inside 1..h-1.
+  function eqTrace(ctx, pts, h, withMove) {
+    function cy(v) { return Math.max(1, Math.min(h - 1, v)) }
+    if (withMove) ctx.moveTo(pts[0].x, pts[0].y)
+    else ctx.lineTo(pts[0].x, pts[0].y)
+    for (var k = 0; k < pts.length - 1; k++) {
+      var p0 = pts[Math.max(0, k - 1)]
+      var p1 = pts[k]
+      var p2 = pts[k + 1]
+      var p3 = pts[Math.min(pts.length - 1, k + 2)]
+      ctx.bezierCurveTo(p1.x + (p2.x - p0.x) / 6, cy(p1.y + (p2.y - p0.y) / 6),
+                        p2.x - (p3.x - p1.x) / 6, cy(p2.y - (p3.y - p1.y) / 6),
+                        p2.x, p2.y)
+    }
+  }
+  // Dashed 0 dB line, drawn by hand.
+  function eqZeroLine(ctx, w, zeroY, on, off) {
+    ctx.strokeStyle = root.trackFill
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    for (var x = 0; x < w; x += on + off) {
+      ctx.moveTo(x, zeroY)
+      ctx.lineTo(Math.min(w, x + on), zeroY)
+    }
+    ctx.stroke()
+  }
+  // Gradient fill under the curve, then the curve line itself.
+  function eqPaintCurve(ctx, pts, w, h, lineWidth) {
+    ctx.beginPath()
+    ctx.moveTo(pts[0].x, h)
+    root.eqTrace(ctx, pts, h, false)
+    ctx.lineTo(pts[pts.length - 1].x, h)
+    ctx.closePath()
+    ctx.fillStyle = root.eqSpectrum(ctx, w, 0.2)
+    ctx.fill()
+
+    ctx.beginPath()
+    root.eqTrace(ctx, pts, h, true)
+    ctx.strokeStyle = root.eqSpectrum(ctx, w, 1)
+    ctx.lineWidth = lineWidth
+    ctx.lineCap = "round"
+    ctx.lineJoin = "round"
+    ctx.stroke()
+  }
   property bool saveOpen: false
   // The user effect whose small menu is open, and the one asked to be deleted.
   property string menuId: ""
@@ -2903,96 +2971,70 @@ Panel {
     }
   }
 
-  // The EQ response as a signed curve with a zero line, the axis labels and the
-  // per-band dots. Read-only — see the note above, writing a preset overwrites
-  // the slot in place.
-  component EqCurve: Item {
-    id: curve
+  // Thumbnail of an effect's EQ for the library cards: the big plot's model
+  // (a thin strip per band with a knob at the gain, the dashed 0 dB line, the
+  // smooth curve with its fill) at card scale and without labels.
+  component EqMini: Canvas {
+    id: mini
     required property var bands
-    // Mini version for library cards: shorter plot, tiny frequency labels
-    // carved out of the plot's own height so the card does not grow.
-    property bool compact: false
+    readonly property real maxDb: 12
 
-    readonly property real maxGain: 12
-    // The plot stops short of the bottom so the band labels have room INSIDE
-    // this item. They used to be anchored to the delegate's bottom edge, which
-    // put them ~2px past `height` and on top of whatever followed.
-    readonly property real plotHeight: Style.spacing.controlHeight * (curve.compact ? 1.1 : 1.6)
-    readonly property real compactLabelPx: Style.font.caption * (curve.bands.length > 10 ? 0.5 : 0.6)
-    readonly property int labelHeight: curve.compact ? 0 : Math.ceil(Style.font.caption * 0.85) + Style.space(2)
-    // Where the bars live: all of the plot, minus the label strip in compact mode.
-    readonly property real drawHeight: curve.compact ? curve.plotHeight - Math.ceil(curve.compactLabelPx) - 1 : curve.plotHeight
-    implicitHeight: plotHeight + labelHeight
+    implicitHeight: Style.spacing.controlHeight * 1.1
+    antialiasing: true
 
-    Rectangle {
-      id: zeroLine
-      anchors.left: parent.left
-      anchors.right: parent.right
-      y: curve.drawHeight / 2
-      height: 1
-      color: root.trackFill
+    onBandsChanged: mini.requestPaint()
+    onWidthChanged: mini.requestPaint()
+    onHeightChanged: mini.requestPaint()
+    Connections {
+      target: root
+      function onAccentChanged() { mini.requestPaint() }
+      function onForegroundChanged() { mini.requestPaint() }
+      function onDarkPanelChanged() { mini.requestPaint() }
     }
 
-    Repeater {
-      model: curve.bands
-      Item {
-        id: band
-        required property int index
-        required property var modelData
+    onPaint: {
+      var ctx = getContext("2d")
+      ctx.reset()
+      var n = mini.bands.length
+      var w = width
+      var h = height
+      if (n === 0 || w <= 0 || h <= 0) return
+      var zeroY = h / 2
+      var r = n > 10 ? 2 : 2.5
+      var half = h / 2 - r - 0.5
+      var slot = w / n
+      root.eqZeroLine(ctx, w, zeroY, 3, 3)
 
-        readonly property real slotWidth: curve.bands.length > 0
-          ? curve.width / curve.bands.length : curve.width
-
-        x: band.index * band.slotWidth
-        width: band.slotWidth
-        height: curve.drawHeight
-
-        // Bar grows from the 0 dB line (vertical centre of the plot): up for
-        // a boost, down for a cut, clamped to +-maxGain.
-        Rectangle {
-          id: bar
-          readonly property real gainDb: Math.max(-curve.maxGain, Math.min(curve.maxGain, Number(modelData.gain) || 0))
-          readonly property real barHeight: Math.abs(gainDb) / curve.maxGain * (parent.height / 2)
-          anchors.horizontalCenter: parent.horizontalCenter
-          width: Math.max(2, parent.width - Style.space(curve.compact ? 2 : 6))
-          height: Math.max(1, barHeight)
-          y: gainDb >= 0 ? parent.height / 2 - height : parent.height / 2
-          radius: 2
-          color: gainDb >= 0 ? root.accent : Qt.darker(root.foreground, 1.5)
-        }
-
-        Text {
-          // Compact cards: a tiny label under each mark (see drawHeight).
-          // Narrow slots: every 2nd or 3rd label only, so none runs into
-          // its neighbour.
-          visible: curve.compact && band.index % Math.max(1, Math.ceil(curve.compactLabelPx * 2.6 / band.slotWidth)) === 0
-          readonly property int hz: modelData.freq || 0
-          text: hz >= 1000
-            ? ((hz % 1000 === 0 ? (hz / 1000) : (hz / 1000).toFixed(1)) + "k")
-            : String(hz)
-          color: root.muted
-          font.family: root.fontFamily
-          font.pixelSize: curve.compactLabelPx
-          anchors.horizontalCenter: parent.horizontalCenter
-          y: curve.drawHeight + 1
-        }
-
-        Text {
-          // `root` here is the enclosing panel, exactly as it is everywhere
-          // else in this file: an inline component does NOT shadow it.
-          visible: !curve.compact
-          readonly property int hz: modelData.freq || 0
-          text: hz >= 1000
-            ? ((hz % 1000 === 0 ? (hz / 1000) : (hz / 1000).toFixed(1)) + "k")
-            : String(hz)
-          color: root.muted
-          font.family: root.fontFamily
-          // Many bands (custom curves use up to 20) means narrow slots: shrink
-          // the label with the count so neighbours do not overlap.
-          font.pixelSize: Style.font.caption * (curve.bands.length > 10 ? 0.65 : 0.85)
-          anchors.horizontalCenter: parent.horizontalCenter
-          y: curve.plotHeight + Style.space(2)
-        }
+      var pts = []
+      var dbs = []
+      for (var i = 0; i < n; i++) {
+        var db = Math.max(-mini.maxDb, Math.min(mini.maxDb, Number(mini.bands[i].gain) || 0))
+        dbs.push(db)
+        pts.push({ x: (i + 0.5) * slot, y: zeroY - db / mini.maxDb * half })
+      }
+      // Rail and the strip from 0 dB to the gain, per band.
+      for (var j = 0; j < n; j++) {
+        var t = n > 1 ? j / (n - 1) : 0
+        ctx.lineCap = "round"
+        ctx.lineWidth = 1
+        ctx.strokeStyle = root.trackFill
+        ctx.beginPath()
+        ctx.moveTo(pts[j].x, r)
+        ctx.lineTo(pts[j].x, h - r)
+        ctx.stroke()
+        ctx.lineWidth = 2
+        ctx.strokeStyle = root.eqColor(t, dbs[j])
+        ctx.beginPath()
+        ctx.moveTo(pts[j].x, zeroY)
+        ctx.lineTo(pts[j].x, pts[j].y)
+        ctx.stroke()
+      }
+      if (n > 1) root.eqPaintCurve(ctx, pts, w, h, 1.5)
+      for (var k = 0; k < n; k++) {
+        ctx.beginPath()
+        ctx.arc(pts[k].x, pts[k].y, r, 0, Math.PI * 2)
+        ctx.fillStyle = dbs[k] === 0 ? root.foreground : root.eqColor(n > 1 ? k / (n - 1) : 0, dbs[k])
+        ctx.fill()
       }
     }
   }
@@ -3514,6 +3556,26 @@ Panel {
     Behavior on color { ColorAnimation { duration: 120 } }
     Behavior on opacity { NumberAnimation { duration: 120 } }
 
+    // Full name on hover when the title is elided. A plain overlay inside the
+    // card (no window, no focus), shown after a short delay; the card is
+    // lifted above its neighbours while it is up.
+    readonly property bool tipShown: cardHover.hovered && tipTimer.elapsed && nameText.truncated && !cc.menuOpen
+    z: cc.tipShown ? 100 : 0
+    HoverHandler {
+      id: cardHover
+      onHoveredChanged: {
+        tipTimer.elapsed = false
+        if (hovered) tipTimer.restart()
+        else tipTimer.stop()
+      }
+    }
+    Timer {
+      id: tipTimer
+      property bool elapsed: false
+      interval: 350
+      onTriggered: tipTimer.elapsed = true
+    }
+
     MouseArea {
       id: ccMouse
       anchors.fill: parent
@@ -3531,6 +3593,7 @@ Panel {
       spacing: Style.space(4)
 
       Text {
+        id: nameText
         width: parent.width - (cc.isDeletable ? Style.space(20) : 0)
         // Two lines reserved, so the cards of a row line up.
         height: Math.ceil(nameMetrics.height) * 2
@@ -3544,11 +3607,10 @@ Panel {
         elide: Text.ElideRight
       }
 
-      EqCurve {
+      EqMini {
         width: parent.width
         visible: !cc.menuOpen
         bands: cc.entry.bands ? cc.entry.bands : []
-        compact: true
       }
 
       Text {
@@ -3576,7 +3638,7 @@ Panel {
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
           text: root.fmtDb(cc.entry.masterGain) + " dB"
-          color: root.muted
+          color: root.gainColor(Number(cc.entry.masterGain) || 0)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption * 0.85
         }
@@ -3616,6 +3678,32 @@ Panel {
             onClicked: cc.deleteCancelled()
           }
         }
+      }
+    }
+
+    Rectangle {
+      visible: cc.tipShown
+      x: 0
+      y: cc.pad
+      z: 1
+      width: cc.width
+      height: tipText.implicitHeight + Style.space(8)
+      radius: Style.cornerRadius
+      color: root.mix(Color.background, root.foreground, 0.14)
+      border.width: 1
+      border.color: root.trackFill
+
+      Text {
+        id: tipText
+        x: Style.space(4)
+        y: Style.space(4)
+        width: parent.width - Style.space(8)
+        text: nameText.text
+        color: root.foreground
+        font.family: root.textFamily
+        font.pixelSize: Style.font.bodySmall
+        font.bold: true
+        wrapMode: Text.WordWrap
       }
     }
 
@@ -3679,8 +3767,8 @@ Panel {
       color: root.cardFill
     }
 
-    // The response drawn through the bar positions: a rounded line, an accent
-    // fill fading to nothing underneath and the dashed 0 dB line.
+    // The response drawn through the bar positions: a rounded line in the
+    // bass -> treble gradient, a fill under it and the dashed 0 dB line.
     Canvas {
       id: curveCanvas
       x: 0
@@ -3694,15 +3782,7 @@ Panel {
         var w = width
         var h = height
         var zeroY = h / 2
-        // 0 dB line, dashed by hand.
-        ctx.strokeStyle = root.trackFill
-        ctx.lineWidth = 1
-        ctx.beginPath()
-        for (var x = 0; x < w; x += 8) {
-          ctx.moveTo(x, zeroY)
-          ctx.lineTo(Math.min(w, x + 4), zeroY)
-        }
-        ctx.stroke()
+        root.eqZeroLine(ctx, w, zeroY, 4, 4)
 
         var pts = []
         for (var i = 0; i < 10; i++) {
@@ -3710,45 +3790,14 @@ Panel {
           var db = it ? it.animDb : 0
           pts.push({ x: (i + 0.5) * be.slotWidth, y: zeroY - db / root.editorMaxDb * be.half })
         }
-        // Catmull-Rom through the points as cubic segments, kept inside the plot.
-        function cy(v) { return Math.max(1, Math.min(h - 1, v)) }
-        function trace(withMove) {
-          if (withMove) ctx.moveTo(pts[0].x, pts[0].y)
-          else ctx.lineTo(pts[0].x, pts[0].y)
-          for (var k = 0; k < pts.length - 1; k++) {
-            var p0 = pts[Math.max(0, k - 1)]
-            var p1 = pts[k]
-            var p2 = pts[k + 1]
-            var p3 = pts[Math.min(pts.length - 1, k + 2)]
-            ctx.bezierCurveTo(p1.x + (p2.x - p0.x) / 6, cy(p1.y + (p2.y - p0.y) / 6),
-                              p2.x - (p3.x - p1.x) / 6, cy(p2.y - (p3.y - p1.y) / 6),
-                              p2.x, p2.y)
-          }
-        }
-        var grad = ctx.createLinearGradient(0, 0, 0, h)
-        grad.addColorStop(0, Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.25))
-        grad.addColorStop(1, Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0))
-        ctx.beginPath()
-        ctx.moveTo(pts[0].x, h)
-        trace(false)
-        ctx.lineTo(pts[pts.length - 1].x, h)
-        ctx.closePath()
-        ctx.fillStyle = grad
-        ctx.fill()
-
-        ctx.beginPath()
-        trace(true)
-        ctx.strokeStyle = root.accent
-        ctx.lineWidth = 2
-        ctx.lineCap = "round"
-        ctx.lineJoin = "round"
-        ctx.stroke()
+        root.eqPaintCurve(ctx, pts, w, h, 2)
       }
     }
     Connections {
       target: root
       function onAccentChanged() { curveCanvas.requestPaint() }
       function onForegroundChanged() { curveCanvas.requestPaint() }
+      function onDarkPanelChanged() { curveCanvas.requestPaint() }
     }
 
     Repeater {
@@ -3780,7 +3829,7 @@ Panel {
           width: parent.width
           height: be.valueHeight
           text: root.fmtDb(slot.gainDb)
-          color: slot.gainDb === 0 ? root.muted : root.foreground
+          color: root.gainColor(slot.gainDb)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption * 0.85
           font.bold: slot.gainDb !== 0
@@ -3814,7 +3863,7 @@ Panel {
             y: Math.min(slot.knobY, plot.height / 2)
             height: Math.abs(slot.knobY - plot.height / 2)
             radius: width / 2
-            color: slot.gainDb >= 0 ? root.accent : root.muted
+            color: root.eqColor(slot.index / 9, slot.gainDb)
           }
 
           // The knob.
@@ -3824,7 +3873,7 @@ Panel {
             width: be.knobSize
             height: be.knobSize
             radius: width / 2
-            color: slot.gainDb === 0 ? root.foreground : root.accent
+            color: slot.gainDb === 0 ? root.foreground : root.eqColor(slot.index / 9, slot.gainDb)
             border.width: 1
             border.color: root.muted
           }

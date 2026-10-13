@@ -59,3 +59,10 @@ func TestBatteryCaseSentinels(t *testing.T) {
 		}
 	}
 }
+
+func TestBatteryRawIsTheUndecodedCharacteristic(t *testing.T) {
+	m := readBatteryWith(t, 0xe4, 0x64, 0x62, 0x01)
+	if m["raw"] != "e4646201" {
+		t.Fatalf("raw = %v, want e4646201 (all bytes, undecoded)", m["raw"])
+	}
+}

@@ -993,8 +993,8 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 	d.waitProbe(8 * time.Second)
 
 	rep := map[string]interface{}{}
-	if left, right, box, lc, rc, cc, err := d.readBatteryRaw(); err == nil {
-		rep["battery"] = batteryMap(left, right, box, lc, rc, cc)
+	if left, right, box, lc, rc, cc, raw, err := d.readBatteryRaw(); err == nil {
+		rep["battery"] = batteryMap(left, right, box, lc, rc, cc, raw)
 	}
 	if fw := d.readVersionRaw(); len(fw) > 0 {
 		rep["firmwareBytes"] = bytesJSON(fw)
@@ -1070,22 +1070,22 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 	return rep, nil
 }
 
-func (d *daemon) readBatteryRaw() (left, right, box byte, lc, rc, cc bool, err error) {
+func (d *daemon) readBatteryRaw() (left, right, box byte, lc, rc, cc bool, raw []byte, err error) {
 	sess := d.curSession()
 	if sess == nil {
-		return 0, 0, 0, false, false, false, errors.New("not connected")
+		return 0, 0, 0, false, false, false, nil, errors.New("not connected")
 	}
 	// Battery notifies on 0008; we read the characteristic directly for a snapshot
 	var buf [64]byte
 	n, err := sess.Read(charBattery, buf[:])
 	if err != nil {
-		return 0, 0, 0, false, false, false, err
+		return 0, 0, 0, false, false, false, nil, err
 	}
 	if n < 3 {
-		return 0, 0, 0, false, false, false, errors.New("battery data too short")
+		return 0, 0, 0, false, false, false, nil, errors.New("battery data too short")
 	}
 	left, right, box, lc, rc, cc = decodeBattery(buf[:n])
-	return left, right, box, lc, rc, cc, nil
+	return left, right, box, lc, rc, cc, append([]byte(nil), buf[:n]...), nil
 }
 
 // decodeBattery splits each of the three battery bytes (left, right, case,
@@ -1098,20 +1098,22 @@ func decodeBattery(data []byte) (left, right, box byte, lc, rc, cc bool) {
 
 // batteryMap builds the wire object from decoded levels. 0x00 and 0x7f on the
 // case level mean "no case reading" (sentinels, applied to the masked value).
-func batteryMap(left, right, box byte, lc, rc, cc bool) map[string]interface{} {
+func batteryMap(left, right, box byte, lc, rc, cc bool, raw []byte) map[string]interface{} {
 	return map[string]interface{}{
 		"left": left, "right": right, "case": box,
 		"leftCharging": lc, "rightCharging": rc, "caseCharging": cc,
 		"casePresent": box != 0x00 && box != 0x7f,
+		// raw is the undecoded characteristic, as lowercase hex (diagnostics).
+		"raw": hex.EncodeToString(raw),
 	}
 }
 
 func (d *daemon) readBattery() (map[string]interface{}, error) {
-	left, right, box, lc, rc, cc, err := d.readBatteryRaw()
+	left, right, box, lc, rc, cc, raw, err := d.readBatteryRaw()
 	if err != nil {
 		return nil, err
 	}
-	return batteryMap(left, right, box, lc, rc, cc), nil
+	return batteryMap(left, right, box, lc, rc, cc, raw), nil
 }
 
 func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error) {
