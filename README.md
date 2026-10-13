@@ -195,9 +195,11 @@ The backend is also usable on its own:
 qcyctl status --json          # full machine-readable snapshot
 qcyctl status                 # human-readable snapshot
 qcyctl anc noisy              # set ANC mode
-qcyctl game on                # toggles: game|sleep|multipoint|wind
+qcyctl game on                # toggles: game|sleep|multipoint|wind (wind and wear "off" write 0x00 on verified models, as the app does)
 qcyctl ldac on --yes          # restarts the earbuds; verified models only; not yet verified on hardware
-qcyctl find                   # flash the earbuds
+qcyctl find                   # play a beeping tone on the earbuds' audio sink to find them: 20% rising +5 points/2 s up to
+                              # --max-volume (default 70%), stops after --timeout (default 60 s); asks you to take the
+                              # earbuds out of your ears first (--yes skips the question; --events = JSON lines for the plugin)
 qcyctl prompt-vol 8           # prompt volume: 4|6|8|10|low|medium|high|max (N70)
 qcyctl wear-sensitivity high  # medium|normal|high|1|2|3 (N70; needs wear detection on)
 qcyctl fit start              # ear-tip fit test (N70): plays a sound, waits and prints left/right (stop|begin also exist)

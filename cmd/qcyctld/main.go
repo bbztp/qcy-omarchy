@@ -856,6 +856,10 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 		dbg("SET action=%q params=%x expect=%x\n", action, params, expect)
 		// Route through the model handler for validation/special handling
 		got, err := handler.HandleSet(d, action, params, expect)
+		var ind *indeterminateError
+		if errors.As(err, &ind) {
+			return map[string]interface{}{"indeterminate": ind.msg}, nil
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -944,12 +948,23 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 		}
 		return res, nil
 	case "wear":
-		// Read 0x2C, set byte 0 (state 1 = on, 2 = off; 0 = off written as the
-		// vendor app does, diagnostic only), keep the remaining bytes, write,
-		// confirm. Returns the confirmed payload.
+		// Read 0x2C, set byte 0, keep the remaining bytes, write, confirm.
+		// state 1 = on, 2 = off. "Off" is written as 0x00 (what the vendor app
+		// writes, verified on hardware 2026-10-13) on a verified model and as
+		// 0x02 on any other (conservative). The diagnostic {literal:true}
+		// writes exactly the byte given (0 or 2); 0 is refused on a model
+		// that is not verified. Returns the confirmed payload.
 		st, ok := req.Args["state"].(float64)
-		if !ok || (st != 0 && st != 1 && st != 2) {
-			return nil, errors.New("wear: state must be 1 (on) or 2 (off); 0 is the diagnostic off byte")
+		literal, _ := req.Args["literal"].(bool)
+		if !ok || (st != 1 && st != 2 && !(st == 0 && literal)) {
+			return nil, errors.New("wear: state must be 1 (on) or 2 (off); 0 is only the diagnostic off byte (literal)")
+		}
+		verified := handler.Capabilities().Verified
+		if st == 0 && !verified {
+			return nil, errors.New("wear: off byte 0 is only written on a verified model")
+		}
+		if st == 2 && !literal && verified {
+			st = 0
 		}
 		got, err := d.wearSet(byte(st))
 		if err != nil {
@@ -1166,6 +1181,20 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 	if err != nil {
 		return nil, err
 	}
+	if action == "wind" && len(params) == 1 {
+		// Wind detection "off": 0x00 as the vendor app writes it (verified on
+		// hardware 2026-10-13) on a verified model, 0x02 on any other.
+		verified := false
+		if h := d.knownHandler(); h != nil {
+			verified = h.Capabilities().Verified
+		}
+		switch {
+		case params[0] == 0 && !verified:
+			return nil, errors.New("wind: off byte 0 is only written on a verified model")
+		case params[0] == 2 && verified:
+			params = []byte{0}
+		}
+	}
 
 	if !d.isConnected() {
 		return nil, errors.New("not connected")
@@ -1186,6 +1215,12 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 			return got, nil
 		}
 		if len(last) > 0 && d.isConnected() {
+			if len(last) >= 1 && len(expect) >= 1 && last[0] != expect[0] && (last[0] == 1 || last[0] == 2) {
+				// The earbuds still echo the old value and the link is up:
+				// the restart that applies the change may be pending. Not a
+				// hard failure, and the write is never repeated.
+				return nil, &indeterminateError{msg: fmt.Sprintf("indeterminado: aplicado possivelmente, reinício pendente (o aparelho ainda reporta %x) — releia o estado", last)}
+			}
 			return nil, fmt.Errorf("ldac: escrito mas o aparelho reportou %x (esperado %x); o aparelho pode ter aplicado, leia o estado de novo", last, expect)
 		}
 		return nil, nil
@@ -1241,6 +1276,12 @@ var verifiedPromptVolumeSteps = []byte{4, 6, 8, 10}
 // verifiedOnlyActions are setters whose frames were read from the app for the verified model
 // and are refused on any model that is not verified.
 var verifiedOnlyActions = map[string]bool{"promptVol": true, "wearSensitivity": true, "ldac": true}
+
+// indeterminateError reports a write whose outcome cannot be known yet; the
+// "set" reply carries it as {indeterminate: msg}, not as a failure.
+type indeterminateError struct{ msg string }
+
+func (e *indeterminateError) Error() string { return e.msg }
 
 // ldacConfirmTimeout bounds the readback after an ldac write: the earbuds may
 // restart instead of answering.

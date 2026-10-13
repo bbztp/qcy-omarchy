@@ -13,6 +13,8 @@ type fakeToggleAPI struct {
 	setCalls    []string
 	expectCalls []string
 	wearStates  []byte
+	wearDiag    []byte
+	ldacErr     error
 	windBytes   []byte
 	wearReply   []byte
 	windReply   []byte
@@ -26,12 +28,19 @@ func (f *fakeToggleAPI) setAction(a string, p []byte) error {
 func (f *fakeToggleAPI) setActionExpect(a string, p, e []byte) ([]byte, error) {
 	f.expectCalls = append(f.expectCalls, a+":"+string(rune('0'+p[0])))
 	if a == "ldac" {
+		if f.ldacErr != nil {
+			return nil, f.ldacErr
+		}
 		return f.ldacReply, nil
 	}
 	return e, nil
 }
 func (f *fakeToggleAPI) wearSet(s byte) ([]byte, error) {
 	f.wearStates = append(f.wearStates, s)
+	return f.wearReply, nil
+}
+func (f *fakeToggleAPI) wearOffByte(b byte) ([]byte, error) {
+	f.wearDiag = append(f.wearDiag, b)
 	return f.wearReply, nil
 }
 func (f *fakeToggleAPI) windOffByte(b byte) ([]byte, error) {
@@ -141,8 +150,8 @@ func TestOffByteDiagnosticWritesRequestedByte(t *testing.T) {
 	if err := cmdWear([]string{"off", "--off-byte=2", "--yes"}); err != nil {
 		t.Fatal(err)
 	}
-	if string(f.wearStates) != "\x00\x02" {
-		t.Fatalf("wear states %v", f.wearStates)
+	if string(f.wearDiag) != "\x00\x02" || len(f.wearStates) != 0 {
+		t.Fatalf("wear diag %v, plain %v", f.wearDiag, f.wearStates)
 	}
 	if err := cmdToggle("wind", []string{"off", "--off-byte", "0", "--yes"}); err != nil {
 		t.Fatal(err)
@@ -152,7 +161,9 @@ func TestOffByteDiagnosticWritesRequestedByte(t *testing.T) {
 	}
 }
 
-func TestPlainWearOffStillWritesTwo(t *testing.T) {
+// The CLI asks for "off" (2); the daemon turns it into 0x00 on a verified
+// model and keeps 0x02 elsewhere.
+func TestPlainWearOffAsksDaemonForOff(t *testing.T) {
 	f := &fakeToggleAPI{wearReply: []byte{2, 5, 6}}
 	useFakeToggle(t, f)
 	if err := cmdWear([]string{"off"}); err != nil {
@@ -168,4 +179,25 @@ func TestWearByteMatches(t *testing.T) {
 		t.Fatal("wearByteMatches")
 	}
 	_ = errors.New
+}
+
+func TestLdacIndeterminateIsNotAFailureAndNotRepeated(t *testing.T) {
+	f := &fakeToggleAPI{ldacErr: &indeterminateError{msg: "indeterminado: aplicado possivelmente, reinício pendente — releia o estado"}}
+	useFakeToggle(t, f)
+	if err := cmdToggle("ldac", []string{"on", "--yes"}); err != nil {
+		t.Fatalf("indeterminate reported as failure: %v", err)
+	}
+	if len(f.expectCalls) != 1 {
+		t.Fatalf("write repeated: %v", f.expectCalls)
+	}
+}
+
+func TestOffByteZeroDirectModeRefuses(t *testing.T) {
+	w := &daemonClientWrapper{}
+	if _, err := w.wearOffByte(0); err == nil || !strings.Contains(err.Error(), "daemon") {
+		t.Fatalf("wear: %v", err)
+	}
+	if _, err := w.windOffByte(0); err == nil || !strings.Contains(err.Error(), "daemon") {
+		t.Fatalf("wind: %v", err)
+	}
 }

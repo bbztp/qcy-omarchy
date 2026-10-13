@@ -352,8 +352,20 @@ func (dc *daemonClient) setActionExpect(action string, params, expect []byte) ([
 	if err != nil {
 		return nil, err
 	}
+	if m, ok := data.(map[string]interface{}); ok {
+		if msg, _ := m["indeterminate"].(string); msg != "" {
+			return nil, &indeterminateError{msg: msg}
+		}
+	}
 	return bytesOf(data), nil
 }
+
+// indeterminateError: the write was accepted but its outcome is not known yet
+// (ldac echoing the old value while the restart is pending). Not a failure,
+// and never retried by writing again.
+type indeterminateError struct{ msg string }
+
+func (e *indeterminateError) Error() string { return e.msg }
 
 func (dc *daemonClient) keys() ([]byte, error) {
 	data, err := dc.request("keys", nil)
@@ -426,6 +438,16 @@ func (dc *daemonClient) eqApply(op qcycore.EqOp) (*qcycore.EqResult, error) {
 // wearSet has the daemon read the 0x2C payload, set byte 0 and write it back.
 func (dc *daemonClient) wearSet(state byte) ([]byte, error) {
 	data, err := dc.request("wear", map[string]interface{}{"state": int(state)})
+	if err != nil {
+		return nil, err
+	}
+	return bytesOf(data), nil
+}
+
+// wearOffByte is the diagnostic wear write: exactly byte b (0 or 2), no
+// default-off mapping on the daemon side.
+func (dc *daemonClient) wearOffByte(b byte) ([]byte, error) {
+	data, err := dc.request("wear", map[string]interface{}{"state": int(b), "literal": true})
 	if err != nil {
 		return nil, err
 	}
@@ -509,6 +531,9 @@ type daemonAPI interface {
 	// the given byte (0 or 2), accepts 0x00 or 0x02 on readback and returns
 	// the raw payload read.
 	windOffByte(b byte) ([]byte, error)
+	// wearOffByte is the same diagnostic for wear (byte 0 of 0x2C): writes
+	// exactly b, where wearSet(2) lets the daemon pick the model's off byte.
+	wearOffByte(b byte) ([]byte, error)
 	// noiseRead returns the raw 0x17 payload.
 	noiseRead() ([]byte, error)
 	// fitTest starts the fit test, waits up to seconds for the final result and
@@ -732,7 +757,21 @@ func (w *daemonClientWrapper) wearSet(state byte) ([]byte, error) {
 	return got, nil
 }
 
+// errOffByteZeroDirect: byte 0 is only written on a verified model, which
+// direct mode cannot tell (same rule as ldac in opcodeFor).
+var errOffByteZeroDirect = errors.New("--off-byte 0 needs the daemon (qcyctld): it is only written on a verified model, and direct mode cannot check the model")
+
+func (w *daemonClientWrapper) wearOffByte(b byte) ([]byte, error) {
+	if b == 0 {
+		return nil, errOffByteZeroDirect
+	}
+	return w.wearSet(b)
+}
+
 func (w *daemonClientWrapper) windOffByte(b byte) ([]byte, error) {
+	if b == 0 {
+		return nil, errOffByteZeroDirect
+	}
 	got, ok, err := w.setConfirm(0x2A, []byte{b}, 3*time.Second, func(p []byte) bool {
 		return len(p) >= 1 && (p[0] == 0 || p[0] == 2)
 	})
@@ -886,10 +925,11 @@ func usage() {
   qcyctl anc <off|adaptive|indoor|commuting|noisy|antiwind|transparency> [seconds]  (anc = adaptive)
   qcyctl <game|sleep|multipoint|wind> <on|off> [seconds]
   qcyctl ldac <on|off> --yes [seconds]   (restarts the earbuds; verified models only; not yet verified on hardware)
-  qcyctl wind off --off-byte <0|2> --yes [seconds]   (DIAGNOSTIC: which byte means "off"; default 2)
+  qcyctl wind off --off-byte <0|2> --yes [seconds]   (DIAGNOSTIC: which byte means "off"; default 0 on verified models, 2 otherwise)
   qcyctl wear <on|off> [seconds]
-  qcyctl wear off --off-byte <0|2> --yes [seconds]   (DIAGNOSTIC: byte 0 of 0x2C; default 2)
-  qcyctl find [seconds]
+  qcyctl wear off --off-byte <0|2> --yes [seconds]   (DIAGNOSTIC: byte 0 of 0x2C; default 0 on verified models, 2 otherwise)
+  qcyctl find [--sink NAME] [--max-volume 70%] [--timeout 60] [--yes] [--events]
+      plays a beeping tone on the earbuds' audio sink, raising the volume gently (no BLE command)
   qcyctl prompt-vol <4|6|8|10|low|medium|high|max> [seconds]
   qcyctl wear-sensitivity <medium|normal|high|1|2|3> [seconds]
   qcyctl fit <start|stop|begin> [--json] [seconds]   (start waits for the result; frames verified on the test device)
@@ -2101,6 +2141,11 @@ func cmdToggle(name string, args []string) error {
 			// A single write, never repeated: the earbuds may restart right
 			// after accepting it, and then the readback has nothing to say.
 			got, err := dc.setActionExpect("ldac", []byte{state}, []byte{state})
+			var ind *indeterminateError
+			if errors.As(err, &ind) {
+				fmt.Printf("ldac=%s %s\n", args[0], ind.msg)
+				return nil
+			}
 			if err != nil {
 				return err
 			}
@@ -2147,7 +2192,13 @@ func cmdWear(args []string) error {
 		state = byte(da.offByte)
 	}
 	return cmdRunner(scanSeconds, func(dc daemonAPI) error {
-		got, err := dc.wearSet(state)
+		var got []byte
+		var err error
+		if diag {
+			got, err = dc.wearOffByte(state)
+		} else {
+			got, err = dc.wearSet(state)
+		}
 		if err != nil {
 			return err
 		}
@@ -2352,36 +2403,6 @@ func cmdSpatial(args []string) error {
 			return err
 		}
 		fmt.Printf("spatial=%s confirmed\n", args[0])
-		return nil
-	})
-}
-
-func cmdFind(args []string) error {
-	// `qcyctl find [on|off]` — blinks the indicator for findBlinkDuration, after
-	// which the daemon switches it back off by itself.
-	arg := []byte{0x01}
-	rest := args
-	if len(args) > 0 {
-		state, err := parseOnOff(args[0])
-		if err != nil {
-			return fmt.Errorf("find: %w (expected on|off)", err)
-		}
-		arg = []byte{state}
-		rest = args[1:]
-	}
-	scanSeconds, err := parseSeconds(rest, 30)
-	if err != nil {
-		return err
-	}
-	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
-		if err := dc.findTone(arg[0]); err != nil {
-			return err
-		}
-		if arg[0] == 0x01 {
-			fmt.Println("find: indicator blinking (auto-stops)")
-		} else {
-			fmt.Println("find: indicator off")
-		}
 		return nil
 	})
 }

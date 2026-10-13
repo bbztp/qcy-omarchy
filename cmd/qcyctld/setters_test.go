@@ -416,7 +416,7 @@ func TestWearOffByteZeroConfirmsOnEitherOffByte(t *testing.T) {
 		}
 	})
 	s.set(0x2C, []byte{1, 5, 6})
-	got, err := d.handleRequest(request{Cmd: "wear", Args: map[string]interface{}{"state": float64(0)}})
+	got, err := d.handleRequest(request{Cmd: "wear", Args: map[string]interface{}{"state": float64(0), "literal": true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,5 +431,132 @@ func TestWearOffByteZeroConfirmsOnEitherOffByte(t *testing.T) {
 	}
 	if !bytes.Equal(frame, []byte{0xFF, 0x05, 0x2C, 0x03, 0x00, 0x05, 0x06}) {
 		t.Fatalf("frame %x", frame)
+	}
+}
+
+// scriptVendorDialer is a scripted link that reports a vendorId, so a test
+// can make the daemon see an unverified model.
+type scriptVendorDialer struct {
+	scriptDialer
+	vendor uint16
+}
+
+func (v scriptVendorDialer) VendorID() (uint16, bool) { return v.vendor, true }
+
+func (v scriptVendorDialer) Dial(onNotify func([]byte)) (session, string, error) {
+	sess, _, err := v.scriptDialer.Dial(onNotify)
+	return sess, "QCY Earbuds", err
+}
+
+func unverifiedScriptDaemon(t *testing.T, onWrite func(*scriptSession, byte, []byte)) (*daemon, *scriptSession) {
+	t.Helper()
+	s := &scriptSession{state: map[byte][]byte{}, onWrite: onWrite}
+	cfg := defaultLifecycle()
+	cfg.idle = time.Hour
+	d := newDaemon(scriptVendorDialer{scriptDialer{s}, 0}, cfg) // vendor 0: unknown model, not verified
+	mustStatus(t, d)
+	settle(t, d)
+	if h := d.knownHandler(); h != nil && h.Capabilities().Verified {
+		t.Fatal("daemon is verified")
+	}
+	return d, s
+}
+
+func framesOf(s *scriptSession, op byte) [][]byte {
+	var out [][]byte
+	for _, p := range s.writesOf(op) {
+		if len(p) > 3 {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func TestWearOffDefaultIsZeroOnVerifiedAndTwoLiteral(t *testing.T) {
+	d, s := scriptDaemon(t, func(s *scriptSession, op byte, p []byte) {
+		if op == 0x2C && len(p) >= 1 {
+			s.set(0x2C, append([]byte(nil), p...))
+		}
+	})
+	s.set(0x2C, []byte{1, 5, 6})
+	if _, err := d.handleRequest(request{Cmd: "wear", Args: map[string]interface{}{"state": float64(2)}}); err != nil {
+		t.Fatal(err)
+	}
+	fr := framesOf(s, 0x2C)
+	if len(fr) != 1 || !bytes.Equal(fr[0], []byte{0xFF, 0x05, 0x2C, 0x03, 0x00, 0x05, 0x06}) {
+		t.Fatalf("default off frame %x", fr)
+	}
+	if _, err := d.handleRequest(request{Cmd: "wear", Args: map[string]interface{}{"state": float64(2), "literal": true}}); err != nil {
+		t.Fatal(err)
+	}
+	fr = framesOf(s, 0x2C)
+	if len(fr) != 2 || fr[1][4] != 0x02 {
+		t.Fatalf("literal 2 frame %x", fr)
+	}
+	// 0 without literal is refused.
+	if _, err := d.handleRequest(request{Cmd: "wear", Args: map[string]interface{}{"state": float64(0)}}); err == nil {
+		t.Error("state 0 without literal accepted")
+	}
+}
+
+func TestWindOffDefaultIsZeroOnVerified(t *testing.T) {
+	d, s := scriptDaemon(t, nil)
+	if _, err := d.handleRequest(setReq("wind", 2)); err != nil {
+		t.Fatal(err)
+	}
+	fr := framesOf(s, 0x2A)
+	if len(fr) != 1 || !bytes.Equal(fr[0], []byte{0xFF, 0x03, 0x2A, 0x01, 0x00}) {
+		t.Fatalf("wind off frame %x", fr)
+	}
+}
+
+func TestOffByteZeroRefusedOnUnverifiedModel(t *testing.T) {
+	d, s := unverifiedScriptDaemon(t, nil)
+	s.set(0x2C, []byte{1, 5, 6})
+	if _, err := d.handleRequest(request{Cmd: "wear", Args: map[string]interface{}{"state": float64(0), "literal": true}}); err == nil {
+		t.Error("wear off byte 0 accepted on an unverified model")
+	}
+	if _, err := d.handleRequest(setReq("wind", 0)); err == nil {
+		t.Error("wind off byte 0 accepted on an unverified model")
+	}
+	if _, err := d.handleRequest(request{Cmd: "windOffByte", Args: map[string]interface{}{"byte": float64(0)}}); err == nil {
+		t.Error("windOffByte accepted on an unverified model")
+	}
+	// Off keeps the conservative 0x02.
+	_, _ = d.handleRequest(setReq("wind", 2))
+	fr := framesOf(s, 0x2A)
+	if len(fr) != 1 || fr[0][4] != 0x02 {
+		t.Fatalf("unverified wind off frame %x", fr)
+	}
+	_, _ = d.handleRequest(request{Cmd: "wear", Args: map[string]interface{}{"state": float64(2)}})
+	fr = framesOf(s, 0x2C)
+	if len(fr) != 1 || fr[0][4] != 0x02 {
+		t.Fatalf("unverified wear off frame %x", fr)
+	}
+	if n := len(framesOf(s, 0x2C)); n != 1 {
+		t.Fatalf("%d wear frames", n)
+	}
+}
+
+func TestLdacStaleEchoWithLinkUpIsIndeterminate(t *testing.T) {
+	old := ldacConfirmTimeout
+	ldacConfirmTimeout = 600 * time.Millisecond
+	defer func() { ldacConfirmTimeout = old }()
+	d, s := scriptDaemon(t, func(s *scriptSession, op byte, p []byte) {
+		if op == 0x23 {
+			s.set(0x23, []byte{2}) // keeps echoing the old value
+		}
+	})
+	s.set(0x23, []byte{2})
+	got, err := d.handleRequest(setReq("ldac", 1))
+	if err != nil {
+		t.Fatalf("hard error: %v", err)
+	}
+	m, _ := got.(map[string]interface{})
+	if msg, _ := m["indeterminate"].(string); !strings.Contains(msg, "indeterminado") {
+		t.Fatalf("reply %v", got)
+	}
+	if n := len(framesOf(s, 0x23)); n != 1 {
+		t.Fatalf("ldac written %d times", n)
 	}
 }

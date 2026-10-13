@@ -14,7 +14,7 @@ import (
 func rawTerminal(fd int) (func(), error) {
 	var old syscall.Termios
 	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), syscall.TCGETS, uintptr(unsafe.Pointer(&old))); e != 0 {
-		return nil, errors.New("stdin is not a terminal (the hearing test needs a keyboard)")
+		return nil, errors.New("stdin is not a terminal (this command needs a keyboard)")
 	}
 	raw := old
 	raw.Lflag &^= syscall.ICANON | syscall.ECHO

@@ -254,6 +254,82 @@ Singleton {
     }
   }
 
+  // ------------------------------------------------------------ find earbuds
+  //
+  // `qcyctl find --yes --events` plays a beeping tone on the earbuds' audio
+  // sink and raises the sink volume gently (a ceiling and a timeout are
+  // enforced by the CLI). It is a long-running process: JSON event lines come
+  // on stdout, "stop" goes to its stdin and the CLI restores the volume and
+  // the music before it exits. The caller must have shown the warning
+  // "Remove the earbuds from your ears before starting" and got a "yes".
+  property bool findRunning: false
+  property string findStatus: "idle"   // idle | starting | playing | stopping
+  property int findVolume: 0           // current sink volume in %, 0 = unknown
+  property int findMaxVolume: 0
+  property string findMessage: ""      // last error, "" when none
+
+  function startFind() {
+    if (findProc.running) return
+    findMessage = ""
+    findVolume = 0
+    findStatus = "starting"
+    findRunning = true
+    findProc.command = [root.binary, "find", "--yes", "--events"]
+    findProc.running = true
+  }
+
+  // Ask the process to stop and wait for it: it restores volume and music
+  // first. SIGTERM (same cleanup) only if it does not answer.
+  function stopFind() {
+    if (!findProc.running) return
+    findStatus = "stopping"
+    try { findProc.write("stop\n") } catch (e) { findProc.signal(15) }
+    findKillTimer.restart()
+  }
+
+  function _findEvent(line) {
+    var ev = _parseJson(line)
+    if (!ev || typeof ev.event !== "string") return
+    if (ev.event === "started") {
+      findVolume = ev.volume || 0
+      findMaxVolume = ev.maxVolume || 0
+      if (findStatus !== "stopping") findStatus = "playing"
+    } else if (ev.event === "volume") {
+      findVolume = ev.volume || 0
+    } else if (ev.event === "error") {
+      findMessage = String(ev.message || "")
+    }
+  }
+
+  Timer {
+    id: findKillTimer
+    interval: 6000
+    repeat: false
+    onTriggered: if (findProc.running) findProc.signal(15)
+  }
+
+  Process {
+    id: findProc
+    stdinEnabled: true
+    stdout: SplitParser {
+      onRead: function (data) { root._findEvent(data) }
+    }
+    stderr: StdioCollector {
+      id: findErr
+      waitForEnd: true
+    }
+    onExited: function (exitCode) {
+      findKillTimer.stop()
+      if (exitCode !== 0 && root.findMessage === "") {
+        root.findMessage = root._lastLine(findErr.text) !== "" ? root._lastLine(findErr.text)
+          : tr("Could not play the find tone (code {code})", { code: exitCode })
+      }
+      root.findRunning = false
+      root.findStatus = "idle"
+      root.findVolume = 0
+    }
+  }
+
   // --------------------------------------------------------- battery (light)
 
   property var battery: null        // parsed `qcyctl battery --json`

@@ -654,6 +654,10 @@ Panel {
     return true
   }
 
+  // ---- find earbuds ----------------------------------------------------------
+  // The warning is shown first; only "Yes" starts the tone (Qcy.startFind).
+  property bool findConfirming: false
+
   // ---- fit test ------------------------------------------------------------
   // `fit start --json 35` plays a sound and waits (up to 35 s) for the result.
   // Qcy.set runs it with a callback, whose watchdog (60 s) bounds the run so a
@@ -724,6 +728,7 @@ Panel {
   // LDAC: only with the daemon's capability, never from the fallback `true`.
   readonly property bool ldacVisible: !!(caps && caps.ldac === true) && has("ldac")
   property bool ldacConfirming: false
+  property bool ldacTarget: false
 
   function setAnc(key) {
     var next = Object.assign({}, optimistic)
@@ -898,7 +903,12 @@ Panel {
   // Opening the panel is the display trigger: read battery lightly now and keep
   // it fresh while open; full status re-runs only occasionally.
   onOpenedChanged: {
-    if (!opened) root.flushEq()
+    if (!opened) {
+      root.flushEq()
+      // Never leave the find tone playing behind a closed panel.
+      root.findConfirming = false
+      Qcy.stopFind()
+    }
     if (opened) {
       if (Qcy.connected) Qcy.pollBattery()
       batteryTimer.running = opened
@@ -1645,7 +1655,12 @@ Panel {
                 label: Qcy.tr("LDAC")
                 hint: Qcy.tr("Restarts the earbuds; this is expected, not a fault")
                 checked: root.toggleState("ldac")
-                onToggled: root.ldacConfirming = true
+                onToggled: {
+                  // The target is frozen now: a state refresh while the
+                  // confirmation is open must not flip what "Yes" sends.
+                  root.ldacTarget = !root.toggleState("ldac")
+                  root.ldacConfirming = true
+                }
               }
               Column {
                 width: parent.width
@@ -1665,7 +1680,7 @@ Panel {
                     label: Qcy.tr("Yes")
                     onClicked: {
                       root.ldacConfirming = false
-                      root.setToggle("ldac", "LDAC", !root.toggleState("ldac"))
+                      root.setToggle("ldac", "LDAC", root.ldacTarget)
                     }
                   }
                   Chip {
@@ -1720,6 +1735,77 @@ Panel {
                 model: root.autoOffChoices
                 current: root.currentAutoOff()
                 onPicked: function (v) { root.setAutoOff(v) }
+              }
+            }
+
+            // ---- Find ----
+            Card {
+              width: parent.width
+              visible: Qcy.connected
+
+              Item {
+                width: parent.width
+                implicitHeight: findButton.implicitHeight
+
+                Text {
+                  text: Qcy.tr("Find my earbuds")
+                  color: root.foreground
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.body
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Chip {
+                  id: findButton
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  label: Qcy.findRunning ? Qcy.tr("Stop") : Qcy.tr("Find")
+                  active: Qcy.findRunning
+                  enabled: Qcy.findStatus !== "stopping"
+                  onClicked: {
+                    if (Qcy.findRunning) Qcy.stopFind()
+                    else root.findConfirming = true
+                  }
+                }
+              }
+
+              Text {
+                width: parent.width
+                visible: root.findConfirming && !Qcy.findRunning
+                text: Qcy.tr("Remove the earbuds from your ears before starting. Continue?")
+                color: root.foreground
+                font.family: root.textFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+              Row {
+                visible: root.findConfirming && !Qcy.findRunning
+                spacing: Style.space(6)
+                Chip {
+                  label: Qcy.tr("Yes")
+                  onClicked: {
+                    root.findConfirming = false
+                    Qcy.startFind()
+                  }
+                }
+                Chip {
+                  label: Qcy.tr("No")
+                  onClicked: root.findConfirming = false
+                }
+              }
+
+              Text {
+                width: parent.width
+                visible: Qcy.findRunning || Qcy.findMessage !== ""
+                wrapMode: Text.WordWrap
+                text: Qcy.findMessage !== "" && !Qcy.findRunning ? Qcy.findMessage
+                  : (Qcy.findStatus === "stopping" ? Qcy.tr("Stopping…")
+                    : (Qcy.findVolume > 0 ? Qcy.tr("Playing at {volume}%", { volume: Qcy.findVolume })
+                      : Qcy.tr("Starting…")))
+                color: (Qcy.findMessage !== "" && !Qcy.findRunning) ? Color.urgent : root.muted
+                font.family: root.textFamily
+                font.pixelSize: Style.font.bodySmall
               }
             }
 

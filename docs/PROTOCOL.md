@@ -38,7 +38,7 @@ answer a game-mode query with `0x02` when it is off.
 
 | Cmd | Name | Payload | Status |
 |---|---|---|---|
-| `0x05` | LED flash | `[1, 1]` on / `[1, 0]` off | verified, no visible effect while connected |
+| `0x05` | LED flash | `[1, 1]` on / `[1, 0]` off | verified, **no effect** while connected; the vendor app does not use it for "find" (see Find my earbuds) |
 | `0x07` | ANC strength | `[1, level]` | **verified: no response on this model** |
 | `0x09` | game / low latency | `[1, 1|2]` | verified |
 | `0x0C` | ANC mode | `[1, mode]` | unverified |
@@ -55,8 +55,8 @@ answer a game-mode query with `0x02` when it is off.
 | `0x23` | LDAC | `[1, 1\|2]` | restarts the earbuds (the official panel declares it: "Turning on LDAC will restart the device"); write enabled on verified models only; **not verified on hardware**: the readback after the restart is unobserved |
 | `0x24` | multipoint | `[1, 1\|2]` | verified: reboots the earbuds, expected |
 | `0x2A` | wind noise reduction | `[1, 1\|2]` | verified (added — was missing from this table) |
-| `0x2A` | wind detection | `[1, 1\|2]` | verified |
-| `0x2C` | wear detection | `[3, enabled, …]` | verified |
+| `0x2A` | wind detection | `[1, 1\|2]`; off is **0x00** as the app writes it (**verified on hardware 2026-10-13**: `FF 03 2A 01 00` reads back 0x00); 0x02 also reads as off (also verified) | verified |
+| `0x2C` | wear detection | `[3, enabled, …]`; byte 0 = 1 on, **0x00 off** (what the app writes; **verified on hardware 2026-10-13**: `FF 05 2C 03 00 ..` reads back 0x00), 0x02 also reads as off (also verified); the rest of the payload is written back as read | verified |
 | `0x2D` | spatial audio | `[1, 1\|2]` | unverified; no query reply on this model |
 | `0x35` | EQ test | — | unverified |
 | `0x3D` | play a tone | `[1, toneId]` | verified: no audible effect |
@@ -408,14 +408,41 @@ Two writes restart the earbuds:
 
 ## Find my earbuds
 
-An audible tone cannot help here: a lost earbud is by definition not in your
-ear, so it could never play anything the owner could hear. What would actually
-work is the indicator blinking — `0x05` — which is why that is what the button
-sends.
+**Vendor app: find is not a BLE command.** The phone
+plays a sound in a loop through the media (A2DP) stream, raises the system
+volume (it starts at about half of the maximum and rises one step every 2 s up
+to the maximum), and on stop restores the saved volume. It stops on the stop
+button, on audio-focus loss and on disconnection. The app has no ceiling, no
+warning and no timeout.
 
-Neither `0x05` nor `0x3D` produced any change while the earbuds were connected.
-The untested hypothesis is that find only applies while disconnected, which is
-the state they would actually be lost in.
+`0x05` (LED flash, `Quicky NewLightFlashCommand`) and `0x3D` produced no change
+while the earbuds were connected, so `qcyctl find` no longer sends them.
+
+`qcyctl find [--sink NAME] [--max-volume 70%] [--timeout 60] [--yes] [--events]`
+does what the app does, locally, plus the limits the app lacks:
+
+| Rule | App | `qcyctl find` |
+|---|---|---|
+| command to the earbuds | none | none (no BLE, no daemon) |
+| tone | looped sound | generated "di-di" beeps, 2 kHz, 150 ms each, 100 ms apart, 10 ms ramps, peak at most -20 dBFS |
+| start volume | about half | 20% of the sink |
+| step | one system step per 2 s | +5 points per 2 s |
+| ceiling | maximum | `--max-volume`, default 70% (up to 100%) |
+| timeout | none | `--timeout`, default 60 s |
+| warning | none | "Remove the earbuds from your ears before starting"; needs `--yes` or a typed `y` |
+| stop | button, focus loss, disconnect | q / Enter / space, signal, timeout, sink gone, player died |
+| on stop | restores volume | restores volume and mute, resumes the players it paused |
+
+The volume is never raised before the sink was measured silent (the music is
+paused over MPRIS and each stream is measured with `parec --monitor-stream`,
+as in `hearing run`), the sink must be a Bluetooth sink identified by
+`api.bluez5.address`, and the tone is played with `pw-cat ... -P
+"node.dont-fallback=true node.dont-reconnect=true"`.
+
+`--events` is for the plugin: no terminal, JSON lines on stdout
+(`started`, `volume`, `error`, `stopped` with a `reason`), the line `stop` on
+stdin ends it (EOF too), progress text goes to stderr. `stopped` is written
+after the volume and the music were restored. Not verified on hardware.
 
 ## Prompt volume
 
@@ -509,7 +536,7 @@ If the scan finds nothing and no cached address answers, the daemon replies `{"o
 | `eq` | none | `{slot, effect (when known), masterGain (dB), bands[{freq,gain,q,type}], payload (hex)}` |
 | `eqApply` | optional `gains` (10 ints, centi-dB), `masterGain` (int, centi-dB), `slot` (int), `bands` (array of `{index, freq, gain (dB, number), q, type}`, exclusive with `gains`), `allowProtected` (bool), `allowFull` (bool). Nothing else: unknown keys and raw payloads (`payload`, `raw`, `hex`, ...) are rejected | the `eq` object plus `previous`, `fullLength`, `backupFirst`, `backupHistory` |
 | `eqMasterGain` | `masterGain` (int, centi-dB), required; optional `allowProtected`, `allowFull` | same as `eqApply` |
-| `wear` | `state`: 1 on / 2 off | confirmed `0x2C` payload (byte array) |
+| `wear` | `state`: 1 on / 2 off (written as 0x00 on verified models, 0x02 otherwise); `literal: true` with `state` 0 or 2 writes exactly that byte (0 refused on unverified models) | confirmed `0x2C` payload (byte array) |
 | `fitTest` | optional `seconds` (5..60, default 30) | `{status, left, right}` once the notification with status 2 arrives; the stop frame is always sent at the end; verified models only (verified on the N70) |
 | `fitStop` | none | cancels a running `fitTest` (which then fails with `fit: cancelled`), otherwise sends the stop frame |
 | `noise` | none | raw `0x17` payload `[mode, scene, level]` |
