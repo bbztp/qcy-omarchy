@@ -28,6 +28,14 @@ type Effect struct {
 	Name       string  `json:"name"`
 	MasterGain float64 `json:"masterGain"`
 	Bands      []Band  `json:"bands"`
+	// Schema v2, present only inside Function.EQ: per-band gains of the
+	// 5-band variant, "only true wireless" flag, restart warning (also the iOS
+	// text) and the hearing-test baseline (dB per band).
+	Vals        []float64 `json:"vals,omitempty"`
+	OnlyTws     bool      `json:"onlyTws,omitempty"`
+	AlarmMsg    string    `json:"alarmMsg,omitempty"`
+	AlarmMsgIos string    `json:"alarmMsgIos,omitempty"`
+	SoundDB     []float64 `json:"soundDB,omitempty"`
 }
 
 type EQ struct {
@@ -94,6 +102,8 @@ type Fit struct {
 type KeyAction struct {
 	Name string `json:"name"`
 	Cmd  *int   `json:"cmd"`
+	// Bytes (v2) is the legacy hex action byte as the server wrote it.
+	Bytes string `json:"bytes,omitempty"`
 }
 
 type KeyEvent struct {
@@ -124,6 +134,9 @@ type Panel struct {
 	Find    bool     `json:"find"`
 	Keys    *Keys    `json:"keys"`
 	Other   []Other  `json:"other"`
+	// Functions is the schema v2 list: every function the server declares, in
+	// declaration order, with its typed block. Empty in a v1 snapshot.
+	Functions []Function `json:"functions,omitempty"`
 }
 
 type Firmware struct {
@@ -165,17 +178,199 @@ type Product struct {
 	Colors []Color `json:"colors"`
 }
 
+// Function is one function the server panel declares (a layout, or an item of
+// the type-4 container). Type is the server's numeric type; at most one typed
+// block is set. Props holds the leftover scalar fields (row id, jump, repeat,
+// maxLength, latitude ...), Raw the leftover sanitised structures of types
+// this package does not interpret.
+type Function struct {
+	Type      *int   `json:"type,omitempty"`
+	CmdID     *int   `json:"cmdId,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Character string `json:"character,omitempty"` // 32-bit characteristic id, hex
+
+	Toggle    *Toggle    `json:"toggle,omitempty"`
+	Command   *Command   `json:"command,omitempty"`
+	Choices   []Choice   `json:"choices,omitempty"`
+	Secondary *Secondary `json:"secondary,omitempty"`
+	Standby   *Standby   `json:"standby,omitempty"`
+	Language  *Language  `json:"language,omitempty"`
+	ANC       *FuncANC   `json:"anc,omitempty"`
+	EQ        *FuncEQ    `json:"eq,omitempty"`
+	Keys      *FuncKeys  `json:"keys,omitempty"`
+
+	Messages *Messages      `json:"messages,omitempty"`
+	Props    map[string]any `json:"props,omitempty"`
+	Raw      map[string]any `json:"raw,omitempty"`
+}
+
+// Toggle holds the full frames (hex) to send for on and for off.
+type Toggle struct {
+	On  []string `json:"on,omitempty"`
+	Off []string `json:"off,omitempty"`
+}
+
+// Command is a raw write (hex) to Function.Character.
+type Command struct {
+	Bytes string `json:"bytes,omitempty"`
+}
+
+// Choice is one option: Value (decimal level, index, cid) or Bytes (hex).
+type Choice struct {
+	Label    string `json:"label"`
+	Value    *int   `json:"value,omitempty"`
+	Bytes    string `json:"bytes,omitempty"`
+	Describe string `json:"describe,omitempty"`
+}
+
+// Secondary is a second selector of the same function (wear sensitivity).
+type Secondary struct {
+	CmdID   *int     `json:"cmdId,omitempty"`
+	Name    string   `json:"name,omitempty"`
+	Choices []Choice `json:"choices,omitempty"`
+}
+
+// StandbyOption is an auto power-off option: Bytes are the 2 little-endian
+// bytes of the minutes; FFFF means never.
+type StandbyOption struct {
+	Label   string `json:"label"`
+	Bytes   string `json:"bytes"`
+	Minutes *int   `json:"minutes,omitempty"`
+	Never   bool   `json:"never,omitempty"`
+}
+
+type Standby struct {
+	Options []StandbyOption `json:"options"`
+}
+
+// LanguageOption is a tone-language value: Bytes are 4 ASCII bytes (hex).
+type LanguageOption struct {
+	Label string `json:"label"`
+	Bytes string `json:"bytes,omitempty"`
+}
+
+// Language lists the options and the UI locales the server shows the row in.
+type Language struct {
+	Options   []LanguageOption `json:"options"`
+	Languages []string         `json:"languages,omitempty"`
+}
+
+// Messages are the texts the server attaches to a function: confirmation
+// (Msg*), restart warnings (RebootTip, AlarmMsg, ConfTip), wear toasts.
+type Messages struct {
+	Msg         string           `json:"msg,omitempty"`
+	MsgIos      string           `json:"msgIos,omitempty"`
+	MsgAndroid  string           `json:"msgAndroid,omitempty"`
+	Alert       any              `json:"alert,omitempty"`
+	RebootTip   string           `json:"rebootTip,omitempty"`
+	AlarmMsg    string           `json:"alarmMsg,omitempty"`
+	AlarmMsgIos string           `json:"alarmMsgIos,omitempty"`
+	ConfTip     string           `json:"confTip,omitempty"`
+	ToastMsg    []map[string]any `json:"toastMsg,omitempty"`
+	ToastTip    string           `json:"toastTip,omitempty"`
+	ToastTip2   string           `json:"toastTip2,omitempty"`
+	AncMsg      string           `json:"ancMsg,omitempty"`
+	Desc        string           `json:"desc,omitempty"`
+	SubTitle    string           `json:"subTitle,omitempty"`
+	ValueTitle  string           `json:"valueTitle,omitempty"`
+	NoSpaceTip  string           `json:"noSpaceTip,omitempty"`
+}
+
+// ANCNode is a mode or a mode item of a Function.ANC, with the v2 extras.
+type ANCNode struct {
+	Name           string    `json:"name,omitempty"`
+	Start          *int      `json:"start,omitempty"`
+	End            *int      `json:"end,omitempty"`
+	Default        *int      `json:"default,omitempty"`
+	CmdID          *int      `json:"cmdId,omitempty"` // type 6 simple list
+	ViewType       *int      `json:"viewType,omitempty"`
+	VoiceCmdID     *int      `json:"voiceCmdId,omitempty"`
+	AncInvert      *int      `json:"ancInvert,omitempty"`
+	Progress       *int      `json:"progress,omitempty"`
+	AncIndex       *int      `json:"ancIndex,omitempty"`
+	EnvAdaptation  []string  `json:"envAdaptation,omitempty"`
+	EnvName        string    `json:"envName,omitempty"`
+	Describe       string    `json:"describe,omitempty"`
+	NoSpaceTip     string    `json:"noSpaceTip,omitempty"`
+	HidePop        bool      `json:"hidePop,omitempty"`
+	TouchDisable   any       `json:"touchDisable,omitempty"`
+	ValueDescribes any       `json:"valueDescribes,omitempty"`
+	Items          []ANCNode `json:"items,omitempty"`
+}
+
+type FuncANC struct {
+	Modes []ANCNode `json:"modes"`
+}
+
+// FuncEQ is the full equalizer declaration (types 2 and 23).
+type FuncEQ struct {
+	Count           *int      `json:"count,omitempty"`
+	Freq            []float64 `json:"freq,omitempty"`
+	MinDb           *float64  `json:"minDb,omitempty"`
+	MaxDb           *float64  `json:"maxDb,omitempty"`
+	BaseDb          *float64  `json:"baseDb,omitempty"`
+	Q               []float64 `json:"q,omitempty"`
+	IitType         []int     `json:"iitType,omitempty"`
+	VolumeLevel     *float64  `json:"volumeLevel,omitempty"`
+	SupportMaxCount *int      `json:"supportMaxCount,omitempty"`
+	RebootTip       string    `json:"rebootTip,omitempty"`
+	Effects         []Effect  `json:"effects,omitempty"`
+	Individuation   *Effect   `json:"individuation,omitempty"`
+	AuxEq           []Effect  `json:"auxEq,omitempty"`
+}
+
+// KeyEventV2 is a key event with its context. Group is music, voice, sdMode,
+// buttons, actions or legacy; DefaultFun is the factory action id.
+type KeyEventV2 struct {
+	Name       string      `json:"name"`
+	EventID    *int        `json:"eventID,omitempty"`
+	Group      string      `json:"group,omitempty"`
+	Side       string      `json:"side,omitempty"`
+	KeyName    string      `json:"keyName,omitempty"`
+	KeyID      *int        `json:"keyId,omitempty"`
+	Character  string      `json:"character,omitempty"`
+	DefaultFun *int        `json:"defaultFun,omitempty"`
+	Default    string      `json:"default,omitempty"`
+	Voice      string      `json:"voice,omitempty"`
+	ShowTitle  string      `json:"showTitle,omitempty"`
+	HelpTip    string      `json:"helpTip,omitempty"`
+	Actions    []KeyAction `json:"actions"`
+}
+
+// VoiceEvent is a call-mode gesture label pair (no action list).
+type VoiceEvent struct {
+	Name  string `json:"name"`
+	Left  string `json:"left,omitempty"`
+	Right string `json:"right,omitempty"`
+}
+
+type FuncKeys struct {
+	Events []KeyEventV2      `json:"events,omitempty"`
+	Groups map[string]string `json:"groups,omitempty"`
+	Voice  []VoiceEvent      `json:"voice,omitempty"`
+}
+
 var (
-	once  sync.Once
-	byID  map[uint16]Product
-	order []Product
+	schemaVersion int
+	once          sync.Once
+	byID          map[uint16]Product
+	order         []Product
 )
 
 func load() {
 	once.Do(func() {
-		var m map[string]Product
-		if err := json.Unmarshal(raw, &m); err != nil {
+		// v2: {"schemaVersion":2,"models":{...}}; v1: the bare map.
+		var env struct {
+			SchemaVersion int                `json:"schemaVersion"`
+			Models        map[string]Product `json:"models"`
+		}
+		m := map[string]Product(nil)
+		if err := json.Unmarshal(raw, &env); err == nil && env.Models != nil {
+			schemaVersion, m = env.SchemaVersion, env.Models
+		} else if err := json.Unmarshal(raw, &m); err != nil {
 			panic("models: embedded models.json: " + err.Error())
+		} else {
+			schemaVersion = 1
 		}
 		byID = make(map[uint16]Product, len(m))
 		for k, p := range m {
@@ -208,4 +403,10 @@ func All() []Product {
 func Count() int {
 	load()
 	return len(order)
+}
+
+// SchemaVersion is the schema of the embedded snapshot (1 or 2).
+func SchemaVersion() int {
+	load()
+	return schemaVersion
 }

@@ -744,3 +744,39 @@ The `experiencia-auditiva` card stores only the 8 test bands in `ears` plus
 (zero: 13 bands per ear; absent or factory: 8). The daemon's `hearingWrite`
 takes an optional `baseline` (`"factory"` | `"zero"`).
 
+
+## Model snapshot v2
+
+`internal/qcycore/models/models.json` is `{"schemaVersion":2,"models":{"<vendorId>":Product}}`
+(`models.SchemaVersion()`; the loader still reads the bare v1 map). Every v1 field
+of `Product` and `Panel` is unchanged; v2 adds `panel.functions`: one entry per
+function the server panel declares, in declaration order (layouts, with the
+items of the type-4 container expanded in place). Written by
+`scripts/gen_models.py` (input directory in `$QCY_PANELS_DIR`).
+
+A `Function` has `type` (the server's numeric type), `cmdId`, `name`,
+`character` (32-bit characteristic id, hex, when the item names one) and at most
+one typed block:
+
+| block | types | content |
+|---|---|---|
+| `toggle` | 200-206 | `on[]`, `off[]`: full frames in hex (`FF03230101`); wind noise off is `FF032A0100` |
+| `command` | item 3, 4, 100 | `bytes`: raw write in hex (`FF020100` reset, `FF020200` clear pairing, `FF020300` factory) |
+| `choices[]` | 2 (item), 103, 104, 111, 116, 1000 | `label` plus `value` (level, cid, index) or `bytes` (hex); `secondary` is the wear sensitivity selector (cmd 72) |
+| `standby` | 102/1000 with cmd 20/31 | `options[]`: `label`, `bytes` (2 bytes little-endian minutes), `minutes`, `never` (FFFF) |
+| `language` | 1001 | `options[]` (`label`, `bytes` = 4 ASCII bytes) and `languages[]` (locales the row is shown in) |
+| `anc` | 6, 9, 11 | `modes[]` with `start/end/default`, `viewType`, `voiceCmdId`, `envAdaptation`, `envName`, `ancInvert`, `hidePop`, `noSpaceTip`, `items[]` |
+| `eq` | 2, 23 | `count`, `freq`, `minDb/maxDb/baseDb`, `q`, `iitType`, `volumeLevel`, `supportMaxCount`, `rebootTip`, `effects[]` (+`vals`, `onlyTws`, `alarmMsg`), `individuation` (+`soundDB`), `auxEq` |
+| `keys` | 1, 10, 14, 114 | `events[]` with `eventID`, `group`, `side`, `keyName`, `character`, `defaultFun`, `actions[]`; `voice[]` call-mode labels; `groups` |
+
+`messages` carries the server texts (`msg`, `msgIos`, `msgAndroid`, `alert`,
+`rebootTip`, `alarmMsg`, `confTip`, `toastMsg`, `toastTip`, `desc` ...), the
+only place where the server says an action restarts the earbuds. `props` holds
+leftover scalars (row `id`, `jump`, `repeat`, `maxLength`, `latitude`,
+`manufacturers` ...). `raw` holds the sanitised leftover structures of types not
+interpreted (105, 115, 13, 24, and layouts without a type), so no data is lost.
+
+Not carried: artwork and sound URLs, HTML help texts, the "update the app"
+placeholder `msg`. Texts are the single language the panel was fetched in.
+Frequencies written as `1k`/`2k` are numbers (v1 stored 0 for them).
+The block set is data only; there is no `FunctionsFor` or frame builder yet.
