@@ -981,14 +981,14 @@ Panel {
   readonly property Component _logoIcon: Component {
     Item {
       id: logoHost
-      width: root.vertical ? 18 : 44
-      height: root.vertical ? 44 : 18
+      width: root.vertical ? 15 : 35
+      height: root.vertical ? 35 : 15
 
       Image {
         id: logoImg
         anchors.fill: parent
         source: "assets/qcy-logo.svg"
-        sourceSize: root.vertical ? Qt.size(18, 44) : Qt.size(44, 18)
+        sourceSize: root.vertical ? Qt.size(60, 140) : Qt.size(140, 60)
         fillMode: Image.PreserveAspectFit
         rotation: root.vertical ? -90 : 0
       }
@@ -1007,8 +1007,8 @@ Panel {
     labelVisible: false
     hasVisualContent: true
     foreground: root.foreground
-    fixedWidth: root.vertical ? -1 : 44
-    fixedHeight: root.vertical ? 44 : -1
+    fixedWidth: root.vertical ? -1 : 38
+    fixedHeight: root.vertical ? 38 : -1
     tooltipText: root.barTooltip()
     onPressed: function (b) {
       if (b === Qt.RightButton) Qcy.refresh()
@@ -1016,8 +1016,8 @@ Panel {
     }
     Loader {
       anchors.centerIn: parent
-      width: root.vertical ? 18 : 44
-      height: root.vertical ? 44 : 18
+      width: root.vertical ? 15 : 35
+      height: root.vertical ? 35 : 15
       sourceComponent: root._logoIcon
     }
   }
@@ -1137,10 +1137,11 @@ Panel {
                   anchors.margins: Style.space(6)
                   visible: status === Image.Ready
                   source: Qcy.images.icon ? Qcy.images.icon : ""
-                  sourceSize: Qt.size(128, 128)
+                  sourceSize: Qt.size(256, 256)
                   fillMode: Image.PreserveAspectFit
                   asynchronous: true
                   smooth: true
+                  mipmap: true
                   cache: true
                 }
 
@@ -2042,10 +2043,11 @@ Panel {
           height: width
           visible: status === Image.Ready
           source: ring.image
-          sourceSize: Qt.size(128, 128)
+          sourceSize: Qt.size(256, 256)
           fillMode: Image.PreserveAspectFit
           asynchronous: true
           smooth: true
+          mipmap: true
           cache: true
           opacity: ring.valid ? 1 : 0.5
         }
