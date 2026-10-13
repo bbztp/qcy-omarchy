@@ -330,6 +330,225 @@ Singleton {
     }
   }
 
+  // ----------------------------------------------------------- hearing test
+  //
+  // `qcyctl hearing run --events` is a long-running process like find: JSON
+  // lines on stdout, answers as lines on stdin, "abort" to stop (it restores
+  // the volume and the music before it exits). It never writes to the
+  // earbuds: the result is stored in a file that `hearing apply` writes later,
+  // on an explicit confirmation (applyHearing).
+  property bool hearingRunning: false
+  property string hearingStatus: "idle"  // idle | starting | running | stopping
+  property string hearingPhase: ""       // phase name of the last phase event
+  property int hearingIndex: 0           // index of the tone waiting for an answer, 0 = none
+  property string hearingEar: ""         // left | right
+  property int hearingFreq: 0
+  property real hearingProgress: 0
+  property string hearingMessage: ""     // last error, "" when none
+  property string hearingWarning: ""     // last warning, "" when none
+  property var hearingResult: null       // { left, right, floorLeft, floorRight, masterGain, outFile }
+  property string hearingApplyState: "idle"  // idle | running | ok | failed
+  property string hearingApplyText: ""
+
+  // `volume` is the reference sink volume in percent (80, 90 or 100).
+  function startHearing(volume) {
+    if (hearingProc.running || hearingApplyProc.running) return
+    hearingMessage = ""
+    hearingWarning = ""
+    hearingResult = null
+    hearingApplyState = "idle"
+    hearingApplyText = ""
+    hearingPhase = ""
+    hearingIndex = 0
+    hearingEar = ""
+    hearingFreq = 0
+    hearingProgress = 0
+    hearingStatus = "starting"
+    hearingRunning = true
+    hearingProc.command = [root.binary, "hearing", "run", "--events",
+      "--sink-volume", String(Math.round(Number(volume) || 90)) + "%"]
+    hearingProc.running = true
+  }
+
+  function _hearingSend(line) {
+    if (!hearingProc.running || hearingStatus === "stopping") return
+    try { hearingProc.write(line + "\n") } catch (e) { /* the exit handler cleans up */ }
+  }
+
+  // Answer the tone being played; ignored when no tone is waiting.
+  function answerHearing(heard) {
+    if (hearingPhase !== "testing" || hearingIndex <= 0) return
+    var idx = hearingIndex
+    hearingIndex = 0
+    _hearingSend((heard ? "heard " : "not-heard ") + idx)
+  }
+
+  function repeatHearing() {
+    if (hearingPhase !== "testing" || hearingIndex <= 0) return
+    _hearingSend("repeat")
+  }
+
+  // Ask the process to stop and wait for `stopped`; SIGTERM (same cleanup)
+  // only if it does not answer.
+  function stopHearing() {
+    if (!hearingProc.running) return
+    hearingStatus = "stopping"
+    hearingIndex = 0
+    try { hearingProc.write("abort\n") } catch (e) { hearingProc.signal(15) }
+    hearingKillTimer.restart()
+  }
+
+  function _hearingEvent(line) {
+    var ev = _parseJson(line)
+    if (!ev || typeof ev.event !== "string") return
+    if (ev.event === "phase") {
+      hearingPhase = String(ev.name || "")
+      if (hearingPhase !== "testing") hearingIndex = 0
+      if (hearingStatus === "starting") hearingStatus = "running"
+    } else if (ev.event === "tone") {
+      hearingIndex = Number(ev.index) || 0
+      hearingEar = String(ev.ear || "")
+      hearingFreq = Number(ev.freq) || 0
+      hearingProgress = Math.max(0, Math.min(1, Number(ev.progress) || 0))
+      hearingWarning = ""
+    } else if (ev.event === "answer") {
+      hearingIndex = 0
+    } else if (ev.event === "result") {
+      var f = ev.floor || {}
+      hearingResult = {
+        left: Array.isArray(ev.left) ? ev.left : [],
+        right: Array.isArray(ev.right) ? ev.right : [],
+        floorLeft: Array.isArray(f.left) ? f.left : [],
+        floorRight: Array.isArray(f.right) ? f.right : [],
+        masterGain: Number(ev.masterGain) || 0,
+        outFile: String(ev.outFile || "")
+      }
+      hearingProgress = 1
+    } else if (ev.event === "warning") {
+      hearingWarning = String(ev.message || "")
+    } else if (ev.event === "error") {
+      hearingMessage = String(ev.message || "")
+    }
+  }
+
+  Timer {
+    id: hearingKillTimer
+    interval: 6000
+    repeat: false
+    onTriggered: if (hearingProc.running) hearingProc.signal(15)
+  }
+
+  Process {
+    id: hearingProc
+    stdinEnabled: true
+    stdout: SplitParser {
+      onRead: function (data) { root._hearingEvent(data) }
+    }
+    stderr: StdioCollector {
+      id: hearingErr
+      waitForEnd: true
+    }
+    onExited: function (exitCode) {
+      hearingKillTimer.stop()
+      if (exitCode !== 0 && root.hearingMessage === "") {
+        root.hearingMessage = root._lastLine(hearingErr.text) !== "" ? root._lastLine(hearingErr.text)
+          : tr("The hearing test stopped (code {code})", { code: exitCode })
+      }
+      root.hearingRunning = false
+      root.hearingStatus = "idle"
+      root.hearingIndex = 0
+    }
+  }
+
+  // Writes the stored result to the earbuds (slot 11). `acceptFloor` adds
+  // --accept-floor and must come from an explicit user choice. The run made
+  // by the plugin always uses the default baseline, so --baseline is never
+  // passed here.
+  function applyHearing(acceptFloor) {
+    var r = hearingResult
+    if (!r || r.outFile === "" || hearingApplyProc.running || hearingProc.running) return
+    hearingApplyState = "running"
+    hearingApplyText = ""
+    var cmd = [root.binary, "hearing", "apply", r.outFile, "--yes"]
+    if (acceptFloor) cmd.push("--accept-floor")
+    hearingApplyProc.command = cmd
+    hearingApplyProc.running = true
+    hearingApplyKill.restart()
+  }
+
+  // Forget the result; the file is removed only when it is under the cache
+  // directory the CLI writes to.
+  function discardHearing() {
+    var r = hearingResult
+    hearingResult = null
+    hearingApplyState = "idle"
+    hearingApplyText = ""
+    hearingMessage = ""
+    hearingWarning = ""
+    hearingPhase = ""
+    hearingProgress = 0
+    if (r && _hearingFileOk(r.outFile) && !hearingRmProc.running) {
+      hearingRmProc.command = ["rm", "-f", "--", r.outFile]
+      hearingRmProc.running = true
+    }
+  }
+
+  function _hearingFileOk(path) {
+    var dir = Quickshell.env("HOME") + "/.cache/qcy-omarchy/"
+    var p = String(path || "")
+    return p.indexOf(dir + "hearing-") === 0 && p.slice(-5) === ".json"
+      && p.slice(dir.length).indexOf("/") === -1 && p.indexOf("..") === -1
+  }
+
+  Timer {
+    id: hearingApplyKill
+    interval: 90000
+    repeat: false
+    onTriggered: if (hearingApplyProc.running) hearingApplyProc.signal(15)
+  }
+
+  Process {
+    id: hearingRmProc
+  }
+
+  Process {
+    id: hearingApplyProc
+    stdout: StdioCollector {
+      id: hearingApplyOut
+      waitForEnd: true
+    }
+    stderr: StdioCollector {
+      id: hearingApplyErr
+      waitForEnd: true
+    }
+    onExited: function (exitCode) {
+      hearingApplyKill.stop()
+      var all = String(hearingApplyOut.text || "") + "\n" + String(hearingApplyErr.text || "")
+      var unconfirmed = all.indexOf("NOT CONFIRMED") !== -1 || all.indexOf("MIXED STATE") !== -1
+      if (exitCode === 0 && !unconfirmed) {
+        root.hearingApplyState = "ok"
+        root.hearingApplyText = tr("Saved and confirmed")
+      } else {
+        // The lines that carry the verdict and the restore command, in full.
+        var keep = []
+        var lines = all.split("\n")
+        for (var i = 0; i < lines.length; i++) {
+          var l = lines[i].trim()
+          if (l === "") continue
+          if (/NOT CONFIRMED|MIXED STATE|restore|refused|error|failed|could not/i.test(l)) keep.push(l)
+        }
+        if (keep.length === 0) keep.push(root._lastLine(all))
+        root.hearingApplyState = "failed"
+        root.hearingApplyText = keep.slice(-4).join("\n")
+        if (root.hearingApplyText === "")
+          root.hearingApplyText = tr("Could not save the result (code {code})", { code: exitCode })
+      }
+      // The earbuds and the library changed (or may have): read them again.
+      root.libraryReload()
+      root.refresh()
+    }
+  }
+
   // --------------------------------------------------------- battery (light)
 
   property var battery: null        // parsed `qcyctl battery --json`

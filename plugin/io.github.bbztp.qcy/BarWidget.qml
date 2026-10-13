@@ -658,6 +658,62 @@ Panel {
   // The warning is shown first; only "Yes" starts the tone (Qcy.startFind).
   property bool findConfirming: false
 
+  // ---- hearing experience ----------------------------------------------------
+  // Test run and result live in Qcy (a long-running `hearing run --events`);
+  // these are only the panel's choices around them.
+  property int hearingVolume: 90
+  property bool hearingConfirming: false
+  property bool hearingAcceptFloor: false
+  // Set by Enter so the Space handler that follows it in the same key press
+  // does not also answer "not heard".
+  property bool hearingEnterSeen: false
+
+  readonly property bool hearingFloorAny: {
+    var r = Qcy.hearingResult
+    if (!r) return false
+    var all = (r.floorLeft || []).concat(r.floorRight || [])
+    return all.indexOf(true) !== -1
+  }
+
+  function hearingPhaseText() {
+    if (Qcy.hearingStatus === "stopping") return Qcy.tr("Stopping…")
+    switch (Qcy.hearingPhase) {
+    case "pausing-music": return Qcy.tr("Pausing the music…")
+    case "checking-earbuds": return Qcy.tr("Checking the earbuds…")
+    case "waiting-silence": return Qcy.tr("Waiting for silence…")
+    case "testing": return Qcy.tr("Listening test")
+    case "finishing": return Qcy.tr("Finishing…")
+    case "done": return Qcy.tr("Done")
+    case "aborted": return Qcy.tr("Cancelled")
+    case "error": return Qcy.tr("Error")
+    default: return Qcy.tr("Starting…")
+    }
+  }
+
+  function hearingStart() {
+    root.hearingConfirming = false
+    root.hearingAcceptFloor = false
+    Qcy.startHearing(root.hearingVolume)
+  }
+
+  function hearingCancel() {
+    if (Qcy.hearingRunning && Qcy.hearingStatus !== "stopping") Qcy.stopHearing()
+  }
+
+  function hearingSave() {
+    // --accept-floor only when bands sit at the floor AND the box is ticked.
+    var accept = root.hearingFloorAny && root.hearingAcceptFloor
+    root.hearingConfirming = false
+    root.hearingAcceptFloor = false
+    Qcy.applyHearing(accept)
+  }
+
+  function hearingDiscard() {
+    root.hearingConfirming = false
+    root.hearingAcceptFloor = false
+    Qcy.discardHearing()
+  }
+
   // ---- fit test ------------------------------------------------------------
   // `fit start --json 35` plays a sound and waits (up to 35 s) for the result.
   // Qcy.set runs it with a callback, whose watchdog (60 s) bounds the run so a
@@ -979,6 +1035,10 @@ Panel {
       // Never leave the find tone playing behind a closed panel.
       root.findConfirming = false
       Qcy.stopFind()
+      // Nor a hearing test, which holds the music and the sink volume.
+      root.hearingConfirming = false
+      root.hearingAcceptFloor = false
+      Qcy.stopHearing()
     }
     if (opened) {
       if (Qcy.connected) Qcy.pollBattery()
@@ -1038,6 +1098,7 @@ Panel {
     function onConnectedChanged() {
       root.optimistic = ({})
       if (!Qcy.connected) {
+        Qcy.stopHearing()
         root.resetEq()
         root.close()
       }
@@ -1138,8 +1199,33 @@ Panel {
       anchors.fill: parent
       // Typing a curve name must not trigger the panel's single-key shortcuts.
       blocked: nameField.activeFocus
-      onCloseRequested: root.close()
+      onCloseRequested: {
+        // Esc cancels a running hearing test first; a second Esc closes.
+        if (Qcy.hearingRunning && Qcy.hearingStatus !== "stopping") root.hearingCancel()
+        else root.close()
+      }
+      // While the test runs the keys answer it: h/Enter heard, n/Space not
+      // heard, r repeat, q cancel.
+      onMoveRequested: function (dx, dy) {
+        if (Qcy.hearingRunning && dx < 0 && dy === 0) Qcy.answerHearing(true)
+      }
+      onReturnRequested: {
+        if (Qcy.hearingRunning) {
+          root.hearingEnterSeen = true
+          Qcy.answerHearing(true)
+        }
+      }
+      onActivateRequested: {
+        if (root.hearingEnterSeen) { root.hearingEnterSeen = false; return }
+        if (Qcy.hearingRunning) Qcy.answerHearing(false)
+      }
       onTextKey: function (t) {
+        if (Qcy.hearingRunning) {
+          if (t === "n" || t === "N") Qcy.answerHearing(false)
+          else if (t === "r" || t === "R") Qcy.repeatHearing()
+          else if (t === "q" || t === "Q") root.hearingCancel()
+          return
+        }
         if (t === "r" || t === "R") Qcy.refresh()
         else if (t === "1") root.tab = 0
         else if (t === "2") root.tab = 1
@@ -1627,6 +1713,419 @@ Panel {
                       label: Qcy.tr("Cancel")
                       onClicked: root.closeSave()
                     }
+                  }
+                }
+              }
+            }
+
+            // ---- Hearing experience ----
+            Card {
+              id: hearingCard
+              width: parent.width
+              visible: !root.unverifiedModel
+
+              SectionHeader {
+                text: Qcy.tr("Hearing experience").toUpperCase()
+              }
+
+              // Intro: instructions, reference volume, start.
+              Column {
+                width: parent.width
+                visible: !Qcy.hearingRunning && Qcy.hearingResult === null
+                spacing: Style.space(8)
+
+                Text {
+                  width: parent.width
+                  text: Qcy.tr("Find a quiet place and wear the earbuds. Noise cancelling on helps. The music is paused and the earbuds volume is set during the test, then restored.")
+                  color: root.foreground
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.bodySmall
+                  wrapMode: Text.WordWrap
+                }
+
+                Text {
+                  text: Qcy.tr("Reference volume")
+                  color: root.muted
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Row {
+                  spacing: Style.space(6)
+                  Repeater {
+                    model: [80, 90, 100]
+                    Chip {
+                      required property int modelData
+                      label: modelData + "%"
+                      active: root.hearingVolume === modelData
+                      onClicked: root.hearingVolume = modelData
+                    }
+                  }
+                }
+
+                Row {
+                  spacing: Style.space(6)
+                  Chip {
+                    label: Qcy.tr("Start")
+                    enabled: Qcy.connected && Qcy.hearingApplyState !== "running"
+                    opacity: enabled ? 1.0 : 0.5
+                    onClicked: root.hearingStart()
+                  }
+                }
+
+                Text {
+                  width: parent.width
+                  visible: !Qcy.connected
+                  text: Qcy.tr("Connect the earbuds to start the test.")
+                  color: root.muted
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
+                Text {
+                  width: parent.width
+                  visible: Qcy.hearingMessage !== ""
+                  text: Qcy.hearingMessage
+                  color: Color.urgent
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.bodySmall
+                  wrapMode: Text.WordWrap
+                }
+              }
+
+              // Running: phase, ear, frequency, progress, answers.
+              Column {
+                id: hearingRun
+                width: parent.width
+                visible: Qcy.hearingRunning
+                spacing: Style.space(8)
+
+                readonly property bool canAnswer: Qcy.hearingPhase === "testing"
+                  && Qcy.hearingIndex > 0 && Qcy.hearingStatus !== "stopping"
+
+                Text {
+                  width: parent.width
+                  text: root.hearingPhaseText()
+                  color: root.accent
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                  wrapMode: Text.WordWrap
+                }
+
+                Text {
+                  width: parent.width
+                  visible: Qcy.hearingPhase === "testing" && Qcy.hearingFreq > 0
+                  text: Qcy.tr("{ear} · {freq} Hz", {
+                    ear: Qcy.hearingEar === "right" ? Qcy.tr("Right ear") : Qcy.tr("Left ear"),
+                    freq: Qcy.hearingFreq
+                  })
+                  color: root.foreground
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.body
+                }
+
+                Rectangle {
+                  width: parent.width
+                  height: Style.space(6)
+                  radius: height / 2
+                  color: root.trackFill
+
+                  Rectangle {
+                    width: parent.width * Qcy.hearingProgress
+                    height: parent.height
+                    radius: parent.radius
+                    color: root.accent
+                  }
+                }
+
+                Text {
+                  width: parent.width
+                  text: Qcy.tr("Do you hear the tone? Answer with the buttons or the keys.")
+                  color: root.muted
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
+                Row {
+                  spacing: Style.space(8)
+                  Chip {
+                    width: (hearingRun.width - Style.space(8)) / 2
+                    implicitHeight: Style.space(48)
+                    label: Qcy.tr("I hear it")
+                    active: hearingRun.canAnswer
+                    enabled: hearingRun.canAnswer
+                    opacity: enabled ? 1.0 : 0.5
+                    onClicked: Qcy.answerHearing(true)
+                  }
+                  Chip {
+                    width: (hearingRun.width - Style.space(8)) / 2
+                    implicitHeight: Style.space(48)
+                    label: Qcy.tr("I don't hear it")
+                    enabled: hearingRun.canAnswer
+                    opacity: enabled ? 1.0 : 0.5
+                    onClicked: Qcy.answerHearing(false)
+                  }
+                }
+
+                Row {
+                  spacing: Style.space(8)
+                  Chip {
+                    width: (hearingRun.width - Style.space(8)) / 2
+                    label: Qcy.tr("Repeat")
+                    enabled: hearingRun.canAnswer
+                    opacity: enabled ? 1.0 : 0.5
+                    onClicked: Qcy.repeatHearing()
+                  }
+                  Chip {
+                    width: (hearingRun.width - Style.space(8)) / 2
+                    label: Qcy.tr("Cancel")
+                    enabled: Qcy.hearingStatus !== "stopping"
+                    opacity: enabled ? 1.0 : 0.5
+                    onClicked: root.hearingCancel()
+                  }
+                }
+
+                Text {
+                  width: parent.width
+                  text: Qcy.tr("H or Enter: I hear it · N or Space: I don't hear it · R: repeat · Q or Esc: cancel")
+                  color: root.muted
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
+                Text {
+                  width: parent.width
+                  visible: Qcy.hearingWarning !== "" || Qcy.hearingMessage !== ""
+                  text: Qcy.hearingMessage !== "" ? Qcy.hearingMessage : Qcy.hearingWarning
+                  color: Qcy.hearingMessage !== "" ? Color.urgent : root.muted
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+              }
+
+              // Result: both curves, floor marks, master gain, save or discard.
+              Column {
+                width: parent.width
+                visible: !Qcy.hearingRunning && Qcy.hearingResult !== null
+                spacing: Style.space(8)
+
+                Canvas {
+                  id: hearingChart
+                  width: parent.width
+                  height: Style.space(140)
+                  antialiasing: true
+
+                  readonly property var res: Qcy.hearingResult
+                  readonly property var labels: ["63", "125", "250", "500", "1k", "2k", "4k", "8k"]
+                  readonly property real maxDb: 8
+                  readonly property real axisH: Style.space(16)
+
+                  onResChanged: requestPaint()
+                  onWidthChanged: requestPaint()
+                  onHeightChanged: requestPaint()
+                  Connections {
+                    target: root
+                    function onAccentChanged() { hearingChart.requestPaint() }
+                    function onForegroundChanged() { hearingChart.requestPaint() }
+                  }
+
+                  onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.reset()
+                    var w = width
+                    var plotH = height - axisH
+                    var zeroY = plotH / 2
+                    var n = labels.length
+                    var slot = w / n
+                    function px(i) { return (i + 0.5) * slot }
+                    function py(db) {
+                      var d = Math.max(-maxDb, Math.min(maxDb, Number(db) || 0))
+                      return zeroY - d / maxDb * (plotH / 2 - 4)
+                    }
+
+                    // 0 dB line, dashed by hand, and the +-8 dB edges.
+                    ctx.strokeStyle = root.trackFill
+                    ctx.lineWidth = 1
+                    ctx.beginPath()
+                    for (var x = 0; x < w; x += 8) {
+                      ctx.moveTo(x, zeroY)
+                      ctx.lineTo(Math.min(w, x + 4), zeroY)
+                    }
+                    ctx.stroke()
+                    ctx.beginPath()
+                    ctx.moveTo(0, 0.5)
+                    ctx.lineTo(w, 0.5)
+                    ctx.moveTo(0, plotH - 0.5)
+                    ctx.lineTo(w, plotH - 0.5)
+                    ctx.stroke()
+
+                    ctx.fillStyle = root.muted
+                    ctx.font = Style.font.caption + "px \"" + root.textFamily + "\""
+                    ctx.textAlign = "center"
+                    for (var i = 0; i < n; i++) ctx.fillText(labels[i], px(i), height - 3)
+
+                    if (!res) return
+                    var series = [
+                      { gains: res.left, floor: res.floorLeft, color: root.accent },
+                      { gains: res.right, floor: res.floorRight, color: root.foreground }
+                    ]
+                    for (var s = 0; s < series.length; s++) {
+                      var g = series[s].gains || []
+                      if (g.length === 0) continue
+                      ctx.strokeStyle = series[s].color
+                      ctx.fillStyle = series[s].color
+                      ctx.lineWidth = 2
+                      ctx.lineJoin = "round"
+                      ctx.beginPath()
+                      for (var k = 0; k < Math.min(n, g.length); k++) {
+                        if (k === 0) ctx.moveTo(px(k), py(g[k]))
+                        else ctx.lineTo(px(k), py(g[k]))
+                      }
+                      ctx.stroke()
+                      var fl = series[s].floor || []
+                      for (var j = 0; j < Math.min(n, g.length); j++) {
+                        var atFloor = fl[j] === true
+                        ctx.beginPath()
+                        ctx.arc(px(j), py(g[j]), atFloor ? 5 : 3, 0, Math.PI * 2)
+                        if (atFloor) {
+                          // A hollow ring: this band was still heard at the lowest level.
+                          ctx.lineWidth = 2
+                          ctx.stroke()
+                        } else {
+                          ctx.fill()
+                        }
+                      }
+                    }
+                  }
+                }
+
+                Row {
+                  spacing: Style.space(14)
+                  Row {
+                    spacing: Style.space(6)
+                    Rectangle {
+                      width: Style.space(10); height: width; radius: width / 2
+                      color: root.accent
+                      anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Text {
+                      text: Qcy.tr("Left")
+                      color: root.foreground
+                      font.family: root.textFamily
+                      font.pixelSize: Style.font.caption
+                    }
+                  }
+                  Row {
+                    spacing: Style.space(6)
+                    Rectangle {
+                      width: Style.space(10); height: width; radius: width / 2
+                      color: root.foreground
+                      anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Text {
+                      text: Qcy.tr("Right")
+                      color: root.foreground
+                      font.family: root.textFamily
+                      font.pixelSize: Style.font.caption
+                    }
+                  }
+                  Text {
+                    text: Qcy.tr("Overall gain: {db} dB", {
+                      db: (Qcy.hearingResult ? Qcy.hearingResult.masterGain : 0)
+                        .toFixed(1).replace(".", Qcy.decimalSep)
+                    })
+                    color: root.muted
+                    font.family: root.textFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+
+                Text {
+                  width: parent.width
+                  visible: root.hearingFloorAny
+                  text: Qcy.tr("Some bands were still heard at the lowest level (hollow marks). The result is only relative; repeat the test with a lower volume.")
+                  color: Color.urgent
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.bodySmall
+                  wrapMode: Text.WordWrap
+                }
+
+                // Confirmation before anything is written.
+                Column {
+                  width: parent.width
+                  visible: root.hearingConfirming && Qcy.hearingApplyState !== "running"
+                  spacing: Style.space(6)
+
+                  Text {
+                    width: parent.width
+                    text: Qcy.tr("This writes the experience to both earbuds (slot 11) and saves a copy of what was there as a custom curve. Continue?")
+                    color: root.foreground
+                    font.family: root.textFamily
+                    font.pixelSize: Style.font.caption
+                    wrapMode: Text.WordWrap
+                  }
+                  Chip {
+                    visible: root.hearingFloorAny
+                    label: Qcy.tr("Save even with bands at the floor")
+                    active: root.hearingAcceptFloor
+                    onClicked: root.hearingAcceptFloor = !root.hearingAcceptFloor
+                  }
+                  Row {
+                    spacing: Style.space(6)
+                    Chip {
+                      readonly property bool allowed: !root.hearingFloorAny || root.hearingAcceptFloor
+                      label: Qcy.tr("Yes")
+                      enabled: allowed && Qcy.connected
+                      opacity: enabled ? 1.0 : 0.5
+                      onClicked: root.hearingSave()
+                    }
+                    Chip {
+                      label: Qcy.tr("No")
+                      onClicked: {
+                        root.hearingConfirming = false
+                        root.hearingAcceptFloor = false
+                      }
+                    }
+                  }
+                }
+
+                Text {
+                  width: parent.width
+                  visible: Qcy.hearingApplyState === "running"
+                  text: Qcy.tr("Saving to the earbuds…")
+                  color: root.muted
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                Text {
+                  width: parent.width
+                  visible: Qcy.hearingApplyText !== ""
+                  text: Qcy.hearingApplyText
+                  color: Qcy.hearingApplyState === "ok" ? root.accent : Color.urgent
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.bodySmall
+                  wrapMode: Text.WrapAnywhere
+                }
+
+                Row {
+                  spacing: Style.space(6)
+                  visible: Qcy.hearingApplyState !== "running" && !root.hearingConfirming
+                  Chip {
+                    visible: Qcy.hearingApplyState !== "ok"
+                    label: Qcy.tr("Save to earbuds")
+                    enabled: Qcy.connected
+                    opacity: enabled ? 1.0 : 0.5
+                    onClicked: root.hearingConfirming = true
+                  }
+                  Chip {
+                    label: Qcy.hearingApplyState === "ok" ? Qcy.tr("Done") : Qcy.tr("Discard")
+                    onClicked: root.hearingDiscard()
                   }
                 }
               }
