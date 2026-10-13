@@ -428,7 +428,7 @@ to the maximum), and on stop restores the saved volume. It stops on the stop
 button, on audio-focus loss and on disconnection. The app has no ceiling, no
 warning and no timeout.
 
-`0x05` (LED flash, `Quicky NewLightFlashCommand`) and `0x3D` produced no change
+`0x05` (LED flash) and `0x3D` produced no change
 while the earbuds were connected, so `qcyctl find` no longer sends them.
 
 `qcyctl find [--sink NAME] [--max-volume 70%] [--timeout 60] [--yes] [--events]`

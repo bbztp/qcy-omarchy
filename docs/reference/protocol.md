@@ -25,7 +25,7 @@ Counts (opcode rows only): implemented-different 6, implemented-same 17, missing
 | 0x02 | Clear paired records | write | FF 02 02 00 | missing |
 | 0x03 | Factory reset | write | FF 02 03 00 | missing |
 | 0x04 | Music control (play/pause/prev/next) | write | FF 03 04 01 <a>   a: 1 play, 2 pause, 3 previous, 4 next (0 used by SD player as toggle/stop) | n/a-N70 |
-| 0x05 | LED flash (Quicky NewLightFlash) | write | FF 03 05 01 <1\|0> | implemented-different(daemon maps action find to 0x05 in opcodeMap, qcyctl find does NOT send it: local tone only) |
+| 0x05 | LED flash | write | FF 03 05 01 <1\|0> | implemented-different(daemon maps action find to 0x05 in opcodeMap, qcyctl find does NOT send it: local tone only) |
 | 0x06 | In-ear detection (legacy, 'ruer') | write | FF 03 06 01 <1 on\|2 off> | n/a-N70 |
 | 0x07 | ANC strength (legacy) | write | FF 03 07 01 <v>; read request = FF 03 07 01 FF (sent through sendBleData, not FE) | implemented-different(we query with FE 01 07 and treat silence as absent; the app reads with [07 01 FF]) |
 | 0x08 | Media volume on the earbuds (SD/speaker) | write | FF 05 08 03 <l> <r> 00 | n/a-N70 |
@@ -99,7 +99,7 @@ Counts (opcode rows only): implemented-different 6, implemented-same 17, missing
 
 ## Differences against our implementation
 
-- **0x05 LED flash (Quicky NewLightFlash)**: daemon maps action find to 0x05 in opcodeMap, qcyctl find does NOT send it: local tone only
+- **0x05 LED flash**: daemon maps action find to 0x05 in opcodeMap, qcyctl find does NOT send it: local tone only
   - The app's find-earbuds does not use it. Verified no effect while connected on the N70.
 - **0x07 ANC strength (legacy)**: we query with FE 01 07 and treat silence as absent; the app reads with [07 01 FF]
   - Our probe asks 0x07 with FE and stays silent on the N70 (verified); the app's read frame is the write-shaped [07 01 FF], not FE. Not tried by us (harmless to try).

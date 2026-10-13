@@ -213,7 +213,7 @@
   "kind": "opcode",
   "opcode": 5,
   "opcodeHex": "0x05",
-  "name": "LED flash (Quicky NewLightFlash)",
+  "name": "LED flash",
   "direction": "write",
   "characteristic": "00001001 (service A001), write",
   "frame": "FF 03 05 01 <1|0>",
