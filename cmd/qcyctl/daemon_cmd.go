@@ -372,7 +372,7 @@ func cmdVersion(args []string) error {
 		fmt.Printf("{\"version\":%q}\n", version)
 		return nil
 	}
-	fmt.Println(version)
+	fmt.Println("qcyctl " + version) // the bootstrap and the plugin compare this exact line
 	return nil
 }
 

@@ -497,3 +497,24 @@ func TestVersionCommand(t *testing.T) {
 		t.Fatal("want usage error")
 	}
 }
+
+func TestVersionLineIsWhatTheBootstrapCompares(t *testing.T) {
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	prev := version
+	version = "9.8.7"
+	defer func() { os.Stdout = old; version = prev }()
+	if err := cmdVersion(nil); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	buf := make([]byte, 64)
+	n, _ := r.Read(buf)
+	if got := string(buf[:n]); got != "qcyctl 9.8.7\n" {
+		t.Fatalf("version line %q", got)
+	}
+}
