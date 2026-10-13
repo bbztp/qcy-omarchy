@@ -49,8 +49,37 @@ func (b *fakeBeeper) startedCount() int {
 	return b.started
 }
 
+// fakeClock advances only when something sleeps.
+type fakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+	n  int // sleeps
+}
+
+func (c *fakeClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *fakeClock) sleepFn(step time.Duration, real time.Duration) func(time.Duration) {
+	return func(d time.Duration) {
+		c.mu.Lock()
+		if step > 0 {
+			d = step
+		}
+		c.t = c.t.Add(d)
+		c.n++
+		c.mu.Unlock()
+		if real > 0 {
+			time.Sleep(real)
+		}
+	}
+}
+
 type findRig struct {
 	*rig
+	clock  *fakeClock
 	env    findEnv
 	beep   *fakeBeeper
 	events *bytes.Buffer
@@ -71,7 +100,9 @@ func newFindRig(t *testing.T, keys keySource) *findRig {
 		rg.ex.mu.Unlock()
 	}
 	ev := &bytes.Buffer{}
-	return &findRig{rig: rg, env: findEnv{hearingEnv: rg.env, beep: b, events: ev}, beep: b, events: ev}
+	clk := &fakeClock{t: time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)}
+	rg.env.now, rg.env.sleep = clk.now, clk.sleepFn(0, 0)
+	return &findRig{rig: rg, clock: clk, env: findEnv{hearingEnv: rg.env, beep: b, events: ev}, beep: b, events: ev}
 }
 
 func (r *findRig) run(o findOpts) error {
@@ -272,7 +303,7 @@ func TestFindStopKeyRestores(t *testing.T) {
 	}}
 	rg = newFindRig(t, keys)
 	// Pace the loop (the fake sleep is instant) so the key can win the race.
-	rg.env.sleep = func(time.Duration) { time.Sleep(200 * time.Microsecond) }
+	rg.env.sleep = rg.clock.sleepFn(0, 200*time.Microsecond)
 	if err := rg.run(findOpts{yes: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +318,7 @@ func TestFindSignalRestores(t *testing.T) {
 	r := newFindRig(t, neverKeys())
 	sigs := make(chan os.Signal, 1)
 	r.env.sigs = sigs
-	r.env.sleep = func(time.Duration) { time.Sleep(200 * time.Microsecond) } // let the watcher run
+	r.env.sleep = r.clock.sleepFn(0, 200*time.Microsecond) // let the watcher run
 	r.ex.onCall = func(line string) {
 		if line == "pactl set-sink-volume bluez_output.AA_BB_CC_DD_EE_FF.1 30%" {
 			sigs <- syscallTERM()
@@ -363,6 +394,7 @@ func TestFindRefusesNonBluezSinks(t *testing.T) {
 
 func TestFindConfirmation(t *testing.T) {
 	r := newFindRig(t, seqKeys("n"))
+	r.env.events = nil // interactive: the typed key answers the question
 	err := r.run(findOpts{})
 	if err == nil || !strings.Contains(err.Error(), "cancelled") {
 		t.Fatalf("err = %v", err)
@@ -382,6 +414,7 @@ func TestFindConfirmation(t *testing.T) {
 		}
 		select {}
 	}})
+	r.env.events = nil
 	if err := r.run(findOpts{timeout: 5 * time.Second}); err != nil {
 		t.Fatal(err)
 	}
@@ -483,3 +516,96 @@ func TestBeepToneLevelAndShape(t *testing.T) {
 }
 
 func syscallTERM() os.Signal { return syscall.SIGTERM }
+
+func TestFindElapsedComesFromTheClock(t *testing.T) {
+	r := newFindRig(t, neverKeys())
+	// Every sleep takes 500 ms of wall clock although the loop asks for 100.
+	r.env.sleep = r.clock.sleepFn(500*time.Millisecond, 0)
+	if err := r.run(findOpts{yes: true, timeout: 5 * time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	if r.clock.n > 20 {
+		t.Fatalf("%d sleeps for a 5 s timeout at 500 ms each", r.clock.n)
+	}
+	if v := r.setVolumes(); len(v) != 3 {
+		t.Fatalf("volumes %v", v)
+	}
+	ev := r.eventList(t)
+	if ev[len(ev)-1]["reason"] != "timeout" {
+		t.Fatalf("events %v", ev)
+	}
+}
+
+func TestFindStopBeforeTheToneNeverRaisesTheVolume(t *testing.T) {
+	r := newFindRig(t, seqKeys("q")) // "stop", then EOF
+	// Give the stdin reader time to deliver before the run reaches the volume.
+	r.ex.onCall = func(line string) {
+		if line == "playerctl -l" {
+			time.Sleep(30 * time.Millisecond)
+		}
+	}
+	if err := r.run(findOpts{yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if v := r.setVolumes(); len(v) != 0 || r.ex.count("set-sink-mute") != 0 {
+		t.Fatalf("volume touched: %v", r.ex.calls)
+	}
+	if r.beep.startedCount() != 0 {
+		t.Fatal("tone started")
+	}
+	if r.ex.index("playerctl --player=spotify play") < 0 {
+		t.Error("music not resumed")
+	}
+	ev := r.eventList(t)
+	if len(ev) != 1 || ev[0]["event"] != "stopped" || ev[0]["reason"] != "stop" {
+		t.Fatalf("events %v", ev)
+	}
+}
+
+func TestFindStopDuringTheSilenceWait(t *testing.T) {
+	var r *findRig
+	keys := fnKeys{func() (byte, error) {
+		for r.ex.count("pactl list sink-inputs") < 3 {
+			time.Sleep(50 * time.Microsecond)
+		}
+		return 'q', nil
+	}}
+	r = newFindRig(t, keys)
+	r.env.sleep = r.clock.sleepFn(0, time.Millisecond)
+	r.ex.out["pactl list sinks"] = strings.Replace(r.ex.out["pactl list sinks"], "State: IDLE", "State: RUNNING", 1)
+	r.ex.out["pactl list sink-inputs"] = "Sink Input #7\n\tSink: 92\n\tCorked: no\n\tMute: no\n\tVolume: front-left: 65536 / 100% / 0.00 dB\n"
+	if err := r.run(findOpts{yes: true}); err != nil {
+		t.Fatalf("stop reported as failure: %v", err)
+	}
+	if v := r.setVolumes(); len(v) != 0 {
+		t.Fatalf("volume touched: %v", v)
+	}
+	if r.ex.index("playerctl --player=spotify play") < 0 {
+		t.Error("music not resumed")
+	}
+	ev := r.eventList(t)
+	if ev[len(ev)-1]["reason"] != "stop" {
+		t.Fatalf("events %v", ev)
+	}
+}
+
+func TestFindNewStreamAfterStartStopsAndRestores(t *testing.T) {
+	r := newFindRig(t, neverKeys())
+	r.ex.onCall = func(line string) {
+		if line == "pactl set-sink-volume bluez_output.AA_BB_CC_DD_EE_FF.1 30%" {
+			r.ex.out["pactl list sink-inputs"] += "\nSink Input #9\n\tSink: 92\n\tCorked: no\n"
+		}
+	}
+	err := r.run(findOpts{yes: true})
+	if err == nil || !strings.Contains(err.Error(), "new audio stream") {
+		t.Fatalf("err = %v", err)
+	}
+	if v := r.setVolumes(); v[len(v)-1] != 30 && v[len(v)-1] != 35 {
+		t.Fatalf("kept ramping: %v", v)
+	}
+	r.assertRestored(t)
+	ev := r.eventList(t)
+	if ev[len(ev)-1]["reason"] != "audio-started" {
+		t.Fatalf("events %v", ev)
+	}
+}

@@ -214,7 +214,7 @@ func hearingTakeBackup(env hearingEnv, link hearingLink, noSlot11 bool) (info he
 		return info, fmt.Errorf("slot 11 backup: %w", err)
 	}
 	stamp := env.now().Format("20060102-150405")
-	libID, err := env.saveCurve("backup antes do teste auditivo "+stamp, snap)
+	libID, err := env.saveCurve("EQ antes do teste "+stamp, snap)
 	if err != nil {
 		return info, fmt.Errorf("library entry failed: %w", err)
 	}

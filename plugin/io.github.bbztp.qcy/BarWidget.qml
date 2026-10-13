@@ -721,7 +721,23 @@ Panel {
     var args = [key, on ? "on" : "off"]
     // LDAC restarts the earbuds: the CLI refuses it without --yes, which the
     // panel passes only after its own two-step confirmation.
-    if (key === "ldac") args.push("--yes")
+    if (key === "ldac") {
+      args.push("--yes")
+      Qcy.set(label, args, function (code, out, err) {
+        // "indeterminado": the earbuds still echoed the old value and the
+        // restart may be pending. Do not assume success: drop the optimistic
+        // value and read the state again.
+        if (code === 0 && String(out || "").indexOf("indeterminado") !== -1) {
+          var o = Object.assign({}, root.optimistic)
+          delete o["ldac"]
+          root.optimistic = o
+          root.ldacIndeterminate = true
+          root.ldacReadSeen = false
+          Qcy.refresh()
+        }
+      })
+      return
+    }
     Qcy.set(label, args)
   }
 
@@ -729,6 +745,18 @@ Panel {
   readonly property bool ldacVisible: !!(caps && caps.ldac === true) && has("ldac")
   property bool ldacConfirming: false
   property bool ldacTarget: false
+  // After an "indeterminate" LDAC write: shown until the next state read ends.
+  property bool ldacIndeterminate: false
+  property bool ldacReadSeen: false
+
+  Connections {
+    target: Qcy
+    function onLoadingChanged() {
+      if (!root.ldacIndeterminate) return
+      if (Qcy.loading) root.ldacReadSeen = true
+      else if (root.ldacReadSeen) root.ldacIndeterminate = false
+    }
+  }
 
   function setAnc(key) {
     var next = Object.assign({}, optimistic)
@@ -1688,6 +1716,16 @@ Panel {
                     onClicked: root.ldacConfirming = false
                   }
                 }
+              }
+
+              Text {
+                width: parent.width
+                visible: root.ldacVisible && root.ldacIndeterminate
+                text: Qcy.tr("LDAC: undetermined, the earbuds may still be restarting. Reading the state again…")
+                color: Color.urgent
+                font.family: root.textFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
               }
 
               PanelSeparator {

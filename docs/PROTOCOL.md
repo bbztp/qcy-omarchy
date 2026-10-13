@@ -405,6 +405,10 @@ Two writes restart the earbuds:
   restarted" instead of an error. **Verified on hardware: NO** (not tested
   since the write was enabled); treat the restart/readback behaviour as
   unverified until it is.
+  When the earbuds still echo the old value at 4 s and the link is up, `set`
+  replies `{"indeterminate": "indeterminado: aplicado possivelmente, reinício
+  pendente — releia o estado"}` (not an error, never rewritten); the plugin then
+  reads the state again instead of assuming success.
 
 ## Find my earbuds
 
@@ -439,10 +443,17 @@ as in `hearing run`), the sink must be a Bluetooth sink identified by
 `api.bluez5.address`, and the tone is played with `pw-cat ... -P
 "node.dont-fallback=true node.dont-reconnect=true"`.
 
+Known limit: while the tone plays, a stream that was already on the sink when
+the tone settled (about 0.5 s after it started) is not re-measured. A stream
+that is NEW afterwards (a resumed player, another app) is caught by a cheap
+check every 2 s, before each volume rise (`pactl list sink-inputs`): the run
+stops with reason `audio-started` and restores the volume. A resumed player
+whose stream was already uncorked at the baseline is the one case this misses.
+
 `--events` is for the plugin: no terminal, JSON lines on stdout
 (`started`, `volume`, `error`, `stopped` with a `reason`), the line `stop` on
 stdin ends it (EOF too), progress text goes to stderr. `stopped` is written
-after the volume and the music were restored. Not verified on hardware.
+after the volume and the music were restored. A `stop` (or EOF) that arrives before the tone starts, even during the music pause or the silence wait, aborts the run before any volume change. Not verified on hardware.
 
 ## Prompt volume
 

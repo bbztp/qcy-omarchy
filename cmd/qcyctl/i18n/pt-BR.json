@@ -20,6 +20,7 @@
   "Restarts the earbuds; this is expected, not a fault": "Reinicia os fones; é esperado, não é falha",
   "LDAC": "LDAC",
   "This restarts the earbuds. Continue?": "Isto reinicia os fones. Continuar?",
+  "LDAC: undetermined, the earbuds may still be restarting. Reading the state again…": "LDAC: indeterminado, os fones ainda podem estar reiniciando. Lendo o estado de novo…",
   "Find my earbuds": "Encontrar meus fones",
   "Find": "Encontrar",
   "Stop": "Parar",

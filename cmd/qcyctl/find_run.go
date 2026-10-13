@@ -186,6 +186,15 @@ func (l *lineKeys) ReadKey() (byte, error) {
 
 // ---------- the run ----------
 
+// errStopRequested: "stop" (or EOF) arrived on stdin in --events mode. Raised
+// through the aborter so that every phase, including the music pause and the
+// silence wait, observes it and nothing is raised after it.
+var errStopRequested = errors.New("stop requested")
+
+// findBaselineAt: when the set of streams on the sink (our tone included) is
+// recorded as the baseline for the new-stream check.
+const findBaselineAt = 500 * time.Millisecond
+
 // findRunLive runs `find`. Every return path restores the sink volume and
 // mute and resumes the paused players; the "stopped" event is written only
 // after that.
@@ -200,7 +209,13 @@ func findRunLive(env findEnv, o findOpts) error {
 		b, _ := json.Marshal(m)
 		fmt.Fprintf(env.events, "%s\n", b)
 	}
+	if env.now == nil {
+		env.now = time.Now
+	}
 	reason, err := findCore(env, o, emit)
+	if errors.Is(err, errStopRequested) {
+		reason, err = "stop", nil
+	}
 	if err != nil {
 		if errors.Is(err, errInterrupted) {
 			reason = "signal"
@@ -261,6 +276,7 @@ func findCore(env findEnv, o findOpts, emit func(map[string]interface{})) (reaso
 
 	keyCh := make(chan byte, 16)
 	keyErr := make(chan error, 1)
+	eventsMode := env.events != nil
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -270,8 +286,19 @@ func findCore(env findEnv, o findOpts, emit func(map[string]interface{})) (reaso
 		for {
 			k, e := keys.ReadKey()
 			if e != nil {
+				if eventsMode && errors.Is(e, io.EOF) {
+					ab.abort(errStopRequested) // the controller went away
+					return
+				}
 				keyErr <- e
 				return
+			}
+			if eventsMode {
+				if k == 'q' { // "stop" on stdin: seen by every phase
+					ab.abort(errStopRequested)
+					return
+				}
+				continue
 			}
 			keyCh <- k
 		}
@@ -303,6 +330,9 @@ func findCore(env findEnv, o findOpts, emit func(map[string]interface{})) (reaso
 	if err := pauseMusic(env.hearingEnv, mp, func(f func()) { undo = append(undo, f) }, warnf); err != nil {
 		return "", err
 	}
+	if e := checkAbort(); e != nil {
+		return "", e
+	}
 	if err := waitSinkSilent(env.hearingEnv, tgt, checkAbort); err != nil {
 		return "", err
 	}
@@ -324,6 +354,9 @@ func findCore(env findEnv, o findOpts, emit func(map[string]interface{})) (reaso
 		}
 		cur = v
 		return nil
+	}
+	if e := checkAbort(); e != nil { // a stop received while waiting for silence
+		return "", e
 	}
 	if err := setVol(start); err != nil {
 		return "", err
@@ -351,7 +384,7 @@ func findCore(env findEnv, o findOpts, emit func(map[string]interface{})) (reaso
 	// put back and the music resumed (undo runs last-registered first).
 	undo = append(undo, endTone)
 
-	for { // a key typed before the tone started is not a stop
+	for { // TTY only: a key typed before the tone started is not a stop
 		select {
 		case <-keyCh:
 			continue
@@ -363,9 +396,21 @@ func findCore(env findEnv, o findOpts, emit func(map[string]interface{})) (reaso
 	emit(map[string]interface{}{"event": "started", "sink": sink, "volume": cur, "maxVolume": o.maxPct,
 		"timeoutSeconds": int(o.timeout / time.Second)})
 
+	// Time is read from the clock, not summed from sleeps: a slow pactl call
+	// must not stretch the timeout or the ramp.
+	t0 := env.now()
 	var elapsed time.Duration
 	nextStep, nextSink := findStepEvery, findSinkEvery
+	var baseline map[string]bool
+	streamsNow := func() ([]streamInfo, error) {
+		in, e := env.exec("pactl", "list", "sink-inputs")
+		if e != nil {
+			return nil, fmt.Errorf("pactl list sink-inputs: %w", e)
+		}
+		return streamsOn(in, tgt.Idx), nil
+	}
 	for {
+		elapsed = env.now().Sub(t0)
 		select { // a dead tone wins over everything else
 		case <-dead:
 			return "player-died", errors.New("the tone player died: stopped, volume restored")
@@ -391,8 +436,32 @@ func findCore(env findEnv, o findOpts, emit func(map[string]interface{})) (reaso
 		if elapsed >= o.timeout {
 			return "timeout", nil
 		}
+		if baseline == nil && elapsed >= findBaselineAt {
+			st, e := streamsNow()
+			if e != nil {
+				return "error", e
+			}
+			baseline = map[string]bool{}
+			for _, x := range st {
+				baseline[x.ID] = true
+			}
+		}
 		if elapsed >= nextStep {
 			nextStep += findStepEvery
+			if baseline != nil {
+				// Cheap re-check before every rise: a stream that was not
+				// there when the tone settled (music resumed, another app)
+				// ends the run before it can be made louder.
+				st, e := streamsNow()
+				if e != nil {
+					return "error", e
+				}
+				for _, x := range st {
+					if !baseline[x.ID] {
+						return "audio-started", fmt.Errorf("a new audio stream %s started on %s: stopped, volume restored", x, sink)
+					}
+				}
+			}
 			if cur < o.maxPct {
 				next := cur + findStepPct
 				if next > o.maxPct {
@@ -422,7 +491,6 @@ func findCore(env findEnv, o findOpts, emit func(map[string]interface{})) (reaso
 			}
 		}
 		env.sleep(findPoll)
-		elapsed += findPoll
 	}
 }
 
