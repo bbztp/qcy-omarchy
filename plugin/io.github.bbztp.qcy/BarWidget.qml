@@ -790,7 +790,7 @@ Panel {
     0x00: Qcy.tr("Disabled"), 0x01: Qcy.tr("Play/pause"), 0x02: Qcy.tr("Previous"), 0x03: Qcy.tr("Next"),
     0x04: Qcy.tr("Voice assistant"), 0x05: Qcy.tr("Volume +"), 0x06: Qcy.tr("Volume −"),
     0x07: Qcy.tr("Game mode"), 0x08: Qcy.tr("Answer"), 0x09: Qcy.tr("Reject"),
-    0x0a: Qcy.tr("Hold call"), 0x0b: Qcy.tr("Redial")
+    0x0a: Qcy.tr("Hold call"), 0x0b: Qcy.tr("ANC mode")
   })
 
   readonly property var keyNames: ({

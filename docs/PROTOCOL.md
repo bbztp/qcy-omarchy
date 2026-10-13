@@ -548,7 +548,7 @@ Enumerated with `QCYCTL_PROBE=1`:
 |---|---|---|
 | `00001001` | command write | no |
 | `00001002` | command notify | yes |
-| `00000008` | battery, L/R/case; bit 7 = charging | yes |
+| `00000008` | battery, L/R/case; bit 7 = charging, level = byte & 0x7F (the daemon decodes it) | yes |
 | `00000007` | firmware version, 3 or 6 bytes | yes |
 | `0000000d` | touch remap, 10 key:fun pairs | yes |
 | `0000000b` | absent on this model | — |
@@ -557,7 +557,7 @@ Touch ids: the low byte is a key index (`0x01`–`0x0a` for left/right
 single, double, triple, quad and hold; `0x15`–`0x1e` repeat the scheme for
 in-call gestures) and the high byte a function (`0x00` none, `0x01` play/pause,
 `0x02` previous, `0x03` next, `0x04` voice assistant, `0x05`/`0x06` volume,
-`0x07` game mode, `0x08`–`0x0a` call handling, `0x0b` redial). Ids outside
+`0x07` game mode, `0x08`–`0x0a` call handling, `0x0b` ANC mode, as the N70 panel declares it). Ids outside
 those ranges are shown as raw hex rather than guessed at.
 
 ## Model detection

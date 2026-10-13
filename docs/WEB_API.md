@@ -36,7 +36,7 @@ and `public/useSoundMarket` (the EQ "market", needs a `userId`), `earphoneoOta/f
 
 | type | name | content |
 |---|---|---|
-| 10 | button function | touch/double/triple/quad/hold events, action ids (0 none, 1 play/pause, 2 prev, 3 next, 4 assistant, 5/6 volume, 7 game mode, 11 ANC) |
+| 10 | button function | touch/double/triple/quad/hold events, action ids (0 none, 1 play/pause, 2 prev, 3 next, 4 assistant, 5/6 volume, 7 game mode, 11 ANC mode) |
 | 9 | noise canceling | modes with `startcmdid`/`endcmdid` ranges (adaptive 66816, indoor 65792..65794, commuting 66048..66050, noisy 66304..66306 ...) |
 | 2 | sound effect | 10 bars 31..16000 Hz, `mindb`/`maxdb` **8**, `sys_eq`, `individuation_eq` (below) |
 | 8 / 3 | balance / find headset | |

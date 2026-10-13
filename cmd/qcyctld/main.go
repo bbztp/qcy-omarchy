@@ -987,11 +987,7 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 
 	rep := map[string]interface{}{}
 	if left, right, box, lc, rc, cc, err := d.readBatteryRaw(); err == nil {
-		rep["battery"] = map[string]interface{}{
-			"left": left, "right": right, "case": box,
-			"leftCharging": lc, "rightCharging": rc, "caseCharging": cc,
-			"casePresent": box != 0x00 && box != 0x7f,
-		}
+		rep["battery"] = batteryMap(left, right, box, lc, rc, cc)
 	}
 	if fw := d.readVersionRaw(); len(fw) > 0 {
 		rep["firmwareBytes"] = bytesJSON(fw)
@@ -1073,8 +1069,26 @@ func (d *daemon) readBatteryRaw() (left, right, box byte, lc, rc, cc bool, err e
 	if n < 3 {
 		return 0, 0, 0, false, false, false, errors.New("battery data too short")
 	}
-	data := buf[:n]
-	return data[0], data[1], data[2], data[0]&0x80 != 0, data[1]&0x80 != 0, data[2]&0x80 != 0, nil
+	left, right, box, lc, rc, cc = decodeBattery(buf[:n])
+	return left, right, box, lc, rc, cc, nil
+}
+
+// decodeBattery splits each of the three battery bytes (left, right, case,
+// len >= 3) into its level (low 7 bits) and the charging flag (bit 7), as the
+// vendor app does (b & 0x7F, b & 0x80).
+func decodeBattery(data []byte) (left, right, box byte, lc, rc, cc bool) {
+	return data[0] & 0x7f, data[1] & 0x7f, data[2] & 0x7f,
+		data[0]&0x80 != 0, data[1]&0x80 != 0, data[2]&0x80 != 0
+}
+
+// batteryMap builds the wire object from decoded levels. 0x00 and 0x7f on the
+// case level mean "no case reading" (sentinels, applied to the masked value).
+func batteryMap(left, right, box byte, lc, rc, cc bool) map[string]interface{} {
+	return map[string]interface{}{
+		"left": left, "right": right, "case": box,
+		"leftCharging": lc, "rightCharging": rc, "caseCharging": cc,
+		"casePresent": box != 0x00 && box != 0x7f,
+	}
 }
 
 func (d *daemon) readBattery() (map[string]interface{}, error) {
@@ -1082,11 +1096,7 @@ func (d *daemon) readBattery() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{
-		"left": left, "right": right, "case": box,
-		"leftCharging": lc, "rightCharging": rc, "caseCharging": cc,
-		"casePresent": box != 0x00 && box != 0x7f,
-	}, nil
+	return batteryMap(left, right, box, lc, rc, cc), nil
 }
 
 func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error) {
