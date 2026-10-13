@@ -568,7 +568,10 @@ If the scan finds nothing and no cached address answers, the daemon replies `{"o
 is not verified (`<cmd> is disabled: <model> is not a verified model`), and so
 are the `promptVol` and `wearSensitivity` setters. `wear` is refused unless the
 model's profile declares wear detection. `status` carries a `model` object:
-`{modelId, displayName, verified, actions, features, vendorId?, productTitle?}`.
+`{modelId, displayName, verified, actions, features, vendorId?, productTitle?, keyActions?}`.
+`keyActions` maps each music-mode key id (two hex digits, as in the `keys`
+pairs) to the actions the model's panel offers for it, `[{id, name}]`; it is
+absent when the panel declares none. Call-mode keys are not listed.
 
 `eqApply`, `eqMasterGain` and `wear` read, patch and write under a single
 transaction lock, so a concurrent status sweep cannot interleave. `eqApply` is

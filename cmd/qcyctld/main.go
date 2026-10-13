@@ -1829,7 +1829,40 @@ func (d *daemon) modelReport() map[string]interface{} {
 	if c.ProductTitle != "" {
 		m["productTitle"] = c.ProductTitle
 	}
+	if have {
+		if ka := keyActionsFor(vendor); len(ka) > 0 {
+			m["keyActions"] = ka
+		}
+	}
 	return m
+}
+
+// keyActionsFor lists, per music-mode key id (two hex digits, as in the
+// `keys` pairs), the actions the model's panel offers for it. Call-mode and
+// other groups are left out on purpose: only the music keys are editable.
+func keyActionsFor(vendorID uint16) map[string][]map[string]interface{} {
+	out := map[string][]map[string]interface{}{}
+	for _, f := range fnFunctionsFor(vendorID) {
+		if f.Keys == nil {
+			continue
+		}
+		for _, e := range f.Keys.Events {
+			if e.Group != "music" || e.EventID == nil || *e.EventID < 1 || *e.EventID > 0x0a {
+				continue
+			}
+			var acts []map[string]interface{}
+			for _, a := range e.Actions {
+				if a.Cmd == nil {
+					continue
+				}
+				acts = append(acts, map[string]interface{}{"id": *a.Cmd, "name": a.Name})
+			}
+			if len(acts) > 0 {
+				out[fmt.Sprintf("%02x", *e.EventID)] = acts
+			}
+		}
+	}
+	return out
 }
 
 // capabilitiesSnapshot copies the probe results under the lock. Reading the map

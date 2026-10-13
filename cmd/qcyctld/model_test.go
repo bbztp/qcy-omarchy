@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -228,6 +229,36 @@ func TestDaemonN70ByVendorIDIsVerified(t *testing.T) {
 	m := rep["model"].(map[string]interface{})
 	if m["modelId"] != "melobuds-n70" || m["verified"] != true || m["vendorId"] != 23877 {
 		t.Fatalf("model %v", m)
+	}
+}
+
+// The status model carries the panel's actions for the music keys, so the
+// plugin can offer them without a copy of the panel.
+func TestStatusModelCarriesKeyActions(t *testing.T) {
+	cfg := defaultLifecycle()
+	cfg.idle = time.Hour
+	d := newDaemon(vendorDialer{&fakeDialer{}, 23877}, cfg)
+	m := mustStatus(t, d)["model"].(map[string]interface{})
+	ka, ok := m["keyActions"].(map[string][]map[string]interface{})
+	if !ok {
+		t.Fatalf("model has no keyActions: %v", m)
+	}
+	for _, k := range []string{"01", "02", "03", "04", "05", "06", "09", "0a"} {
+		if len(ka[k]) == 0 {
+			t.Errorf("key %s has no actions: %v", k, ka)
+		}
+	}
+	for k := range ka {
+		if n, _ := strconv.ParseUint(k, 16, 8); n < 1 || n > 0x0a {
+			t.Errorf("key %s is not a music key", k)
+		}
+	}
+	have := map[int]bool{}
+	for _, a := range ka["01"] {
+		have[a["id"].(int)] = true
+	}
+	if !have[0] || !have[1] || !have[11] {
+		t.Errorf("actions of key 01: %v", ka["01"])
 	}
 }
 
