@@ -271,3 +271,35 @@ func TestToneChannelAndRamp(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestSynthChunksAreContinuousAndRamped(t *testing.T) {
+	s := NewSynth(Right, 1000, -20)
+	r := RampSamples()
+	in := s.Next(r, FadeIn)
+	mid := s.Next(441, Steady)
+	out := s.Next(r, FadeOut)
+	if len(in) != r*4 || len(mid) != 441*4 {
+		t.Fatalf("sizes %d %d", len(in), len(mid))
+	}
+	smp := func(b []byte, i int) (l, r int16) {
+		return int16(uint16(b[i*4]) | uint16(b[i*4+1])<<8), int16(uint16(b[i*4+2]) | uint16(b[i*4+3])<<8)
+	}
+	if l, r0 := smp(in, 0); l != 0 || r0 != 0 {
+		t.Fatal("must start at zero")
+	}
+	if l, _ := smp(mid, 10); l != 0 {
+		t.Fatal("left must stay silent for the right ear")
+	}
+	peak := int16(0)
+	for i := 0; i < 441; i++ {
+		if _, v := smp(mid, i); v > peak {
+			peak = v
+		}
+	}
+	if want := 3277; peak < int16(want-5) || peak > int16(want+5) {
+		t.Fatalf("steady peak %d, want ~%d", peak, want)
+	}
+	if _, v := smp(out, r-1); v != 0 {
+		t.Fatalf("must end at zero, got %d", v)
+	}
+}

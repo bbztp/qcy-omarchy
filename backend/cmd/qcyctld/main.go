@@ -811,7 +811,7 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 	// before it must never be served as stale afterwards, whatever the outcome
 	// (a failed write may still have reached the device).
 	switch req.Cmd {
-	case "set", "find", "eqApply", "eqMasterGain", "wear", "keysSet":
+	case "set", "find", "eqApply", "eqMasterGain", "wear", "keysSet", "hearingMode", "hearingWrite":
 		defer d.invalidateCache()
 	}
 	d.mu.Lock()
@@ -918,6 +918,13 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 			return nil, err
 		}
 		return d.eqApply(op)
+	case "hearingMode":
+		// {on: bool}: FF 03 45 01 0x. Result: sent frame, ack, 0x22 readback.
+		return d.hearingMode(req.Args)
+	case "hearingWrite":
+		// {ear, gains[8], confirm:true, otherGains?[8]}: writes the curve frame
+		// of one ear (0x46 left, 0x47 right). Never without confirm:true.
+		return d.hearingWrite(req.Args)
 	case "fitTest":
 		// Args: seconds (optional, 5..60, default 30). Holds the connection
 		// for at most that long.
@@ -1658,7 +1665,8 @@ func (d *daemon) handlerHasFeature(f FeatureFlag) bool {
 
 // n70OnlyCmds are the daemon commands whose wire behaviour was only ever
 // established on the N70: they are refused on any model that is not verified.
-var n70OnlyCmds = map[string]bool{"eqApply": true, "eqMasterGain": true, "keysSet": true, "fitTest": true}
+var n70OnlyCmds = map[string]bool{"eqApply": true, "eqMasterGain": true, "keysSet": true, "fitTest": true,
+	"hearingMode": true, "hearingWrite": true}
 
 // gateCommand is the single gate between a request and the model-specific
 // commands. A model that is not Verified gets none of the N70-only commands,

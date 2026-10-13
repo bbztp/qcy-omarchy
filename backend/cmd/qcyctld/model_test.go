@@ -170,7 +170,7 @@ func TestDaemonUsesVendorIDAndKeepsProfileReadOnly(t *testing.T) {
 		t.Errorf("eq must be false on an unverified model: %v", c)
 	}
 
-	for _, cmd := range []string{"eqApply", "eqMasterGain", "keysSet"} {
+	for _, cmd := range []string{"eqApply", "eqMasterGain", "keysSet", "hearingMode", "hearingWrite"} {
 		_, err := d.handleRequest(request{Cmd: cmd, Args: map[string]interface{}{"masterGain": float64(0)}})
 		if err == nil || !strings.Contains(err.Error(), "not a verified model") {
 			t.Errorf("%s: %v", cmd, err)

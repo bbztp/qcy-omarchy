@@ -14,15 +14,18 @@ import (
 	"github.com/bbztp/qcy-omarchy/backend/internal/hearing"
 )
 
-// `qcyctl hearing ...`: phase 1 of the app's hearing test. Everything here is
-// offline: it plans the tones, simulates answers, computes the curve, the
-// master gain and the bytes of the write frames. Nothing is sent to the
-// earbuds and no audio is played; there is no real `run` yet.
+// `qcyctl hearing ...`: the app's hearing test. plan, result and run --dry-run
+// are offline (tones, simulated answers, curve, master gain, frame bytes);
+// the real `run` lives in hearing_run.go.
 
 const hearingUsage = `usage: qcyctl hearing <subcommand>
   hearing plan [--sound-db a,b,..8] [--json]                         (tones of the first step of every band)
   hearing result --left g1,..,g8 --right g1,..,g8 [--json]            (master gain, curves and the write frames as hex; nothing is sent)
-  hearing run --dry-run --answers "h,n,h,..." [--sound-db ..] [--json] (simulates the staircase from answers: h = heard, n = not heard; no audio)`
+  hearing run --dry-run --answers "h,n,h,..." [--sound-db ..] [--json] (simulates the staircase from answers: h = heard, n = not heard; no audio)
+  hearing run [--sink NAME] [--sink-volume 100%] [--sound-db ..] [--apply --yes] [--out file.json]
+                                                                      (the real test: pauses the music, plays the tones on the earbuds' Bluetooth sink,
+                                                                       keys h/Enter = heard, n/space = not heard, r = repeat, q = abort; the test mode,
+                                                                       the volume and the music are always restored; nothing is written without --apply --yes)`
 
 func cmdHearing(args []string) error { return hearingMain(args, os.Stdout) }
 
@@ -179,15 +182,7 @@ func hearingResult(args []string, out io.Writer) error {
 	if *jsonOut {
 		return hearingJSON(out, res)
 	}
-	fmt.Fprintf(out, "master gain: %.2f dB\n", res.MasterGain)
-	fmt.Fprintf(out, "left  gains: %v\nleft  frame: %s\n", res.Left.Gains, res.Left.Frame)
-	fmt.Fprintf(out, "right gains: %v\nright frame: %s\n", res.Right.Gains, res.Right.Frame)
-	fmt.Fprintf(out, "flag on:  %s\nflag off: %s\n", res.Flag["on"], res.Flag["off"])
-	fmt.Fprintln(out, "curve (summed peaking response, dB, every 200 Hz):")
-	for i := range res.Curves["left"] {
-		lp, rp := res.Curves["left"][i], res.Curves["right"][i]
-		fmt.Fprintf(out, "  %6.0f Hz  L %+6.2f  R %+6.2f\n", lp.Freq, lp.DB, rp.DB)
-	}
+	printResultText(out, res)
 	fmt.Fprintln(out, "nothing was sent to the earbuds (not verified on hardware).")
 	return nil
 }
@@ -203,15 +198,30 @@ func hearingRunCmd(args []string, out io.Writer) error {
 	dry := fs.Bool("dry-run", false, "")
 	answers := fs.String("answers", "", "")
 	sdb := fs.String("sound-db", "", "")
+	apply := fs.Bool("apply", false, "")
+	yes := fs.Bool("yes", false, "")
+	outFile := fs.String("out", "", "")
+	sinkName := fs.String("sink", "", "")
+	sinkVol := fs.String("sink-volume", "100%", "")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		return errors.New("usage: qcyctl hearing run --dry-run --answers \"h,n,h,...\" [--sound-db ..] [--json]")
-	}
-	if !*dry {
-		return errors.New("hearing run: only --dry-run exists for now (no audio and no writes to the earbuds in this phase)")
+		return errors.New("usage: qcyctl hearing run [--dry-run --answers \"h,n,h,...\"] [--sound-db ..] [--json] [--sink NAME] [--sink-volume 100%] [--apply --yes] [--out file.json]")
 	}
 	db, err := soundDBFlag(*sdb)
 	if err != nil {
 		return err
+	}
+	if !*dry {
+		if *answers != "" || *jsonOut {
+			return errors.New("hearing run: --answers and --json belong to --dry-run (the real test is answered on the keyboard; use --out for the result)")
+		}
+		pct, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSpace(*sinkVol), "%"))
+		if err != nil || pct < 1 || pct > 100 {
+			return fmt.Errorf("--sink-volume: %q must be 1%%..100%%", *sinkVol)
+		}
+		env, done := liveHearingEnv(out)
+		defer done()
+		return hearingRunLive(env, hearingRunOpts{soundDB: db, sinkVolume: pct, sinkName: *sinkName,
+			apply: *apply, yes: *yes, outFile: *outFile})
 	}
 	var seq []bool
 	for _, a := range strings.Split(*answers, ",") {
@@ -268,4 +278,17 @@ func hearingRunCmd(args []string, out io.Writer) error {
 	res := computeResult(gl, gr)
 	fmt.Fprintf(out, "master gain: %.2f dB\nleft frame:  %s\nright frame: %s\n", res.MasterGain, res.Left.Frame, res.Right.Frame)
 	return nil
+}
+
+// printResultText prints master gain, frames, flag frames and the curves.
+func printResultText(out io.Writer, res resultOut) {
+	fmt.Fprintf(out, "master gain: %.2f dB\n", res.MasterGain)
+	fmt.Fprintf(out, "left  gains: %v\nleft  frame: %s\n", res.Left.Gains, res.Left.Frame)
+	fmt.Fprintf(out, "right gains: %v\nright frame: %s\n", res.Right.Gains, res.Right.Frame)
+	fmt.Fprintf(out, "flag on:  %s\nflag off: %s\n", res.Flag["on"], res.Flag["off"])
+	fmt.Fprintln(out, "curve (summed peaking response, dB, every 200 Hz):")
+	for i := range res.Curves["left"] {
+		lp, rp := res.Curves["left"][i], res.Curves["right"][i]
+		fmt.Fprintf(out, "  %6.0f Hz  L %+6.2f  R %+6.2f\n", lp.Freq, lp.DB, rp.DB)
+	}
 }

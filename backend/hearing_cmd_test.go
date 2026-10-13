@@ -40,7 +40,7 @@ func TestHearingDryRun(t *testing.T) {
 		t.Fatal(b.String())
 	}
 	if err := hearingMain([]string{"run", "--answers", "n"}, &b); err == nil {
-		t.Fatal("real run must not exist")
+		t.Fatal("--answers without --dry-run must be refused")
 	}
 	full := strings.TrimSuffix(strings.Repeat("n,n,n,n,n,n,", 16), ",")
 	b.Reset()

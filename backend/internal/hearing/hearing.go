@@ -367,3 +367,60 @@ func GenerateTone(ear Ear, freq int, levelDB float64, ms int) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// ---------- streaming tone ----------
+
+// Fade selects the envelope of one Synth chunk.
+type Fade int
+
+const (
+	// Steady is the full amplitude.
+	Steady Fade = iota
+	// FadeIn ramps 0 -> 1 linearly over the chunk.
+	FadeIn
+	// FadeOut ramps 1 -> 0 linearly over the chunk.
+	FadeOut
+)
+
+// Synth produces the same signal as GenerateTone (one channel, the other
+// silent) as consecutive chunks with continuous phase, so a tone can be played
+// for as long as the listener needs: a FadeIn chunk of RampMs, any number of
+// Steady chunks, one FadeOut chunk of RampMs.
+type Synth struct {
+	ear  Ear
+	freq int
+	amp  float64
+	pos  int
+}
+
+// NewSynth starts a continuous tone at levelDB dBFS.
+func NewSynth(ear Ear, freq int, levelDB float64) *Synth {
+	return &Synth{ear: ear, freq: freq, amp: math.Pow(10, levelDB/20) * 32767}
+}
+
+// RampSamples is the number of frames of one fade chunk.
+func RampSamples() int { return int(sampleRate) * RampMs / 1000 }
+
+// Next returns n stereo frames (s16le, 4 bytes each).
+func (s *Synth) Next(n int, fade Fade) []byte {
+	out := make([]byte, 0, n*4)
+	for i := 0; i < n; i++ {
+		env := 1.0
+		switch fade {
+		case FadeIn:
+			env = float64(i) / float64(n)
+		case FadeOut:
+			env = float64(n-1-i) / float64(n)
+		}
+		v := int16(math.Round(s.amp * env * math.Sin(2*math.Pi*float64(s.freq)*float64(s.pos)/sampleRate)))
+		s.pos++
+		l, r := int16(0), int16(0)
+		if s.ear == Left {
+			l = v
+		} else {
+			r = v
+		}
+		out = append(out, byte(l), byte(uint16(l)>>8), byte(r), byte(uint16(r)>>8))
+	}
+	return out
+}
