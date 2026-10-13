@@ -2642,7 +2642,7 @@ Panel {
   // One effect as a card of the three-column grid: name, a mini curve and a
   // small status line. Clicking it applies it at once; the card itself shows
   // "Applying…", the check mark or a short error. Only the effect in use is
-  // highlighted. User effects have a small "···" menu with "Delete".
+  // highlighted. Deletable effects (user, device copies) have a small "···" menu with "Delete".
   component CurveCard: BorderSurface {
     id: cc
     required property var entry
@@ -2661,7 +2661,12 @@ Panel {
     signal deleteCancelled()
     signal deleteConfirmed()
 
-    readonly property bool isUser: cc.entry.source === "user"
+    // User effects and copies imported from the earbuds can be deleted (the
+    // file goes to the library's .trash). "experiencia-auditiva" is the
+    // official effect 11 of the factory order and stays; the factory snapshot
+    // is never deletable. Imported copies only offer "Delete", no editing.
+    readonly property bool isDeletable: cc.entry.source === "user"
+      || (cc.entry.source === "device-import" && cc.entry.id !== "experiencia-auditiva")
     readonly property real pad: Style.space(8)
     readonly property bool highlighted: cc.live || cc.phase === "ok"
 
@@ -2707,7 +2712,7 @@ Panel {
       spacing: Style.space(4)
 
       Text {
-        width: parent.width - (cc.isUser ? Style.space(20) : 0)
+        width: parent.width - (cc.isDeletable ? Style.space(20) : 0)
         // Two lines reserved, so the cards of a row line up.
         height: Math.ceil(nameMetrics.height) * 2
         text: cc.live && cc.adjusted ? Qcy.tr("{name} (adjusted)", { name: cc.entry.name }) : cc.entry.name
@@ -2771,7 +2776,9 @@ Panel {
         }
         Text {
           visible: cc.confirmingDelete
-          text: Qcy.tr("Delete this effect?")
+          text: cc.entry.source === "device-import"
+            ? Qcy.tr("Delete this copy from the earbuds? It goes to the local trash.")
+            : Qcy.tr("Delete this effect?")
           color: root.foreground
           font.family: root.textFamily
           font.pixelSize: Style.font.caption
@@ -2793,9 +2800,9 @@ Panel {
       }
     }
 
-    // The "···" button of user effects.
+    // The "···" button of deletable effects.
     Item {
-      visible: cc.isUser
+      visible: cc.isDeletable
       x: cc.width - cc.pad - width
       y: cc.pad
       width: Style.space(20)
