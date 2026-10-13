@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -96,6 +95,9 @@ type hearingEnv struct {
 	// saveCurve stores the active curve in the library under name and returns
 	// its id (the equivalent of `library import-device <name>`).
 	saveCurve func(name string, snap *qcycore.EqSnapshot) (string, error)
+	// slot11 preserves the slot 11 curve as a user entry of the library
+	// (errNoSlot11Copy when there is nothing to preserve).
+	slot11    func(snap *qcycore.EqSnapshot) (slot11Backup, error)
 	pingEvery time.Duration
 	// monitor reads ~0.4 s of ONE stream's monitor (parec --monitor-stream) as
 	// s16le mono 8 kHz, read only. Nil/failing = not measurable (the
@@ -114,7 +116,9 @@ type hearingRunOpts struct {
 	// acceptFloor lets --apply --yes write bands that were still heard at the
 	// lowest level of the staircase.
 	acceptFloor bool
-	outFile     string
+	// noSlot11Backup waives the slot 11 backup when there is no copy at all.
+	noSlot11Backup bool
+	outFile        string
 }
 
 // ---------- parsing ----------
@@ -454,6 +458,10 @@ type hearingBackup struct {
 	Eq        *qcycore.EqSnapshot    `json:"eq"`
 	Library   string                 `json:"libraryId"`
 	Restore   string                 `json:"restore"`
+	// Slot11 is the library entry that preserves slot 11 (the hearing-test
+	// curve the write overwrites) and Slot11Restore the command that reapplies it.
+	Slot11        string `json:"slot11Backup,omitempty"`
+	Slot11Restore string `json:"slot11Restore,omitempty"`
 }
 
 // hearingRunLive runs the whole test. Cleanup runs on every return path.
@@ -503,6 +511,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	// 1. Instant, local checks only (pactl/busctl answer in milliseconds; the
 	// daemon is not touched yet): nothing audible or persistent has happened.
 	var restoreCmd, backupPath string
+	var backupInfo hearingBackupInfo
 	if !env.have("pactl") || !env.have("pw-cat") {
 		return errors.New("hearing run needs pactl and pw-cat (PipeWire) in PATH")
 	}
@@ -665,33 +674,12 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 				}
 			}()
 			backupCh <- func() error {
-				st, err := link.status()
-				if err != nil {
-					return fmt.Errorf("status: %w", err)
-				}
-				snap, err := link.eqRead()
-				if err != nil {
-					return fmt.Errorf("cannot read the active EQ: %w", err)
-				}
-				cfg, err := env.configDir()
+				info, err := hearingTakeBackup(env, link, o.noSlot11Backup)
 				if err != nil {
 					return err
 				}
-				stamp := env.now().Format("20060102-150405")
-				libID, err := env.saveCurve("backup antes do teste auditivo "+stamp, snap)
-				if err != nil {
-					return fmt.Errorf("library entry failed: %w", err)
-				}
-				dir := filepath.Join(cfg, "backups")
-				if err := os.MkdirAll(dir, 0o700); err != nil {
-					return err
-				}
-				bp := filepath.Join(dir, "hearing-before-"+stamp+".json")
-				rc := "qcyctl library apply " + libID + " --yes"
-				if err := writeJSONFile(bp, hearingBackup{Timestamp: stamp, Status: st, Eq: snap, Library: libID, Restore: rc}); err != nil {
-					return err
-				}
-				backupPath, restoreCmd = bp, rc
+				backupInfo = info
+				backupPath, restoreCmd = info.Path, info.Restore
 				return nil
 			}()
 		}()
@@ -864,7 +852,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		case <-abortCh:
 			return checkAbort()
 		}
-		fmt.Fprintf(out, "backup: %s\nto restore the previous state: %s\n", backupPath, restoreCmd)
+		printBackup(out, backupInfo)
 	}
 
 	// Sink volume and mute.
@@ -1141,50 +1129,13 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			return fmt.Errorf("refused to write: %d band(s) were still heard at the lowest level, so the result is only relative. Rerun with a lower --sink-volume (e.g. 60%%), or pass --accept-floor to write it anyway; nothing was written (restore point: %s)", nFloor, restoreCmd)
 		}
 		rec.Backup, rec.Restore = backupPath, restoreCmd
-		var li, ri [hearing.Bands]int = l, r
-		wrote := 0
-		var unconfirmed []string
-		for _, w := range []struct {
-			ear         hearing.Ear
-			gains, peer [hearing.Bands]int
-		}{{hearing.Left, li, ri}, {hearing.Right, ri, li}} {
-			c, e := link.hearingWrite(w.ear, w.gains, w.peer)
-			if e != nil {
-				_ = save()
-				state := "no ear was confirmed written"
-				if wrote > 0 {
-					state = "MIXED STATE: the left ear was written and the right was not"
-				}
-				fmt.Fprintf(out, "ERROR writing the %s ear: %v\n%s; to restore the previous state: %s\n", w.ear, e, state, restoreCmd)
-				return fmt.Errorf("write %s ear: %w", w.ear, e)
-			}
-			wrote++
-			rec.Writes = append(rec.Writes, c)
-			fmt.Fprintf(out, "wrote %-5s sent %s  ack=%v", w.ear, c.Sent, c.Ack)
-			if c.Readback != nil {
-				fmt.Fprintf(out, "  device: slot %d %q masterGain %.2f dB", c.Readback.Slot, c.Readback.Effect, c.Readback.MasterGain)
-			} else if c.ReadbackError != "" {
-				fmt.Fprintf(out, "  readback failed: %s", c.ReadbackError)
-			}
-			fmt.Fprintln(out)
-			if !writeConfirmed(c, w.gains) {
-				unconfirmed = append(unconfirmed, w.ear.String())
-				fmt.Fprintf(out, "NOT CONFIRMED: the earbuds sent no echo for the %s ear and the 0x22 readback does not show the written curve; to restore the previous state: %s\n", w.ear, restoreCmd)
-			}
-		}
-		modeOff()
-		if snap, e := link.eqRead(); e != nil {
-			warnf("final read: %v", e)
-		} else {
-			rec.Final = snap
-			fmt.Fprintf(out, "device now reports: slot %d %q masterGain %.2f dB, %d bands\n", snap.Slot, snap.Effect, snap.MasterGain, len(snap.Bands))
-		}
-		if len(unconfirmed) > 0 {
+		writes, final, e := hearingCommit(out, link, l, r, restoreCmd, modeOff)
+		rec.Writes, rec.Final = writes, final
+		if e != nil {
 			_ = save()
-			return fmt.Errorf("write NOT CONFIRMED for the %s ear: the result may not have been applied (restore: %s)", strings.Join(unconfirmed, " and "), restoreCmd)
+			return e
 		}
 		rec.Applied = true
-		fmt.Fprintf(out, "to restore the previous state: %s\n", restoreCmd)
 	case o.apply:
 		fmt.Fprintln(out, "--apply needs --yes: nothing was written to the earbuds.")
 	default:
@@ -1557,6 +1508,7 @@ func liveHearingEnv(out io.Writer) (hearingEnv, func()) {
 		sleep:     time.Sleep,
 		configDir: qcyConfigDir,
 		saveCurve: saveBackupCurve,
+		slot11:    func(snap *qcycore.EqSnapshot) (slot11Backup, error) { return hearingSlot11Backup(snap, time.Now()) },
 		monitor:   liveMonitor,
 		pingEvery: 3 * time.Second,
 	}, func() { signal.Stop(sigs) }

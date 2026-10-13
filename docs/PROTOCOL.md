@@ -603,3 +603,28 @@ master gain is limited to -12..+12 dB (the range recorded for 0x22; the range of
 0x46/0x47 is an assumption). `qcyctl hearing run` sends 0x45 only with
 `--device-mode` or `--apply --yes`; `qcyctl hearing mode on|off --yes` sends it
 by hand. Both daemon commands require `confirm:true`.
+
+Commands: `qcyctl hearing run [--device-mode] [--apply --yes [--accept-floor]]
+[--out result.json]` runs the test (and writes only with `--apply --yes`);
+`qcyctl hearing apply <result.json> --yes [--accept-floor] [--device-mode]`
+writes the stored result of an earlier run without redoing the test. Both use
+the same path: the full status and the raw active 0x22 payload are saved first
+(`~/.config/qcy-omarchy/backups/hearing-before-<timestamp>.json` plus a library
+entry, restored with `qcyctl library apply <id> --yes`); then the left and right
+frames are sent with `confirm:true`, each answer and the 0x22 readback are
+printed, the test mode (if it was switched on) is switched off, and the result
+is declared "applied" only when the device echoed the opcode or its readback
+shows the written curve ("NOT CONFIRMED" otherwise). If the right ear fails
+after the left was written the output says "MIXED STATE" with the restore
+command. Bands still heard at the lowest level of the staircase ("floor") are
+refused unless `--accept-floor` is given.
+
+Slot 11 is what the hearing-test frames overwrite, and the earbuds report only
+the ACTIVE slot, so before writing the tool preserves it as a user entry of the
+library, "Experiência auditiva (backup AAAA-MM-DD HH:MM)" (id
+`slot11-backup-<timestamp>`): read directly when slot 11 is the active slot,
+otherwise a clone of the last known copy (`experiencia-auditiva`, else the most
+recent entry with slot 11) with a note stating when that copy was read. With no
+copy and no active slot 11 the write is refused unless `--no-slot11-backup` is
+given. Restore with `qcyctl library apply <id> --yes`.
+

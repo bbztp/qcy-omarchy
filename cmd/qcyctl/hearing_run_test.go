@@ -365,6 +365,8 @@ type rig struct {
 	ttyRestored *int
 	saved       []string
 	ttyOptional bool
+	order       []string // slot11 / save, in call order
+	slot11Err   error
 	saveErr     error
 }
 
@@ -388,10 +390,18 @@ func newRig(t *testing.T, keys keySource) *rig {
 		now:       func() time.Time { return time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC) },
 		configDir: func() (string, error) { return cfg, nil },
 		sleep:     func(time.Duration) {},
+		slot11: func(snap *qcycore.EqSnapshot) (slot11Backup, error) {
+			rg.order = append(rg.order, "slot11")
+			if rg.slot11Err != nil {
+				return slot11Backup{}, rg.slot11Err
+			}
+			return slot11Backup{ID: "experiencia-auditiva-backup-2026-10-13-12-00", Name: "Experiência auditiva (backup 2026-10-13 12:00)", Live: snap != nil && snap.Slot == 11}, nil
+		},
 		saveCurve: func(name string, snap *qcycore.EqSnapshot) (string, error) {
 			if rg.saveErr != nil {
 				return "", rg.saveErr
 			}
+			rg.order = append(rg.order, "save")
 			rg.saved = append(rg.saved, name)
 			return "backup-antes-do-teste-auditivo-" + strings.ReplaceAll(strings.ReplaceAll(name[len(name)-15:], " ", ""), "-", ""), nil
 		},
@@ -1867,4 +1877,31 @@ func TestHearingRunModeOffIsSentBeforeTheLinkIsClosed(t *testing.T) {
 		err := hearingRunLive(r.env, opts())
 		check(t, r, true, err)
 	})
+}
+
+func TestHearingRunApplySlot11BackupAbortsBeforeAnythingElse(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	r.slot11Err = errNoSlot11Copy
+	o := opts()
+	o.apply, o.yes = true, true
+	err := hearingRunLive(r.env, o)
+	if err == nil || !strings.Contains(err.Error(), "slot 11 backup") {
+		t.Fatal(err)
+	}
+	r.untouched(t)
+	if len(r.saved) != 0 {
+		t.Fatal("the 255 backup was created after the slot 11 backup failed")
+	}
+	r.ttyOptional = true
+	r.assertRestored(t)
+	// waived: it goes on, with the warning
+	r2 := newRig(t, cycleKeys())
+	r2.slot11Err = errNoSlot11Copy
+	o.noSlot11Backup = true
+	if err := hearingRunLive(r2.env, o); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r2.out.String(), "WARNING: --no-slot11-backup") {
+		t.Fatal(r2.out.String())
+	}
 }
