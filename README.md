@@ -197,8 +197,8 @@ qcyctl status                 # human-readable snapshot
 qcyctl anc noisy              # set ANC mode
 qcyctl game on                # toggles: game|sleep|multipoint|wind (wind and wear "off" write 0x00 on verified models, as the app does)
 qcyctl ldac on --yes          # restarts the earbuds; verified models only; not yet verified on hardware
-qcyctl find                   # play a beeping tone on the earbuds' audio sink to find them: 20% rising +5 points/2 s up to
-                              # --max-volume (default 70%), stops after --timeout (default 60 s); asks you to take the
+qcyctl find                   # play a beeping tone on the earbuds' audio sink to find them: 100% sink volume, tone at -3 dBFS
+                              # (--start-volume/--max-volume/--tone-level), stops after --timeout (default 60 s); asks you to take the
                               # earbuds out of your ears first (--yes skips the question; --events = JSON lines for the plugin)
 qcyctl prompt-vol 8           # prompt volume: 4|6|8|10|low|medium|high|max (N70)
 qcyctl wear-sensitivity high  # medium|normal|high|1|2|3 (N70; needs wear detection on)

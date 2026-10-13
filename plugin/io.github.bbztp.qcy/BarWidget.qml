@@ -2525,7 +2525,7 @@ Panel {
               Text {
                 width: parent.width
                 visible: root.findConfirming && !Qcy.findRunning
-                text: Qcy.tr("Remove the earbuds from your ears before starting. Continue?")
+                text: Qcy.tr("The tone is very loud. Remove the earbuds from your ears before starting. Continue?")
                 color: root.foreground
                 font.family: root.textFamily
                 font.pixelSize: Style.font.caption

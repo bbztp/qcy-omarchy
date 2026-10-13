@@ -257,8 +257,8 @@ Singleton {
   // ------------------------------------------------------------ find earbuds
   //
   // `qcyctl find --yes --events` plays a beeping tone on the earbuds' audio
-  // sink and raises the sink volume gently (a ceiling and a timeout are
-  // enforced by the CLI). It is a long-running process: JSON event lines come
+  // sink at full sink volume and a loud tone, so it carries across a room (the
+  // timeout is enforced by the CLI). It is a long-running process: JSON event lines come
   // on stdout, "stop" goes to its stdin and the CLI restores the volume and
   // the music before it exits. The caller must have shown the warning
   // "Remove the earbuds from your ears before starting" and got a "yes".

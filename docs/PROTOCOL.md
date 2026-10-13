@@ -431,16 +431,16 @@ warning and no timeout.
 `0x05` (LED flash) and `0x3D` produced no change
 while the earbuds were connected, so `qcyctl find` no longer sends them.
 
-`qcyctl find [--sink NAME] [--max-volume 70%] [--timeout 60] [--yes] [--events]`
+`qcyctl find [--sink NAME] [--start-volume 100%] [--tone-level -3] [--max-volume 100%] [--timeout 60] [--yes] [--events]`
 does what the app does, locally, plus the limits the app lacks:
 
 | Rule | App | `qcyctl find` |
 |---|---|---|
 | command to the earbuds | none | none (no BLE, no daemon) |
-| tone | looped sound | generated "di-di" beeps, 2 kHz, 150 ms each, 100 ms apart, 10 ms ramps, peak at most -20 dBFS |
-| start volume | about half | 20% of the sink |
+| tone | looped sound | generated "di-di" beeps, 2 kHz, 150 ms each, 100 ms apart, 10 ms ramps, peak -3 dBFS by default (`--tone-level`, -30..-3) |
+| start volume | about half | `--start-volume`, default 100% of the sink (the earbuds are lost: the tone must carry) |
 | step | one system step per 2 s | +5 points per 2 s |
-| ceiling | maximum | `--max-volume`, default 70% (up to 100%) |
+| ceiling | maximum | `--max-volume`, default 100% |
 | timeout | none | `--timeout`, default 60 s |
 | warning | none | "Remove the earbuds from your ears before starting"; needs `--yes` or a typed `y` |
 | stop | button, focus loss, disconnect | q / Enter / space, signal, timeout, sink gone, player died |

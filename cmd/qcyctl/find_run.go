@@ -18,25 +18,24 @@ import (
 // the saved volume is restored. The app has no ceiling, no warning and no
 // timeout; this command adds them:
 //
-//   - the sink volume starts at 20% and rises 5 points every 2 s, never past
-//     the ceiling (--max-volume, default 70%);
+//   - the sink volume starts at --start-volume (default 100%) and rises 5
+//     points every 2 s, never past the ceiling (--max-volume, default 100%);
 //   - it stops by itself after --timeout (default 60 s);
-//   - the tone is a short "di-di" beep at -20 dBFS peak or less;
+//   - the tone is a short "di-di" beep at -3 dBFS peak by default (--tone-level);
 //   - the volume is never raised before the sink was measured silent, and the
 //     safety machinery (sink identity, music pause, restore on any exit) is
 //     the one `hearing run` uses (audio_guard.go).
 
 const (
-	findStartPct      = 20
+	findStartPct      = 100
 	findStepPct       = 5
 	findStepEvery     = 2 * time.Second
 	findPoll          = 100 * time.Millisecond
 	findSinkEvery     = time.Second
-	findDefaultMax    = 70
+	findDefaultMax    = 100
 	findDefaultTime   = 60
 	findWarning       = "Remove the earbuds from your ears before starting."
 	findBeepFreq      = 2000
-	findBeepAmp       = 0.09 // peak 0.09 of full scale = -20.9 dBFS
 	findBeepMs        = 150
 	findGapMs         = 100
 	findRestMs        = 700 // after the second beep
@@ -63,11 +62,18 @@ type findEnv struct {
 type findOpts struct {
 	sinkName string
 	maxPct   int
+	startPct int // 0 = findStartPct
 	timeout  time.Duration
 	yes      bool
 }
 
 // ---------- the tone ----------
+
+// findBeepAmp is the tone's peak as a fraction of full scale (0.7079 = -3 dBFS,
+// the default: the earbuds are lost, the tone has to carry across a room).
+// --tone-level changes it, clamped to -30..-3 dBFS: the hearing-test tones and
+// the speakers stay far from clipping.
+var findBeepAmp = 0.7079 // -3 dBFS
 
 // beepGen generates the repeating "di-di ... " pattern as s16le stereo.
 type beepGen struct {
@@ -258,6 +264,9 @@ func findCore(env findEnv, o findOpts, emit func(map[string]interface{})) (reaso
 	}
 	sink := tgt.Name
 	start := findStartPct
+	if o.startPct > 0 {
+		start = o.startPct
+	}
 	if start > o.maxPct {
 		start = o.maxPct
 	}

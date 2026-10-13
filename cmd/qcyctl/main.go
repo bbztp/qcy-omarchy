@@ -927,7 +927,7 @@ func usage() {
   qcyctl wind off --off-byte <0|2> --yes [seconds]   (DIAGNOSTIC: which byte means "off"; default 0 on verified models, 2 otherwise)
   qcyctl wear <on|off> [seconds]
   qcyctl wear off --off-byte <0|2> --yes [seconds]   (DIAGNOSTIC: byte 0 of 0x2C; default 0 on verified models, 2 otherwise)
-  qcyctl find [--sink NAME] [--max-volume 70%] [--timeout 60] [--yes] [--events]
+  qcyctl find [--sink NAME] [--start-volume 100%] [--tone-level -3] [--max-volume 100%] [--timeout 60] [--yes] [--events]
       plays a beeping tone on the earbuds' audio sink, raising the volume gently (no BLE command)
   qcyctl prompt-vol <4|6|8|10|low|medium|high|max> [seconds]
   qcyctl wear-sensitivity <medium|normal|high|1|2|3> [seconds]

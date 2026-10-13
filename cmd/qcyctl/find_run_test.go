@@ -109,6 +109,9 @@ func (r *findRig) run(o findOpts) error {
 	if o.maxPct == 0 {
 		o.maxPct = 70
 	}
+	if o.startPct == 0 {
+		o.startPct = 20 // the tests exercise the ramp; the product default starts at 100%
+	}
 	if o.timeout == 0 {
 		o.timeout = 60 * time.Second
 	}
@@ -455,7 +458,7 @@ func TestLineKeysStopAndEOF(t *testing.T) {
 
 func TestParseFindArgs(t *testing.T) {
 	o, ev, err := parseFindArgs([]string{"--yes"})
-	if err != nil || ev || o.maxPct != 70 || o.timeout != 60*time.Second || !o.yes {
+	if err != nil || ev || o.maxPct != 100 || o.startPct != 0 || o.timeout != 60*time.Second || !o.yes {
 		t.Fatalf("%+v %v %v", o, ev, err)
 	}
 	o, ev, err = parseFindArgs([]string{"--yes", "--events", "--max-volume", "90%", "--timeout=30", "--sink", "x"})
@@ -489,7 +492,7 @@ func TestBeepToneLevelAndShape(t *testing.T) {
 			peak = v
 		}
 	}
-	if db := 20 * math.Log10(float64(peak)/32768); db > -20 {
+	if db := 20 * math.Log10(float64(peak)/32768); db > -2.9 || db < -3.1 {
 		t.Fatalf("peak %.2f dBFS", db)
 	}
 	if first != 0 {
@@ -621,5 +624,21 @@ func TestFindSinkAddressMayDifferByOneInLastOctet(t *testing.T) {
 	}
 	if err := set("AA:BB:CC:DD:EE:10").run(findOpts{yes: true}); err == nil || !strings.Contains(err.Error(), "reports address") {
 		t.Fatalf("distant address accepted: %v", err)
+	}
+}
+
+func TestParseFindArgsStartVolumeAndToneLevel(t *testing.T) {
+	defer func(a float64) { findBeepAmp = a }(findBeepAmp)
+	o, _, err := parseFindArgs([]string{"--yes", "--start-volume", "40%", "--tone-level", "-12"})
+	if err != nil || o.startPct != 40 {
+		t.Fatalf("%+v %v", o, err)
+	}
+	if db := 20 * math.Log10(findBeepAmp); db < -12.1 || db > -11.9 {
+		t.Fatalf("tone level %.2f dBFS", db)
+	}
+	for _, bad := range [][]string{{"--yes", "--tone-level", "-2"}, {"--yes", "--tone-level", "-40"}, {"--yes", "--start-volume", "0"}} {
+		if _, _, err := parseFindArgs(bad); err == nil {
+			t.Errorf("%v accepted", bad)
+		}
 	}
 }
