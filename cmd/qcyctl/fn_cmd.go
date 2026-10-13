@@ -22,7 +22,7 @@ const fnUsage = `usage: qcyctl fn <list|set>
 
 // fnDaemonRequest sends one request to a running daemon. Tests replace it.
 var fnDaemonRequest = func(cmd string, args map[string]interface{}) (interface{}, error) {
-	dc, err := dialDaemon(500 * time.Millisecond)
+	dc, err := dialDaemonStart(500 * time.Millisecond)
 	if err != nil {
 		return nil, fmt.Errorf("fn needs the qcyctld daemon: %w", err)
 	}

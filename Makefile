@@ -4,12 +4,16 @@ BIN_DIR    := $(HOME)/.local/bin
 PLUGIN_DIR := $(HOME)/.config/omarchy/plugins/$(PLUGIN_ID)
 UNIT_FILE  := $(HOME)/.config/systemd/user/qcyctld.service
 
+# Version from manifest.json, injected into both binaries (no jq needed).
+VERSION    := $(shell sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' manifest.json | head -n 1)
+LDFLAGS    := -X main.version=$(if $(VERSION),$(VERSION),dev)
+
 .PHONY: build vet install uninstall clean
 
 build:
 	mkdir -p $(BUILD_DIR)
-	go build -o $(BUILD_DIR)/qcyctl ./cmd/qcyctl
-	go build -o $(BUILD_DIR)/qcyctld ./cmd/qcyctld
+	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/qcyctl ./cmd/qcyctl
+	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/qcyctld ./cmd/qcyctld
 
 vet:
 	go vet ./...

@@ -38,6 +38,33 @@ marked stale, and it recovers on the next refresh once the other app lets go.
 ## Install
 
 ```sh
+omarchy plugin add https://github.com/bbztp/qcy-omarchy --enable
+```
+
+That is all. On first open the plugin prepares everything itself: it downloads
+the `qcyctl`/`qcyctld` release matching its version, checks its SHA-256, and
+installs both to `~/.local/share/qcy-omarchy/bin`. The panel shows "Preparing
+QCY…" meanwhile. Nothing runs as root and nothing is executed before the
+checksum matches.
+
+If no release can be downloaded (offline, unpublished version), the plugin
+builds from source instead, which needs [Go](https://go.dev) installed
+(`sudo pacman -S go`) and the repository's `cmd/` tree. The same step is
+available by hand: `QCY_BUILD=1 scripts/bootstrap.sh`. If preparation fails the
+panel says why and offers "Try again".
+
+- **Version**: `qcyctl version` prints the version, which matches the plugin's
+  `manifest.json`; when the plugin is updated the binaries are replaced on the
+  next open.
+- **Start with the system**: Settings > Daemon turns the `qcyctld` user service
+  on or off.
+- **Remove**: Settings > Daemon > "Remove QCY data…" stops the service and deletes
+  `~/.local/share/qcy-omarchy`, `~/.config/qcy-omarchy` and
+  `~/.cache/qcy-omarchy`; then `omarchy plugin remove io.github.bbztp.qcy`.
+
+## Install for development
+
+```sh
 git clone https://github.com/bbztp/qcy-omarchy
 cd qcy-omarchy
 ./scripts/install.sh
@@ -48,7 +75,8 @@ and starts the `qcyctld.service` systemd user unit
 (`~/.config/systemd/user/qcyctld.service`), copies the plugin to
 `~/.config/omarchy/plugins/io.github.bbztp.qcy`, and rescans plugins. Pass
 `--no-service` to skip the unit, `--no-build` to reuse `make build` output.
-`make install` does the same.
+`make install` does the same. Set `QCYCTL=/path/to/qcyctl` to make the plugin
+use a specific binary without any check.
 
 Then add the widget to your bar — put this in `~/.config/omarchy/shell.json`
 under `bar.layout` (e.g. inside the `right` array), which hot-reloads on save:
@@ -58,6 +86,8 @@ under `bar.layout` (e.g. inside the `right` array), which hot-reloads on save:
 ```
 
 or move it into place with `omarchy bar move io.github.bbztp.qcy --section right`.
+
+The bootstrap test (local HTTP server, fake release): `scripts/bootstrap_test.sh`.
 
 ## Usage
 
@@ -226,6 +256,31 @@ trace the GATT traffic of the CLI on stderr; for the daemon set `QCYCTL_DEBUG=1`
 (e.g. `systemctl --user edit qcyctld.service`, then `journalctl --user -u qcyctld`).
 The same drop-in can set `Environment=QCYCTL_IDLE_SECONDS=<n>` to change the idle
 window.
+
+### Daemon lifecycle
+
+Commands that talk to the earbuds start `qcyctld` on demand when its socket does
+not answer: through `qcyctld.service` if that user unit is enabled, otherwise by
+launching `qcyctld` detached (looked up next to `qcyctl`, then in `PATH`, then
+`~/.local/share/qcy-omarchy/bin` and `~/.local/bin`). Its output goes to
+`${XDG_STATE_HOME:-~/.local/state}/qcy-omarchy/qcyctld.log` (truncated above
+1 MiB); concurrent starters are serialised with a lock. Offline commands (`i18n`,
+`library list/show/...`, `model`, `hearing plan|result`, `version`) never start
+it, and `QCYCTL_NO_AUTOSTART=1` disables auto-start altogether.
+
+```
+qcyctl daemon start              # idempotent
+qcyctl daemon stop               # SIGTERM to the socket owner, or systemctl stop
+qcyctl daemon status [--json]    # running, pid, managedBySystemd, serviceInstalled,
+                                 # serviceEnabled, binary, log
+qcyctl daemon install-service    # writes ~/.config/systemd/user/qcyctld.service with
+                                 # the resolved qcyctld path, then enable --now
+qcyctl daemon uninstall-service  # disable --now, removes the unit
+qcyctl version [--json]          # also: qcyctld --version
+```
+
+`packaging/qcyctld.service` is a static example; `install-service` writes the
+same unit with the real `ExecStart=` path.
 
 ## Layout
 

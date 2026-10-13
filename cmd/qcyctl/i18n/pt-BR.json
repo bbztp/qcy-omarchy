@@ -217,5 +217,22 @@
   "The hearing test stopped (code {code})": "O teste auditivo parou (código {code})",
   "This writes the experience to both earbuds (slot 11) and saves a copy of what was there as a custom curve. Continue?": "Isto grava a experiência nos dois fones (slot 11) e salva uma cópia do que havia como curva customizada. Continuar?",
   "Waiting for silence…": "Aguardando silêncio…",
-  "{ear} · {freq} Hz": "{ear} · {freq} Hz"
+  "{ear} · {freq} Hz": "{ear} · {freq} Hz",
+  "Starting": "Iniciando",
+  "Could not read the plugin version": "Não foi possível ler a versão do plugin",
+  "Could not prepare qcyctl (code {code})": "Não foi possível preparar o qcyctl (código {code})",
+  "Refusing to remove: unexpected home directory": "Remoção recusada: pasta pessoal inesperada",
+  "QCY data removed. Try again to prepare it anew.": "Dados do QCY removidos. Tente de novo para prepará-lo outra vez.",
+  "QCY could not be prepared": "Não foi possível preparar o QCY",
+  "Preparing QCY…": "Preparando o QCY…",
+  "Checking the installed version": "Verificando a versão instalada",
+  "It needs a network connection once, or Go installed to build from source.": "É preciso uma conexão com a internet uma vez, ou o Go instalado para compilar a partir do código.",
+  "Try again": "Tentar de novo",
+  "Daemon": "Daemon",
+  "Unavailable": "Indisponível",
+  "Running": "Rodando",
+  "Stopped": "Parado",
+  "Start with the system": "Iniciar com o sistema",
+  "Remove QCY data…": "Remover dados do QCY…",
+  "This stops the service and deletes the downloaded program, your effects and settings, and the cache. Continue?": "Isto para o serviço e apaga o programa baixado, seus efeitos e ajustes, e o cache. Continuar?"
 }

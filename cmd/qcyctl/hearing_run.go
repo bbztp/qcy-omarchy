@@ -1237,7 +1237,7 @@ func (l *liveHearingLink) ping() {
 func (l *liveHearingLink) Close() error { return l.dc.Close() }
 
 func dialHearingLink() (hearingLink, error) {
-	dc, err := dialDaemon(2 * time.Second)
+	dc, err := dialDaemonStart(2 * time.Second)
 	if err != nil {
 		return nil, err
 	}

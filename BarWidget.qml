@@ -767,6 +767,8 @@ Panel {
   // ---- find earbuds ----------------------------------------------------------
   // The warning is shown first; only "Yes" starts the tone (Qcy.startFind).
   property bool findConfirming: false
+  // Settings > Daemon: confirmation before deleting the plugin's data.
+  property bool removeConfirming: false
 
   // ---- hearing experience ----------------------------------------------------
   // Test run and result live in Qcy (a long-running `hearing run --events`);
@@ -1500,11 +1502,74 @@ Panel {
           width: scroller.width - scroller.gutter
           spacing: Style.space(14)
 
+          // ---------- First-run preparation ----------
+          // Until qcyctl is ready nothing below can work: show what is going
+          // on instead of the tabs.
+          Card {
+            width: parent.width
+            visible: !Qcy.ready
+
+            Text {
+              width: parent.width
+              text: Qcy.setupState === "error" ? Qcy.tr("QCY could not be prepared")
+                : Qcy.tr("Preparing QCY…")
+              color: root.foreground
+              font.family: root.textFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+              wrapMode: Text.WordWrap
+            }
+            Text {
+              width: parent.width
+              text: Qcy.setupState === "error" ? Qcy.setupMessage
+                : (Qcy.setupStep !== "" ? Qcy.setupStep : Qcy.tr("Checking the installed version"))
+              color: Qcy.setupState === "error" ? Color.urgent : root.muted
+              font.family: root.textFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+            Rectangle {
+              visible: Qcy.setupState !== "error"
+              width: parent.width
+              height: Style.space(4)
+              radius: height / 2
+              color: root.cardFill
+              Rectangle {
+                id: setupBar
+                width: parent.width * 0.3
+                height: parent.height
+                radius: height / 2
+                color: root.accent
+                SequentialAnimation on x {
+                  running: Qcy.setupState !== "error" && !Qcy.ready
+                  loops: Animation.Infinite
+                  NumberAnimation { from: 0; to: setupBar.parent.width * 0.7; duration: 900; easing.type: Easing.InOutQuad }
+                  NumberAnimation { from: setupBar.parent.width * 0.7; to: 0; duration: 900; easing.type: Easing.InOutQuad }
+                }
+              }
+            }
+            Text {
+              visible: Qcy.setupState === "error"
+              width: parent.width
+              text: Qcy.tr("It needs a network connection once, or Go installed to build from source.")
+              color: root.muted
+              font.family: root.textFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+            Chip {
+              visible: Qcy.setupState === "error"
+              label: Qcy.tr("Try again")
+              onClicked: Qcy.setupRetry()
+            }
+          }
+
           // ---------- Tabs ----------
           // Status (device + noise mode), Sound (live curve + library) and
           // Settings (everything else). Short tabs keep every section reachable.
           Row {
             id: tabBar
+            visible: Qcy.ready
             width: parent.width
             spacing: Style.space(6)
 
@@ -2898,14 +2963,87 @@ Panel {
                 wrapMode: Text.WordWrap
               }
             }
+
+            PanelSeparator {
+              foreground: root.foreground
+            }
+
+            // ---- Daemon: background service and the plugin's own data ----
+            Column {
+              width: parent.width
+              spacing: Style.space(8)
+
+              SectionHeader {
+                text: Qcy.tr("Daemon").toUpperCase()
+              }
+
+              StatRow {
+                width: parent.width
+                label: Qcy.tr("Status")
+                value: !Qcy.daemonAvailable ? Qcy.tr("Unavailable")
+                  : (Qcy.daemon && Qcy.daemon.running ? Qcy.tr("Running") : Qcy.tr("Stopped"))
+              }
+
+              ToggleRow {
+                width: parent.width
+                visible: Qcy.daemonAvailable
+                label: Qcy.tr("Start with the system")
+                hint: Qcy.daemonBusy ? Qcy.tr("Applying…") : ""
+                checked: !!(Qcy.daemon && Qcy.daemon.serviceEnabled)
+                onToggled: if (!Qcy.daemonBusy) Qcy.daemonSetService(!checked)
+              }
+
+              Text {
+                width: parent.width
+                visible: Qcy.daemonError !== ""
+                text: Qcy.daemonError
+                color: Color.urgent
+                font.family: root.textFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+
+              Chip {
+                label: Qcy.tr("Remove QCY data…")
+                enabled: !Qcy.daemonBusy
+                onClicked: root.removeConfirming = true
+              }
+
+              Text {
+                width: parent.width
+                visible: root.removeConfirming
+                text: Qcy.tr("This stops the service and deletes the downloaded program, your effects and settings, and the cache. Continue?")
+                color: root.foreground
+                font.family: root.textFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+              Row {
+                visible: root.removeConfirming
+                spacing: Style.space(6)
+                Chip {
+                  label: Qcy.tr("Yes")
+                  onClicked: {
+                    root.removeConfirming = false
+                    Qcy.removeData()
+                  }
+                }
+                Chip {
+                  label: Qcy.tr("No")
+                  onClicked: root.removeConfirming = false
+                }
+              }
+            }
           }
 
           // ---------- Footer (all tabs) ----------
           PanelSeparator {
+            visible: Qcy.ready
             foreground: root.foreground
           }
 
           Row {
+            visible: Qcy.ready
             spacing: Style.space(8)
 
             Chip {
@@ -2916,6 +3054,7 @@ Panel {
           }
 
           Text {
+            visible: Qcy.ready
             text: root.updatedLabel()
             color: Qcy.error !== "" ? Color.urgent : root.muted
             font.family: root.textFamily
@@ -3495,7 +3634,7 @@ Panel {
   component TabPage: Column {
     id: page
     required property int tabIndex
-    visible: root.tab === page.tabIndex
+    visible: Qcy.ready && root.tab === page.tabIndex
     width: parent ? parent.width : 0
     spacing: Style.space(14)
     onVisibleChanged: if (page.visible) pageFade.restart()

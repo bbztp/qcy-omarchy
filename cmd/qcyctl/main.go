@@ -557,9 +557,9 @@ func runViaDaemon(scanSeconds int, fn func(daemonAPI) error) error {
 	if err := refuseHardware(); err != nil {
 		return err
 	}
-	dc, err := dialDaemon(500 * time.Millisecond)
+	dc, err := dialDaemonStart(500 * time.Millisecond)
 	if err != nil {
-		// Daemon not reachable → direct mode
+		// Daemon not reachable (and could not be started) → direct mode
 		return runClient(scanSeconds, func(c *client) error {
 			return fn(&daemonClientWrapper{client: c})
 		})
@@ -904,6 +904,10 @@ func main() {
 		err = cmdHearing(args)
 	case "fn":
 		err = cmdFn(args)
+	case "daemon":
+		err = cmdDaemon(args)
+	case "version", "--version":
+		err = cmdVersion(args)
 	default:
 		usage()
 		os.Exit(2)
@@ -949,6 +953,10 @@ func usage() {
   qcyctl hearing <plan|result|run --dry-run>   (hearing test phase 1: offline plan, curve, master gain and frame bytes; sends nothing)
   qcyctl fn list [--json]   (generic functions the model's panel declares and no other command covers; needs the daemon)
   qcyctl fn set <cmdId> <value|on|off> [--yes]   (writes the panel's own bytes; a restart warning needs --yes, a reset-type command --yes --yes)
+  qcyctl daemon <start|stop|status [--json]|install-service [--json]|uninstall-service [--json]>
+      the daemon (qcyctld) is started on demand by commands that need it (QCYCTL_NO_AUTOSTART=1 disables that);
+      install-service keeps it under systemd --user instead
+  qcyctl version [--json]
   qcyctl keys get [seconds]
   qcyctl keys set <keyId:funId> [<keyId:funId> ...] [seconds]
 All setters read back by querying the opcode (FF 03 FE 01 <opcode>) and fail non-zero on mismatch.`)

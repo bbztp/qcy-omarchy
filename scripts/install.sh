@@ -36,10 +36,13 @@ done
 if [ "$build" = 1 ]; then
   command -v go >/dev/null 2>&1 || { echo "error: go is required to build (or use --no-build after 'make build')" >&2; exit 1; }
   mkdir -p "${build_dir}"
+  # Version from manifest.json (no jq), injected into both binaries.
+  ver="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${repo_dir}/manifest.json" | head -n 1)"
+  ldflags="-X main.version=${ver:-dev}"
   echo "building qcyctl..."
-  ( cd "${repo_dir}" && go build -o "${build_dir}/qcyctl" ./cmd/qcyctl )
+  ( cd "${repo_dir}" && go build -ldflags "${ldflags}" -o "${build_dir}/qcyctl" ./cmd/qcyctl )
   echo "building qcyctld..."
-  ( cd "${repo_dir}" && go build -o "${build_dir}/qcyctld" ./cmd/qcyctld )
+  ( cd "${repo_dir}" && go build -ldflags "${ldflags}" -o "${build_dir}/qcyctld" ./cmd/qcyctld )
 fi
 
 for b in qcyctl qcyctld; do
@@ -95,10 +98,12 @@ echo "installing plugin -> ${plugin_dir}"
 # recreating the whole tree made it reload against a half-copied plugin (the
 # shell has crashed during such reloads). Nothing changed -> nothing written.
 # The plugin lives at the repository root; only its own files are installed
-# (never the Go sources, docs, scripts or .git).
+# (plus scripts/bootstrap.sh, which prepares the binaries; never the Go
+# sources, docs or .git).
 plugin_files() {
   find "${repo_dir}" -maxdepth 1 -type f \( -name manifest.json -o -name qmldir -o -name '*.qml' \) -print0
   find "${repo_dir}/assets" -type f -print0
+  printf '%s\0' "${repo_dir}/scripts/bootstrap.sh"
 }
 fresh=0
 [ -d "${plugin_dir}" ] || fresh=1

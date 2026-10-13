@@ -2046,9 +2046,17 @@ func handleConn(conn net.Conn, d *daemon) {
 	}
 }
 
+// version is injected at build time: -ldflags "-X main.version=1.2.3".
+var version = "dev"
+
 func main() {
 	idleFlag := flag.Float64("idle", -1, "seconds the BLE link is kept after the last request (0 = never drop it); default $QCYCTL_IDLE_SECONDS or 6")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
 
 	scanSeconds := 15
 	if args := flag.Args(); len(args) > 0 {

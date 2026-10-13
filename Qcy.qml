@@ -85,7 +85,7 @@ Singleton {
     })
   }
 
-  Component.onCompleted: loadLanguages()
+  Component.onCompleted: _setupStart()
 
   // Pushed by each bar-widget instance from shell.json settings.
   property var settings: ({})
@@ -95,10 +95,215 @@ Singleton {
   readonly property int scanSeconds: settings && settings.scanSeconds
     ? Math.max(5, Number(settings.scanSeconds)) : 10
 
-  // The CLI can be overridden with QCYCTL; otherwise it is the path the
-  // install script writes to.
-  readonly property string binary: Quickshell.env("QCYCTL")
-    || (Quickshell.env("HOME") + "/.local/bin/qcyctl")
+  // ----------------------------------------------------------------- setup
+  //
+  // The plugin prepares its own binaries on first use (scripts/bootstrap.sh
+  // downloads the matching release, or builds with Go). They live in the user's
+  // data directory, never inside the plugin directory, which the shell watches.
+  //
+  // setupState: "checking" (looking for a matching qcyctl), "preparing"
+  // (bootstrap running), "ready", "error". No other process of the plugin calls
+  // the binary before "ready".
+  property string setupState: "checking"
+  property string setupStep: ""        // last STEP text from the bootstrap
+  property string setupMessage: ""     // error text when setupState is "error"
+  readonly property bool ready: setupState === "ready"
+
+  readonly property string _home: Quickshell.env("HOME")
+  readonly property string dataDir: (Quickshell.env("XDG_DATA_HOME")
+    ? Quickshell.env("XDG_DATA_HOME") : (_home + "/.local/share")) + "/qcy-omarchy"
+  readonly property string _managedBinary: dataDir + "/bin/qcyctl"
+
+  // The binary in use: QCYCTL, else the managed copy; after the check it
+  // becomes whichever matching candidate was found (~/.local/bin, PATH).
+  property string binary: Quickshell.env("QCYCTL") || _managedBinary
+
+  // Directory the plugin was loaded from.
+  readonly property string pluginDir: {
+    var u = String(Qt.resolvedUrl("."))
+    u = u.replace(/^file:\/\//, "")
+    try { u = decodeURIComponent(u) } catch (e) {}
+    return u.replace(/\/+$/, "")
+  }
+  property string pluginVersion: ""
+
+  function _setupStart() {
+    setupState = "checking"
+    setupMessage = ""
+    setupStep = ""
+    if (Quickshell.env("QCYCTL")) { _setupReady(Quickshell.env("QCYCTL")); return }
+    manifestProc.running = true
+  }
+
+  function _setupReady(path) {
+    binary = path
+    setupState = "ready"
+    setupMessage = ""
+    setupStep = ""
+    loadLanguages()
+    daemonRefresh()
+    _offNext()
+    if (connected) refresh()
+  }
+
+  function _setupPrepare() {
+    if (bootstrapProc.running) return
+    setupState = "preparing"
+    setupMessage = ""
+    setupStep = tr("Starting")
+    bootstrapProc.command = ["bash", pluginDir + "/scripts/bootstrap.sh"]
+    bootstrapProc.running = true
+  }
+
+  // "Try again" in the panel.
+  function setupRetry() {
+    if (bootstrapProc.running || manifestProc.running || probeProc.running) return
+    _setupStart()
+  }
+
+  function _bootstrapLine(line) {
+    var l = String(line).trim()
+    if (l.indexOf("STEP ") === 0) {
+      var rest = l.substring(5)
+      var sp = rest.indexOf(" ")
+      var text = sp >= 0 ? rest.substring(sp + 1) : rest
+      if (text !== "") setupStep = text
+    } else if (l.indexOf("ERROR ") === 0) {
+      setupMessage = l.substring(6)
+    }
+  }
+
+  Process {
+    id: manifestProc
+    command: ["cat", root.pluginDir + "/manifest.json"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var v = ""
+        try { v = String(JSON.parse(text).version || "") } catch (e) {}
+        root.pluginVersion = v
+      }
+    }
+    onExited: function (exitCode) {
+      if (exitCode !== 0 || root.pluginVersion === "") {
+        root.setupState = "error"
+        root.setupMessage = root.tr("Could not read the plugin version")
+        return
+      }
+      probeProc.running = true
+    }
+  }
+
+  // Prints the first candidate whose `version` matches the plugin's.
+  Process {
+    id: probeProc
+    property string found: ""
+    command: ["sh", "-c",
+      "v=\"$1\"; shift; for c in \"$@\"; do case \"$c\" in /*) [ -x \"$c\" ] || continue ;; "
+      + "*) c=\"$(command -v \"$c\" 2>/dev/null)\" || continue ;; esac; "
+      + "o=\"$(\"$c\" version 2>/dev/null | head -n 1)\"; "
+      + "if [ \"$o\" = \"qcyctl $v\" ]; then printf '%s\\n' \"$c\"; exit 0; fi; done; exit 1",
+      "qcyprobe", root.pluginVersion, root._managedBinary,
+      root._home + "/.local/bin/qcyctl", "qcyctl"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: probeProc.found = String(text).trim().split("\n")[0]
+    }
+    onExited: function (exitCode) {
+      if (exitCode === 0 && probeProc.found !== "") root._setupReady(probeProc.found)
+      else root._setupPrepare()
+      probeProc.found = ""
+    }
+  }
+
+  Process {
+    id: bootstrapProc
+    stdout: SplitParser {
+      onRead: function (data) { root._bootstrapLine(data) }
+    }
+    onExited: function (exitCode) {
+      if (exitCode === 0) {
+        root._setupReady(root._managedBinary)
+      } else {
+        root.setupState = "error"
+        if (root.setupMessage === "")
+          root.setupMessage = root.tr("Could not prepare qcyctl (code {code})", { code: exitCode })
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- daemon
+  //
+  // `qcyctl daemon status --json`; "available" is false when this qcyctl has no
+  // such command, and the Settings section then says so.
+  property var daemon: null
+  property bool daemonAvailable: true
+  property bool daemonBusy: false      // an install/uninstall/removal is running
+  property string daemonError: ""
+
+  function daemonRefresh() {
+    runOffline(["daemon", "status", "--json"], function (code, out, err) {
+      var j = root._parseJson(out)
+      if (code === 0 && j && typeof j === "object") {
+        root.daemon = j
+        root.daemonAvailable = true
+      } else {
+        root.daemon = null
+        root.daemonAvailable = false
+      }
+    })
+  }
+
+  function daemonSetService(enable) {
+    if (daemonBusy) return
+    daemonBusy = true
+    daemonError = ""
+    runOffline(["daemon", enable ? "install-service" : "uninstall-service", "--json"],
+      function (code, out, err) {
+        root.daemonBusy = false
+        if (code !== 0) root.daemonError = root._lastLine(err) || root.tr("The command failed (code {code})", { code: code })
+        root.daemonRefresh()
+      })
+  }
+
+  // The three directories the plugin owns, each checked to sit under $HOME and
+  // to end in exactly "qcy-omarchy".
+  function _ownedDirs() {
+    var h = _home
+    if (!h || h.charAt(0) !== "/" || h === "/" || h.indexOf("..") !== -1) return []
+    h = h.replace(/\/+$/, "")
+    var xs = [h + "/.local/share/qcy-omarchy", h + "/.config/qcy-omarchy", h + "/.cache/qcy-omarchy"]
+    return xs.filter(function (p) {
+      return p.indexOf(h + "/") === 0 && /\/qcy-omarchy$/.test(p) && p.indexOf("..") === -1
+    })
+  }
+
+  // Stops and removes the service, then deletes the data, config and cache.
+  function removeData() {
+    if (daemonBusy) return
+    var dirs = _ownedDirs()
+    if (dirs.length !== 3) { daemonError = tr("Refusing to remove: unexpected home directory"); return }
+    daemonBusy = true
+    daemonError = ""
+    runOffline(["daemon", "uninstall-service", "--json"], function (code, out, err) {
+      removeProc.command = ["rm", "-rf", "--"].concat(dirs)
+      removeProc.running = true
+    })
+  }
+
+  Process {
+    id: removeProc
+    onExited: function (exitCode) {
+      root.daemonBusy = false
+      if (exitCode !== 0) {
+        root.daemonError = root.tr("The command failed (code {code})", { code: exitCode })
+        return
+      }
+      root.daemon = null
+      root.setupState = "error"
+      root.setupMessage = root.tr("QCY data removed. Try again to prepare it anew.")
+    }
+  }
 
   // ---------------------------------------------------------------- device
 
@@ -149,7 +354,7 @@ Singleton {
     _loadImages()
   }
   function _loadImages() {
-    if (_imageKey === "" || _imageTries >= 3) return
+    if (!ready || _imageKey === "" || _imageTries >= 3) return
     _imageTries++
     imageRetry.stop()
     if (imageProc.running) imageProc.running = false
@@ -189,6 +394,7 @@ Singleton {
   // Read the full state from the earbuds. Low priority: if anything else is
   // using the adapter the read is skipped and retried on the next tick.
   function refresh() {
+    if (!ready) return
     if (connected && _imageKey !== "" && Object.keys(images).length === 0
         && !imageProc.running) _loadImages()
     if (statusProc.running || setProc.running || batteryProc.running) return
@@ -210,6 +416,10 @@ Singleton {
   // setter has exited and both streams have ended; exitCode -1 means the
   // command never ran (replaced by a later click, or the earbuds went away).
   function set(action, args, done) {
+    if (!ready) {
+      if (done) { try { done(-1, "", "not ready") } catch (e) {} } else root.setFailed()
+      return
+    }
     _dropPending("replaced")
     _pendingSet = { action: action, args: args, done: done ? done : null }
     if (statusProc.running || batteryProc.running) {
@@ -269,7 +479,7 @@ Singleton {
   property string findMessage: ""      // last error, "" when none
 
   function startFind() {
-    if (findProc.running) return
+    if (!ready || findProc.running) return
     findMessage = ""
     findVolume = 0
     findStatus = "starting"
@@ -352,7 +562,7 @@ Singleton {
 
   // `volume` is the reference sink volume in percent (80, 90 or 100).
   function startHearing(volume) {
-    if (hearingProc.running || hearingApplyProc.running) return
+    if (!ready || hearingProc.running || hearingApplyProc.running) return
     hearingMessage = ""
     hearingWarning = ""
     hearingResult = null
@@ -466,7 +676,7 @@ Singleton {
   // passed here.
   function applyHearing(acceptFloor) {
     var r = hearingResult
-    if (!r || r.outFile === "" || hearingApplyProc.running || hearingProc.running) return
+    if (!ready || !r || r.outFile === "" || hearingApplyProc.running || hearingProc.running) return
     hearingApplyState = "running"
     hearingApplyText = ""
     var cmd = [root.binary, "hearing", "apply", r.outFile, "--yes"]
@@ -556,7 +766,7 @@ Singleton {
 
   // One light battery read; used on panel open and on a slow poll while open.
   function pollBattery() {
-    if (batteryProc.running) return
+    if (!ready || batteryProc.running) return
     if (statusProc.running || setProc.running) { _wantBattery = true; return }
     _wantBattery = false
     batteryProc.running = true
@@ -904,7 +1114,7 @@ Singleton {
   }
 
   function _offNext() {
-    if (offProc.running || _offRun !== null || _offQueue.length === 0) return
+    if (!ready || offProc.running || _offRun !== null || _offQueue.length === 0) return
     var j = _offQueue[0]
     _offQueue = _offQueue.slice(1)
     _offRun = { done: j.done, exit: -1, out: "", err: "", haveExit: false, haveOut: false, haveErr: false }
