@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -187,6 +188,12 @@ func parseSinkProps(long, name string) map[string]string {
 			if strings.HasPrefix(t, "State: ") {
 				props["State"] = strings.TrimPrefix(t, "State: ")
 			}
+			if strings.HasPrefix(t, "Mute: ") {
+				props["Mute"] = strings.TrimPrefix(t, "Mute: ")
+			}
+			if strings.HasPrefix(t, "Volume: ") {
+				props["Volume"] = strings.TrimPrefix(t, "Volume: ")
+			}
 			if strings.HasPrefix(t, "Description: ") {
 				props["Description"] = strings.TrimPrefix(t, "Description: ")
 			}
@@ -201,13 +208,40 @@ func parseSinkProps(long, name string) map[string]string {
 	return nil
 }
 
-// activeStreamsOn lists the uncorked sink inputs playing into sink index idx
-// (`pactl list sink-inputs`).
-func activeStreamsOn(long, idx string) []string {
-	var out []string
-	for _, blk := range strings.Split(long, "Sink Input #")[1:] {
+type streamInfo struct {
+	ID     string
+	App    string
+	Mute   bool
+	MinPct int // lowest channel volume in %, -1 when not reported
+}
+
+func (st streamInfo) String() string { return strings.TrimSpace("#" + st.ID + " " + st.App) }
+
+// minPct is the lowest percentage on a pactl "Volume:" line, or -1.
+func minPct(line string) int {
+	m := pctRe.FindAllStringSubmatch(line, -1)
+	if len(m) == 0 {
+		return -1
+	}
+	low := -1
+	for _, x := range m {
+		n, _ := strconv.Atoi(x[1])
+		if low < 0 || n < low {
+			low = n
+		}
+	}
+	return low
+}
+
+// streamsOn lists the uncorked sink inputs playing into sink index idx
+// (`pactl list sink-inputs`) with their own mute and volume.
+func streamsOn(long, idx string) []streamInfo {
+	var out []streamInfo
+	parts := strings.Split(long, "Sink Input #")
+	for _, blk := range parts[1:] {
 		id, _, _ := strings.Cut(blk, "\n")
-		sink, corked, app := "", "", ""
+		st := streamInfo{ID: strings.TrimSpace(id), MinPct: -1}
+		sink, corked := "", ""
 		for _, ln := range strings.Split(blk, "\n") {
 			t := strings.TrimSpace(ln)
 			switch {
@@ -215,13 +249,26 @@ func activeStreamsOn(long, idx string) []string {
 				sink = strings.TrimPrefix(t, "Sink: ")
 			case strings.HasPrefix(t, "Corked: "):
 				corked = strings.TrimPrefix(t, "Corked: ")
+			case strings.HasPrefix(t, "Mute: "):
+				st.Mute = strings.TrimPrefix(t, "Mute: ") == "yes"
+			case strings.HasPrefix(t, "Volume: "):
+				st.MinPct = minPct(t)
 			case strings.HasPrefix(t, "application.name = "):
-				app = strings.Trim(strings.TrimPrefix(t, "application.name = "), `"`)
+				st.App = strings.Trim(strings.TrimPrefix(t, "application.name = "), `"`)
 			}
 		}
 		if sink == idx && corked != "yes" {
-			out = append(out, strings.TrimSpace("#"+strings.TrimSpace(id)+" "+app))
+			out = append(out, st)
 		}
+	}
+	return out
+}
+
+// activeStreamsOn lists the uncorked streams on the sink as "#id app".
+func activeStreamsOn(long, idx string) []string {
+	var out []string
+	for _, st := range streamsOn(long, idx) {
+		out = append(out, st.String())
 	}
 	return out
 }
@@ -624,11 +671,48 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	// the sink to stop RUNNING; a leftover non-corked stream on a sink that is
 	// IDLE/SUSPENDED carries no data and does not count. Still RUNNING at the
 	// timeout -> abort, naming who holds the stream.
-	var lastState string
+	var lastState, distrust string
 	var lastActive []string
 	var lastPeakDB float64
 	peakKnown, silentRuns, usedMonitor := false, 0, false
 	haveMonitor := env.monitor != nil && env.have("parec")
+	// readSink reads the sink state and the streams on it and decides whether
+	// a monitor reading can be trusted: the monitor is post-volume and
+	// post-mute, so it only proves silence while the sink is unmuted at
+	// >= 90% and no active stream is itself muted or turned down.
+	readSink := func() (state string, active []streamInfo, why string, err error) {
+		so, err := env.exec("pactl", "list", "sinks")
+		if err != nil {
+			return "", nil, "", fmt.Errorf("pactl list sinks: %w", err)
+		}
+		in, err := env.exec("pactl", "list", "sink-inputs")
+		if err != nil {
+			return "", nil, "", fmt.Errorf("pactl list sink-inputs: %w", err)
+		}
+		props := parseSinkProps(so, sink)
+		state = strings.ToUpper(strings.TrimSpace(props["State"]))
+		active = streamsOn(in, sinkIdx)
+		switch pct := minPct(props["Volume"]); {
+		case props["Mute"] == "yes":
+			why = "the sink is muted: raise it to 100% or stop the app, then retry"
+		case props["Mute"] == "" || pct < 0:
+			why = "the sink's mute/volume could not be read, so a silent monitor proves nothing"
+		case pct < 90:
+			why = fmt.Sprintf("the sink is at %d%%: raise it to 100%% or stop the app, then retry", pct)
+		}
+		for _, st := range active {
+			switch {
+			case why != "":
+			case st.Mute:
+				why = fmt.Sprintf("stream %s is muted: unmute it or stop the app, then retry", st)
+			case st.MinPct < 0:
+				why = fmt.Sprintf("the volume of stream %s could not be read", st)
+			case st.MinPct < 90:
+				why = fmt.Sprintf("stream %s is at %d%%: raise it to 100%% or stop the app, then retry", st, st.MinPct)
+			}
+		}
+		return state, active, why, nil
+	}
 	// measure reads the monitor once: (peak, dBFS, ok).
 	measure := func() (int, float64, bool) {
 		if !haveMonitor {
@@ -642,21 +726,20 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		return p, db, true
 	}
 	for poll := 0; ; poll++ {
-		sinksOut, err := env.exec("pactl", "list", "sinks")
+		state, active, why, err := readSink()
 		if err != nil {
-			return fmt.Errorf("pactl list sinks: %w", err)
+			return err
 		}
-		inputs, err := env.exec("pactl", "list", "sink-inputs")
-		if err != nil {
-			return fmt.Errorf("pactl list sink-inputs: %w", err)
+		lastState, distrust = state, why
+		lastActive = nil
+		for _, st := range active {
+			lastActive = append(lastActive, st.String())
 		}
-		lastState = strings.ToUpper(strings.TrimSpace(parseSinkProps(sinksOut, sink)["State"]))
-		lastActive = activeStreamsOn(inputs, sinkIdx)
-		quiet := len(lastActive) == 0
-		if lastState != "" { // the state is authoritative when pactl reports it
-			quiet = lastState == "IDLE" || lastState == "SUSPENDED"
+		quiet := len(active) == 0
+		if state != "" { // the state is authoritative when pactl reports it
+			quiet = state == "IDLE" || state == "SUSPENDED"
 		}
-		if !quiet && lastState == "RUNNING" {
+		if !quiet && state == "RUNNING" && why == "" {
 			// RUNNING does not prove sound: a browser may keep a stream open
 			// sending silence. Measure the monitor.
 			if p, db, ok := measure(); ok {
@@ -672,6 +755,8 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			} else {
 				peakKnown, silentRuns = false, 0
 			}
+		} else {
+			silentRuns = 0
 		}
 		if quiet {
 			break
@@ -685,8 +770,12 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			if peakKnown {
 				peak = fmt.Sprintf("peak %.1f dBFS", lastPeakDB)
 			}
-			return fmt.Errorf("audio is still playing into %s (state %s; %s; %s) after %s: stop it and run again; the volume was not raised",
-				sink, lastState, peak, who, time.Duration(audioStopPolls)*audioStopPoll)
+			reason := ""
+			if distrust != "" {
+				reason = ": " + distrust
+			}
+			return fmt.Errorf("audio is still playing into %s (state %s; %s; %s) after %s%s; the volume was not raised",
+				sink, lastState, peak, who, time.Duration(audioStopPolls)*audioStopPoll, reason)
 		}
 		if poll == 0 {
 			fmt.Fprintln(out, "waiting for the audio to stop…")
@@ -694,13 +783,21 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		env.sleep(audioStopPoll)
 	}
 	if usedMonitor {
-		// Shrink the window: measure again right before raising the volume.
+		// Shrink the window: re-check the trust conditions and measure again
+		// right before raising the volume.
+		_, _, why, err := readSink()
+		if err != nil {
+			return err
+		}
+		if why != "" {
+			return fmt.Errorf("audio may be playing on %s: %s; the volume was not raised", sink, why)
+		}
 		if p, db, ok := measure(); !ok || p >= silencePeak {
-			why := "the monitor could not be read"
+			reason := "the monitor could not be read"
 			if ok {
-				why = fmt.Sprintf("peak %.1f dBFS", db)
+				reason = fmt.Sprintf("peak %.1f dBFS", db)
 			}
-			return fmt.Errorf("audio started again on %s (%s): the volume was not raised", sink, why)
+			return fmt.Errorf("audio started again on %s (%s): the volume was not raised", sink, reason)
 		}
 	}
 	if e := checkAbort(); e != nil {
@@ -954,7 +1051,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	}
 	res := computeResult(gl, gr)
 	fl, fr := sess.Floor()
-	nFloor := printFloor(out, l, r, fl, fr, false)
+	nFloor := printFloor(out, l, r, fl, fr)
 	printResultText(out, res)
 	printFloorWarning(out, nFloor)
 	rec := hearingRunOut{
@@ -1069,8 +1166,8 @@ func writeConfirmed(c *hearingCall, gains [hearing.Bands]int) bool {
 }
 
 // printFloor prints the per-ear gains with the floor bands marked and returns
-// how many bands are at the floor. dry only changes nothing but the prefix.
-func printFloor(out io.Writer, l, r [hearing.Bands]int, fl, fr [hearing.Bands]bool, _ bool) int {
+// how many bands are at the floor.
+func printFloor(out io.Writer, l, r [hearing.Bands]int, fl, fr [hearing.Bands]bool) int {
 	n := 0
 	line := func(name string, g [hearing.Bands]int, f [hearing.Bands]bool) {
 		fmt.Fprintf(out, "%-5s:", name)

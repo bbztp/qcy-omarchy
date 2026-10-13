@@ -330,3 +330,64 @@ func TestSessionFloorFlags(t *testing.T) {
 		}
 	}
 }
+
+// answerSeq feeds answers to the first band of a session ("h"/"n").
+func answerSeq(t *testing.T, s *Session, seq string, wantGains []int) {
+	t.Helper()
+	for i, c := range seq {
+		if got := s.Current().Gain; got != wantGains[i] {
+			t.Fatalf("step %d: tone at %+d, want %+d", i, got, wantGains[i])
+		}
+		if err := s.Answer(c == 'h'); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// advance records bands with "never heard" answers until the session stands
+// at the given band of the left ear.
+func advance(s *Session, band int) {
+	for s.Current().Band != band {
+		s.Answer(false)
+	}
+}
+
+func TestFloorOnlyWhenTheThresholdWasNeverBracketed(t *testing.T) {
+	low := func(seq string, gains []int) (rec int, floor bool) {
+		s := NewSession(DefaultSoundDB)
+		answerSeq(t, s, seq, gains)
+		l, _ := s.Result()
+		fl, _ := s.Floor()
+		if s.Current().Band != 1 {
+			t.Fatalf("band 0 did not end: %+v", s.Current())
+		}
+		return l[0], fl[0]
+	}
+	// 63 Hz: 2 1 0 -2 -4 -6 all heard: recorded -6 at the floor.
+	if g, f := low("hhhhhh", []int{2, 1, 0, -2, -4, -6}); g != -6 || !f {
+		t.Fatalf("heard to the bottom: %d floor=%v", g, f)
+	}
+	// heard -4, not heard -6, heard -4: bracketed, a measurement.
+	if g, f := low("hhhhhnh", []int{2, 1, 0, -2, -4, -6, -4}); g != -4 || f {
+		t.Fatalf("bracketed: %d floor=%v", g, f)
+	}
+	// heard +2, not heard +1, heard +2: not floor.
+	if g, f := low("hnh", []int{2, 1, 2}); g != 2 || f {
+		t.Fatalf("+2: %d floor=%v", g, f)
+	}
+	// 2000 Hz (not low): 2 1 0 -1 -2 -3 all heard -> floor; bracketed -> not.
+	hi := func(seq string, gains []int) (int, bool) {
+		s := NewSession(DefaultSoundDB)
+		advance(s, 5)
+		answerSeq(t, s, seq, gains)
+		l, _ := s.Result()
+		fl, _ := s.Floor()
+		return l[5], fl[5]
+	}
+	if g, f := hi("hhhhhh", []int{2, 1, 0, -1, -2, -3}); g != -3 || !f {
+		t.Fatalf("high heard to the bottom: %d floor=%v", g, f)
+	}
+	if g, f := hi("hhhhhnh", []int{2, 1, 0, -1, -2, -3, -2}); g != -2 || f {
+		t.Fatalf("high bracketed: %d floor=%v", g, f)
+	}
+}

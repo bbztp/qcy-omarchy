@@ -49,7 +49,7 @@ func newFakeExec() *fakeExec {
 			"playerctl --player=firefox.instance123 status":        "Paused\n",
 			"playerctl --player=mpv status":                        "Playing\n",
 			"pactl get-sink-mute bluez_output.AA_BB_CC_DD_EE_FF.1": "Mute: yes\n",
-			"pactl list sinks":                                     "Sink #47\n\tName: alsa_output.pci.analog-stereo\n\tDescription: Built-in\n\nSink #92\n\tState: IDLE\n\tName: bluez_output.AA_BB_CC_DD_EE_FF.1\n\tDescription: QCY MeloBuds N70\n\tProperties:\n\t\tapi.bluez5.address = \"AA:BB:CC:DD:EE:FF\"\n\t\tdevice.description = \"QCY MeloBuds N70\"\n",
+			"pactl list sinks":                                     "Sink #47\n\tName: alsa_output.pci.analog-stereo\n\tDescription: Built-in\n\nSink #92\n\tState: IDLE\n\tName: bluez_output.AA_BB_CC_DD_EE_FF.1\n\tDescription: QCY MeloBuds N70\n\tMute: no\n\tVolume: front-left: 65536 / 100% / 0.00 dB,   front-right: 65536 / 100% / 0.00 dB\n\tProperties:\n\t\tapi.bluez5.address = \"AA:BB:CC:DD:EE:FF\"\n\t\tdevice.description = \"QCY MeloBuds N70\"\n",
 			"pactl list sink-inputs":                               "Sink Input #5\n\tSink: 47\n\tCorked: no\n\nSink Input #6\n\tSink: 92\n\tCorked: yes\n",
 		},
 		vol: "Volume: front-left: 39321 /  60% / -13.30 dB,   front-right: 36044 /  55% / -15.00 dB\n        balance -0.08\n",
@@ -695,6 +695,7 @@ func TestHearingRunBusctlFallbackPausesAndResumes(t *testing.T) {
 
 func TestHearingRunStillPlayingAfterPauseAborts(t *testing.T) {
 	r := newRig(t, cycleKeys())
+	r.ttyOptional = true
 	r.ex.ignorePause = map[string]bool{"--player=mpv": true} // ignores pause
 	err := hearingRunLive(r.env, opts())
 	if err == nil || !strings.Contains(err.Error(), "still Playing") {
@@ -706,10 +707,12 @@ func TestHearingRunStillPlayingAfterPauseAborts(t *testing.T) {
 	if r.ex.count(" play") == 0 {
 		t.Fatal("paused players must be resumed")
 	}
+	r.assertRestored(t)
 }
 
 func TestHearingRunActiveStreamOnSinkAborts(t *testing.T) {
 	r := newRig(t, cycleKeys())
+	r.ttyOptional = true
 	r.ex.out["pactl list sink-inputs"] = "Sink Input #9\n\tSink: 92\n\tCorked: no\n\t\tapplication.name = \"Firefox\"\n"
 	r.ex.out["pactl list sinks"] = strings.Replace(r.ex.out["pactl list sinks"], "State: IDLE", "State: RUNNING", 1)
 	err := hearingRunLive(r.env, opts())
@@ -722,6 +725,7 @@ func TestHearingRunActiveStreamOnSinkAborts(t *testing.T) {
 	if r.ex.count(" play") != 2 {
 		t.Fatalf("paused players must be resumed: %v", r.ex.calls)
 	}
+	r.assertRestored(t)
 }
 
 func TestHearingRunSingleUnmatchedSinkRefused(t *testing.T) {
@@ -1298,7 +1302,7 @@ func TestHearingRunRetryCountResetsAfterAnswer(t *testing.T) {
 	}
 }
 
-const activeInput = "Sink Input #1777\n\tSink: 92\n\tCorked: no\n\t\tapplication.name = \"Brave\"\n"
+const activeInput = "Sink Input #1777\n\tSink: 92\n\tCorked: no\n\tMute: no\n\tVolume: front-left: 65536 / 100% / 0.00 dB\n\t\tapplication.name = \"Brave\"\n"
 
 func sinkState(r *rig, st string) {
 	o := r.ex.out["pactl list sinks"]
@@ -1339,6 +1343,7 @@ func TestHearingRunWaitsForSinkToStopRunning(t *testing.T) {
 
 func TestHearingRunAlwaysRunningAbortsAtTimeoutWithoutTouchingVolume(t *testing.T) {
 	r := newRig(t, cycleKeys())
+	r.ttyOptional = true
 	r.ex.out["pactl list sink-inputs"] = activeInput
 	sinkState(r, "RUNNING")
 	var slept time.Duration
@@ -1356,6 +1361,7 @@ func TestHearingRunAlwaysRunningAbortsAtTimeoutWithoutTouchingVolume(t *testing.
 	if r.ex.count(" play") != 2 {
 		t.Fatal("paused players must be resumed")
 	}
+	r.assertRestored(t)
 }
 
 // A browser stream that lingers (not corked) on a SUSPENDED/IDLE sink carries
@@ -1426,6 +1432,7 @@ func TestHearingRunRunningSinkWithSilenceProceeds(t *testing.T) {
 
 func TestHearingRunRunningSinkWithAudioAbortsAndReportsPeak(t *testing.T) {
 	r := newRig(t, cycleKeys())
+	r.ttyOptional = true
 	r.ex.out["pactl list sink-inputs"] = activeInput
 	sinkState(r, "RUNNING")
 	r.env.monitor = func(string) ([]byte, error) { return pcm(0, 3000, -3000), nil }
@@ -1436,6 +1443,7 @@ func TestHearingRunRunningSinkWithAudioAbortsAndReportsPeak(t *testing.T) {
 	if r.ex.count("set-sink") != 0 || r.link.list() != "" {
 		t.Fatal("side effects")
 	}
+	r.assertRestored(t)
 }
 
 func TestHearingRunMonitorMissingOrFailingKeepsConservativeAbort(t *testing.T) {
@@ -1450,6 +1458,7 @@ func TestHearingRunMonitorMissingOrFailingKeepsConservativeAbort(t *testing.T) {
 			sinkState(r, "RUNNING")
 			r.env.monitor = func(string) ([]byte, error) { return pcm(0), nil }
 			setup(r)
+			r.ttyOptional = true
 			err := hearingRunLive(r.env, opts())
 			if err == nil || !strings.Contains(err.Error(), "peak not measured") {
 				t.Fatal(err)
@@ -1457,12 +1466,14 @@ func TestHearingRunMonitorMissingOrFailingKeepsConservativeAbort(t *testing.T) {
 			if r.ex.count("set-sink") != 0 {
 				t.Fatal("volume raised")
 			}
+			r.assertRestored(t)
 		})
 	}
 }
 
 func TestHearingRunAudioReturningBeforeVolumeAborts(t *testing.T) {
 	r := newRig(t, cycleKeys())
+	r.ttyOptional = true
 	r.ex.out["pactl list sink-inputs"] = activeInput
 	sinkState(r, "RUNNING")
 	reads := 0
@@ -1477,6 +1488,7 @@ func TestHearingRunAudioReturningBeforeVolumeAborts(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "started again") || r.ex.count("set-sink") != 0 {
 		t.Fatal(err)
 	}
+	r.assertRestored(t)
 }
 
 func heardKeys() fnKeys { return fnKeys{func() (byte, error) { return 'h', nil }} }
@@ -1520,5 +1532,61 @@ func TestHearingRunNoFloorNoWarning(t *testing.T) {
 	}
 	if strings.Contains(r.out.String(), "lowest level") {
 		t.Fatal(r.out.String())
+	}
+}
+
+// The monitor is post-volume and post-mute: a silent reading proves nothing
+// while the sink is muted/turned down or an active stream is.
+func TestHearingRunSilentMonitorNotTrustedWhenMutedOrTurnedDown(t *testing.T) {
+	cases := map[string]struct {
+		setup func(r *rig)
+		want  string
+	}{
+		"sink muted": {func(r *rig) {
+			r.ex.out["pactl list sinks"] = strings.Replace(r.ex.out["pactl list sinks"], "Mute: no", "Mute: yes", 1)
+		}, "the sink is muted"},
+		"sink at 30%": {func(r *rig) {
+			r.ex.out["pactl list sinks"] = strings.Replace(r.ex.out["pactl list sinks"], "65536 / 100%", "19661 / 30%", -1)
+		}, "the sink is at 30%"},
+		"stream muted": {func(r *rig) {
+			r.ex.out["pactl list sink-inputs"] = strings.Replace(r.ex.out["pactl list sink-inputs"], "Mute: no", "Mute: yes", 1)
+		}, "is muted"},
+		"stream at 20%": {func(r *rig) {
+			r.ex.out["pactl list sink-inputs"] = strings.Replace(r.ex.out["pactl list sink-inputs"], "65536 / 100%", "13107 / 20%", -1)
+		}, "is at 20%"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t, cycleKeys())
+			r.ttyOptional = true
+			r.ex.out["pactl list sink-inputs"] = activeInput
+			sinkState(r, "RUNNING")
+			c.setup(r)
+			reads := 0
+			r.env.monitor = func(string) ([]byte, error) { reads++; return pcm(0), nil } // silent
+			err := hearingRunLive(r.env, opts())
+			if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "the volume was not raised") {
+				t.Fatal(err)
+			}
+			if reads != 0 {
+				t.Fatalf("an untrustworthy monitor was read %d times", reads)
+			}
+			if r.ex.count("set-sink") != 0 {
+				t.Fatalf("volume/mute changed: %v", r.ex.calls)
+			}
+			r.assertRestored(t)
+		})
+	}
+}
+
+func TestHearingRunUnreadableSinkVolumeIsNotTrusted(t *testing.T) {
+	r := newRig(t, cycleKeys())
+	r.ttyOptional = true
+	r.ex.out["pactl list sink-inputs"] = activeInput
+	sinkState(r, "RUNNING")
+	r.ex.out["pactl list sinks"] = strings.Replace(r.ex.out["pactl list sinks"], "Mute: no", "", 1)
+	r.env.monitor = func(string) ([]byte, error) { return pcm(0), nil }
+	if err := hearingRunLive(r.env, opts()); err == nil || r.ex.count("set-sink") != 0 {
+		t.Fatal(err)
 	}
 }

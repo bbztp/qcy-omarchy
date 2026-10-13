@@ -297,7 +297,7 @@ func hearingRunCmd(args []string, out io.Writer) error {
 		fmt.Fprintf(out, "incomplete after %d answers; next: %s %d Hz step %+d %.1f dBFS\n", len(steps), t.Ear, t.Freq, t.Gain, t.LevelDB)
 		return nil
 	}
-	nFloor := printFloor(out, l, r, fl, fr, true)
+	nFloor := printFloor(out, l, r, fl, fr)
 	printFloorWarning(out, nFloor)
 	res := computeResult(gl, gr)
 	fmt.Fprintf(out, "master gain: %.2f dB\nleft frame:  %s\nright frame: %s\n", res.MasterGain, res.Left.Frame, res.Right.Frame)

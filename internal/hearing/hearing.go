@@ -95,6 +95,7 @@ type Session struct {
 	endCnt  int
 	last    int
 	hasLast bool
+	sawNo   bool // a "not heard" was recorded in the current band
 	done    bool
 	res     [2][Bands]int
 	floor   [2][Bands]bool
@@ -111,6 +112,7 @@ func (s *Session) startBand() {
 	s.gain = InitialStep
 	s.endCnt = 0
 	s.hasLast = false
+	s.sawNo = false
 }
 
 // Done reports whether all 16 bands were recorded.
@@ -166,6 +168,7 @@ func (s *Session) Answer(heard bool) error {
 	low := f <= LowBandMaxHz
 	g := s.gain
 	if !heard {
+		s.sawNo = true
 		if g >= MaxGain {
 			s.endCnt++
 			if s.endCnt >= 2 {
@@ -185,9 +188,11 @@ func (s *Session) Answer(heard bool) error {
 		s.endCnt++
 	}
 	s.last, s.hasLast = g, true
-	// Heard at or below the "very quiet" threshold of the band: the listener
-	// is at the floor of the staircase and the result is only relative.
-	atFloor := (low && g <= -4) || (!low && g <= -2)
+	// Floor: the band ended heard at or below the "very quiet" threshold and
+	// NO "not heard" was ever recorded in it, so the threshold was never
+	// bracketed (a band that was bracketed - heard -4, not heard -6, heard -4 -
+	// is a measurement even when its value is low).
+	atFloor := !s.sawNo && ((low && g <= -4) || (!low && g <= -2))
 	if s.endCnt >= 2 || same {
 		s.record(g, atFloor)
 		return nil
