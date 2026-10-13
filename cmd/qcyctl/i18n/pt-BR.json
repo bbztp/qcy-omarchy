@@ -175,5 +175,8 @@
   "Earbuds not found (off or out of range).": "Fones não encontrados (desligados ou fora de alcance).",
   "Too many bands: zero some bars or choose another effect.": "Bandas demais: zere algumas barras ou escolha outro efeito.",
   "An effect with that name already exists. Choose another name.": "Já existe um efeito com esse nome. Escolha outro nome.",
-  "Could not change the language": "Não foi possível mudar o idioma"
+  "Could not change the language": "Não foi possível mudar o idioma",
+  "More controls": "Mais controles",
+  "Run": "Executar",
+  "This resets the earbuds. Continue?": "Isto restaura os fones. Continuar?"
 }

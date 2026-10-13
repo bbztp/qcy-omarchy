@@ -97,6 +97,10 @@ type daemon struct {
 	writeGen    uint64 // bumped by every write; guards the status cache
 	lastStatus  *snapshot
 	lastBattery *snapshot
+
+	// Generic panel functions (fn.go): readings cached per session, guarded by mu.
+	fnSess  session
+	fnCache map[int]fnReading
 }
 
 type frame struct {
@@ -784,7 +788,7 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 	// before it must never be served as stale afterwards, whatever the outcome
 	// (a failed write may still have reached the device).
 	switch req.Cmd {
-	case "set", "find", "eqApply", "eqMasterGain", "wear", "keysSet", "hearingMode", "hearingWrite", "windOffByte":
+	case "set", "find", "eqApply", "eqMasterGain", "wear", "keysSet", "hearingMode", "hearingWrite", "windOffByte", "fnSet":
 		defer d.invalidateCache()
 	}
 	d.mu.Lock()
@@ -950,6 +954,14 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 			return nil, err
 		}
 		return bytesJSON(got), nil
+	case "fnList":
+		// Functions the model's panel declares that no specialised control
+		// covers, with their widget type, options and state (fn.go).
+		return d.fnList(), nil
+	case "fnSet":
+		// {cmdId, value | on | off, confirm?, confirmAgain?}: writes the bytes
+		// the panel declares for that function, then reads it back.
+		return d.fnSet(req.Args)
 	case "noise":
 		// Raw 0x17 payload [mode, scene, level].
 		p, err := d.query(protocol.OpANC, 3*time.Second)
@@ -1050,6 +1062,10 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 		if p, err := d.query(op, 1500*time.Millisecond); err == nil {
 			rep[name] = bytesJSON(p)
 		}
+	}
+	// Generic panel functions: nothing is asked when the model declares none.
+	if fs := d.fnStatus(); len(fs) > 0 {
+		rep["functions"] = fs
 	}
 	return rep, nil
 }

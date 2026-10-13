@@ -258,6 +258,14 @@ func statusFromDaemon(raw map[string]interface{}) *statusReport {
 	if m, ok := raw["model"].(map[string]interface{}); ok {
 		rep.Model = m
 	}
+	if f, ok := raw["functions"].(map[string]interface{}); ok {
+		rep.Functions = map[string]string{}
+		for k, v := range f {
+			if sv, ok := v.(string); ok {
+				rep.Functions[k] = sv
+			}
+		}
+	}
 	if v := intOf(raw["wearSensitivity"]); v >= 1 && v <= 3 {
 		rep.WearSensitivity = &v
 	}
@@ -894,6 +902,8 @@ func main() {
 		err = cmdModel(args)
 	case "hearing":
 		err = cmdHearing(args)
+	case "fn":
+		err = cmdFn(args)
 	default:
 		usage()
 		os.Exit(2)
@@ -937,6 +947,8 @@ func usage() {
   qcyctl model image [--vendor N] [--color <name|index>] [--refresh] [--no-network] [--json]   (the earbuds' images, downloaded once from the QCY CDN into the cache)
   qcyctl model images <on|off|status> [--json]   (allow or forbid those downloads)
   qcyctl hearing <plan|result|run --dry-run>   (hearing test phase 1: offline plan, curve, master gain and frame bytes; sends nothing)
+  qcyctl fn list [--json]   (generic functions the model's panel declares and no other command covers; needs the daemon)
+  qcyctl fn set <cmdId> <value|on|off> [--yes]   (writes the panel's own bytes; a restart warning needs --yes, a reset-type command --yes --yes)
   qcyctl keys get [seconds]
   qcyctl keys set <keyId:funId> [<keyId:funId> ...] [seconds]
 All setters read back by querying the opcode (FF 03 FE 01 <opcode>) and fail non-zero on mismatch.`)
@@ -1556,8 +1568,11 @@ type statusReport struct {
 	Caps map[string]bool `json:"capabilities,omitempty"`
 	// Model is the daemon's model detection: modelId, displayName, verified,
 	// and vendorId/productTitle when known.
-	Model  map[string]interface{} `json:"model,omitempty"`
-	Errors []string               `json:"errors,omitempty"`
+	Model map[string]interface{} `json:"model,omitempty"`
+	// Functions is the daemon's reading of the generic panel functions
+	// (cmdId -> "on", "off", an option value or "raw:<hex>"); see `fn list`.
+	Functions map[string]string `json:"functions,omitempty"`
+	Errors    []string          `json:"errors,omitempty"`
 	// Stale is set when the daemon served its last cached snapshot because the
 	// earbuds were busy; AgeSeconds is how old that snapshot is.
 	Stale      bool `json:"stale,omitempty"`

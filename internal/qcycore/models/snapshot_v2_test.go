@@ -59,8 +59,8 @@ func TestSnapshotMatchesSchema(t *testing.T) {
 		}
 		for i, f := range p.Panel.Functions {
 			blocks := 0
-			for _, ok := range []bool{f.Toggle != nil, f.Command != nil, len(f.Choices) > 0, f.Standby != nil,
-				f.Language != nil, f.ANC != nil, f.EQ != nil, f.Keys != nil} {
+			for _, ok := range []bool{f.ToggleBlock != nil, f.CommandBlock != nil, len(f.ChoiceList) > 0, f.StandbyBlock != nil,
+				f.LanguageBlock != nil, f.ANC != nil, f.EQ != nil, f.Keys != nil} {
 				if ok {
 					blocks++
 				}
@@ -68,8 +68,8 @@ func TestSnapshotMatchesSchema(t *testing.T) {
 			if blocks > 1 {
 				t.Errorf("model %s function %d has %d blocks", k, i, blocks)
 			}
-			if f.Toggle != nil && (len(f.Toggle.On) == 0 || len(f.Toggle.Off) == 0) {
-				t.Errorf("model %s function %d toggle %+v", k, i, f.Toggle)
+			if f.ToggleBlock != nil && (len(f.ToggleBlock.On) == 0 || len(f.ToggleBlock.Off) == 0) {
+				t.Errorf("model %s function %d toggle %+v", k, i, f.ToggleBlock)
 			}
 			if f.Type == nil && f.Raw == nil {
 				t.Errorf("model %s function %d: no type and no raw", k, i)
@@ -84,18 +84,18 @@ func TestN70Functions(t *testing.T) {
 		byCmd := map[int]Function{}
 		var reset, factory, tone, standby, keys, anc, eq bool
 		for _, f := range p.Panel.Functions {
-			if f.CmdID != nil && f.Toggle != nil {
+			if f.CmdID != nil && f.ToggleBlock != nil {
 				byCmd[*f.CmdID] = f
 			}
 			switch {
-			case f.Command != nil && f.Command.Bytes == "FF020100":
+			case f.CommandBlock != nil && f.CommandBlock.Bytes == "FF020100":
 				reset = true
-			case f.Command != nil && f.Command.Bytes == "FF020300":
+			case f.CommandBlock != nil && f.CommandBlock.Bytes == "FF020300":
 				factory = true
-			case f.Language != nil:
-				tone = len(f.Language.Options) == 2 && f.Language.Options[0].Bytes == "57513030"
-			case f.Standby != nil:
-				if len(f.Standby.Options) == 5 && f.Standby.Options[4].Never && *f.Standby.Options[0].Minutes == 5 {
+			case f.LanguageBlock != nil:
+				tone = len(f.LanguageBlock.Options) == 2 && f.LanguageBlock.Options[0].Bytes == "57513030"
+			case f.StandbyBlock != nil:
+				if len(f.StandbyBlock.Options) == 5 && f.StandbyBlock.Options[4].Never && *f.StandbyBlock.Options[0].Minutes == 5 {
 					standby = true
 				}
 			case f.Keys != nil:
@@ -113,14 +113,14 @@ func TestN70Functions(t *testing.T) {
 		}
 		for _, c := range []int{9, 16, 35, 36, 42} {
 			f, ok := byCmd[c]
-			if !ok || len(f.Toggle.On) != 1 || f.Character != "00001001" {
+			if !ok || len(f.ToggleBlock.On) != 1 || f.Character != "00001001" {
 				t.Errorf("%d toggle cmd %d: %+v", v, c, f)
 			}
 		}
-		if f := byCmd[42]; len(f.Toggle.Off) == 1 && f.Toggle.Off[0] != "FF032A0100" {
-			t.Errorf("%d wind noise off %v", v, f.Toggle.Off)
+		if f := byCmd[42]; len(f.ToggleBlock.Off) == 1 && f.ToggleBlock.Off[0] != "FF032A0100" {
+			t.Errorf("%d wind noise off %v", v, f.ToggleBlock.Off)
 		}
-		if f := byCmd[35]; f.Messages == nil || f.Messages.Msg == "" {
+		if f := byCmd[35]; f.MessageBlock == nil || f.MessageBlock.Msg == "" {
 			t.Errorf("%d LDAC restart text missing", v)
 		}
 		for name, ok := range map[string]bool{"reset": reset, "factory": factory, "tone": tone,
@@ -161,5 +161,53 @@ func TestFrequencyKSuffixParsed(t *testing.T) {
 		if f <= 0 {
 			t.Fatalf("zero frequency in %v", p.Panel.EQ.Freq)
 		}
+	}
+}
+
+func TestFunctionsForAndAccessors(t *testing.T) {
+	if FunctionsFor(1) != nil {
+		t.Fatal("unknown vendorId returned functions")
+	}
+	fs := FunctionsFor(23872)
+	if len(fs) == 0 {
+		t.Fatal("N70 has no functions")
+	}
+	// The result is a copy: reordering it must not touch the snapshot.
+	fs[0], fs[1] = fs[1], fs[0]
+	if again := FunctionsFor(23872); again[0].Name != "Customizing button function" {
+		t.Fatalf("snapshot mutated: %q", again[0].Name)
+	}
+	var tog, cmd, lang, sb, ch, msg bool
+	for _, f := range FunctionsFor(23872) {
+		if t, ok := f.Toggle(); ok && f.CmdID != nil && *f.CmdID == 9 {
+			tog = len(t.On) == 1 && t.On[0] == "FF03090101" && t.Off[0] == "FF03090102"
+		}
+		if c, ok := f.Command(); ok && c.Bytes == "FF020100" {
+			cmd = true
+		}
+		if l, ok := f.Language(); ok && len(l.Options) == 2 {
+			lang = true
+		}
+		if s, ok := f.Standby(); ok && len(s.Options) == 5 {
+			sb = true
+		}
+		if len(f.Choices()) == 4 {
+			ch = true
+		}
+		if m, ok := f.Messages(); ok && m.Msg != "" {
+			msg = true
+		}
+	}
+	for n, ok := range map[string]bool{"toggle": tog, "command": cmd, "language": lang, "standby": sb, "choices": ch, "messages": msg} {
+		if !ok {
+			t.Errorf("accessor %s found nothing", n)
+		}
+	}
+	var none Function
+	if _, ok := none.Toggle(); ok {
+		t.Error("empty function has a toggle")
+	}
+	if len(none.Choices()) != 0 {
+		t.Error("empty function has choices")
 	}
 }

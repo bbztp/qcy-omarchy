@@ -189,19 +189,65 @@ type Function struct {
 	Name      string `json:"name,omitempty"`
 	Character string `json:"character,omitempty"` // 32-bit characteristic id, hex
 
-	Toggle    *Toggle    `json:"toggle,omitempty"`
-	Command   *Command   `json:"command,omitempty"`
-	Choices   []Choice   `json:"choices,omitempty"`
-	Secondary *Secondary `json:"secondary,omitempty"`
-	Standby   *Standby   `json:"standby,omitempty"`
-	Language  *Language  `json:"language,omitempty"`
-	ANC       *FuncANC   `json:"anc,omitempty"`
-	EQ        *FuncEQ    `json:"eq,omitempty"`
-	Keys      *FuncKeys  `json:"keys,omitempty"`
+	// The typed blocks. They are read through the accessors (Toggle, Command,
+	// Choices, Standby, Language, Messages); the fields carry the Block suffix
+	// only because the accessors take the plain names.
+	ToggleBlock   *Toggle    `json:"toggle,omitempty"`
+	CommandBlock  *Command   `json:"command,omitempty"`
+	ChoiceList    []Choice   `json:"choices,omitempty"`
+	Secondary     *Secondary `json:"secondary,omitempty"`
+	StandbyBlock  *Standby   `json:"standby,omitempty"`
+	LanguageBlock *Language  `json:"language,omitempty"`
+	ANC           *FuncANC   `json:"anc,omitempty"`
+	EQ            *FuncEQ    `json:"eq,omitempty"`
+	Keys          *FuncKeys  `json:"keys,omitempty"`
 
-	Messages *Messages      `json:"messages,omitempty"`
-	Props    map[string]any `json:"props,omitempty"`
-	Raw      map[string]any `json:"raw,omitempty"`
+	MessageBlock *Messages      `json:"messages,omitempty"`
+	Props        map[string]any `json:"props,omitempty"`
+	Raw          map[string]any `json:"raw,omitempty"`
+}
+
+// Toggle returns the on/off frames of a toggle function.
+func (f Function) Toggle() (Toggle, bool) {
+	if f.ToggleBlock == nil {
+		return Toggle{}, false
+	}
+	return *f.ToggleBlock, true
+}
+
+// Command returns the raw write of a command function (reset, clear pairing).
+func (f Function) Command() (Command, bool) {
+	if f.CommandBlock == nil {
+		return Command{}, false
+	}
+	return *f.CommandBlock, true
+}
+
+// Choices returns the options of a list function (nil when it has none).
+func (f Function) Choices() []Choice { return append([]Choice(nil), f.ChoiceList...) }
+
+// Standby returns the auto power-off options.
+func (f Function) Standby() (Standby, bool) {
+	if f.StandbyBlock == nil {
+		return Standby{}, false
+	}
+	return *f.StandbyBlock, true
+}
+
+// Language returns the tone-language options.
+func (f Function) Language() (Language, bool) {
+	if f.LanguageBlock == nil {
+		return Language{}, false
+	}
+	return *f.LanguageBlock, true
+}
+
+// Messages returns the texts the panel attaches to the function.
+func (f Function) Messages() (Messages, bool) {
+	if f.MessageBlock == nil {
+		return Messages{}, false
+	}
+	return *f.MessageBlock, true
 }
 
 // Toggle holds the full frames (hex) to send for on and for off.
@@ -403,6 +449,18 @@ func All() []Product {
 func Count() int {
 	load()
 	return len(order)
+}
+
+// FunctionsFor returns the functions the server panel declares for vendorID,
+// in declaration order; nil when the vendorId is unknown, has no panel or the
+// snapshot is v1 (no function list).
+func FunctionsFor(vendorID uint16) []Function {
+	load()
+	p, ok := byID[vendorID]
+	if !ok || p.Panel == nil || len(p.Panel.Functions) == 0 {
+		return nil
+	}
+	return append([]Function(nil), p.Panel.Functions...)
 }
 
 // SchemaVersion is the schema of the embedded snapshot (1 or 2).

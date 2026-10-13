@@ -779,4 +779,56 @@ interpreted (105, 115, 13, 24, and layouts without a type), so no data is lost.
 Not carried: artwork and sound URLs, HTML help texts, the "update the app"
 placeholder `msg`. Texts are the single language the panel was fetched in.
 Frequencies written as `1k`/`2k` are numbers (v1 stored 0 for them).
-The block set is data only; there is no `FunctionsFor` or frame builder yet.
+`models.FunctionsFor(vendorId)` returns the list; `Function` has typed accessors
+`Toggle()`, `Command()`, `Choices()`, `Standby()`, `Language()` and `Messages()`
+(the struct fields carry a `Block`/`List` suffix). See "Generic functions".
+
+## Generic functions
+
+The daemon drives the panel functions that no specialised handler covers
+(`cmd/qcyctld/fn.go`). Only functions declared by the panel of the connected
+unit's vendorId are offered, and the frame written is the one the panel
+declares.
+
+A function is offered when all of these hold:
+
+- it has a drivable block: `toggle` with one `on` and one `off` frame, `command`,
+  `standby` or `language` with a cmdId, or `choices` whose options carry `bytes`
+  (a bare level number declares no frame, so none is invented);
+- it names no characteristic, or the command characteristic (`00001001`);
+- every declared frame validates: `FF <bodyLen> <op> <paramLen> <params>` with
+  consistent lengths and no extra bytes (the same block without the envelope, and
+  a bare opcode for a parameterless command, are also accepted), and `op` equals
+  the declared cmdId (a command without a cmdId takes the frame's opcode);
+- its opcode is not one a specialised path already drives (game, sleep, LDAC,
+  multipoint, wind, wear, auto-off, balance, ANC, EQ, hearing, fit, prompt volume,
+  wear sensitivity, find) and neither the function name nor the protocol table
+  row mentions firmware, upgrade, OTA or update. `standby` is covered by the
+  auto-off control when the handler offers it.
+
+Socket commands (the daemon answers them only after connecting):
+
+| command | args | result |
+|---|---|---|
+| `fnList` | none | `[{cmdId, type (toggle, list, action), kind, label, options[{label,value}], state, raw, text, restart, confirm, danger}]` |
+| `fnSet` | `cmdId`, `value` (or `on`/`off`), `confirm?`, `confirmAgain?` | `{cmdId, sent, confirmed, state, raw, restart, note}` |
+
+`value` is `on`/`off` for a toggle; for a list an option `label`, its hex
+`value`, or for a standby list the minutes or `never`. A function with a
+`rebootTip`, `alarmMsg` or `confTip` needs `confirm:true`; a `command` (reset,
+clear pairing, factory reset) needs `confirm:true` and `confirmAgain:true`. A
+write is sent once; it is read back with `FE 01 <cmdId>` (toggle on-state: the
+declared on parameters; off: the declared off parameters, or 0/2 for a 01-on
+toggle). A silent unit, or a link that drops after a function that declares a
+restart, is reported as `restart:true`, never as an error and never repeated; a
+reply that differs from the value written is an error.
+
+`status` carries `functions` (cmdId -> `on`, `off`, an option value or
+`raw:<hex>`) only when the model declares generic functions. Readings are cached
+per session; a function that does not answer is not asked again until the next
+connection (a pass gives up after three silent queries in a row).
+
+CLI: `qcyctl fn list [--json]`, `qcyctl fn set <cmdId> <value|on|off> [--yes]`
+(`--yes` for a restart warning, `--yes --yes` for a reset-type command). The
+plugin shows the section "More controls" in Ajustes, hidden when the list is
+empty.

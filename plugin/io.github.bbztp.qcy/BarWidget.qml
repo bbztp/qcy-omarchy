@@ -908,6 +908,49 @@ Panel {
   readonly property bool wearSensVisible: !!(rep && rep.wear && rep.wear.enabled === true)
     && rep.wearSensitivity !== undefined && rep.wearSensitivity !== null
 
+  // ---- generic panel functions ("More controls") ---------------------------
+  // Qcy.functions comes from `qcyctl fn list --json`. A function that carries a
+  // restart warning, or a reset-type command, asks first, with the panel's own
+  // text when it has one; only "Yes" sends it.
+  property var fnConfirm: null      // { item, value } while the question is open
+  property string fnError: ""
+
+  function fnOptionModel(item) {
+    return (item.options || []).map(function (o) { return { label: o.label, value: o.value } })
+  }
+
+  function fnRun(item, value) {
+    root.fnError = ""
+    var args = ["fn", "set", String(item.cmdId)]
+    if (item.type !== "action") args.push(String(value))
+    if (item.confirm || item.restart) args.push("--yes")
+    if (item.danger) args.push("--yes")
+    Qcy.set("More controls", args, function (code, out, err) {
+      if (code !== 0) {
+        var lines = String(err || "").trim().split("\n")
+        root.fnError = Qcy.tr("Could not apply: {message}", { message: lines[lines.length - 1] })
+      }
+      Qcy.loadFunctions(true)
+    })
+  }
+
+  // Asks first when the function warns about a restart or is a reset-type command.
+  function fnRequest(item, value) {
+    if (item.confirm || item.restart || item.danger) {
+      root.fnConfirm = { item: item, value: value }
+    } else {
+      root.fnRun(item, value)
+    }
+  }
+
+  function fnQuestion() {
+    var c = root.fnConfirm
+    if (!c) return ""
+    if (c.item.text && c.item.text !== "") return c.item.text
+    return c.item.danger ? Qcy.tr("This resets the earbuds. Continue?")
+                         : Qcy.tr("This restarts the earbuds. Continue?")
+  }
+
   function currentAutoOff() {
     if (optimistic["autoOff"] !== undefined) return String(optimistic["autoOff"])
     var a = rep ? rep.autoOff : null
@@ -1773,6 +1816,103 @@ Panel {
                 model: root.autoOffChoices
                 current: root.currentAutoOff()
                 onPicked: function (v) { root.setAutoOff(v) }
+              }
+            }
+
+            // ---- More controls: what the panel declares and nothing above covers ----
+            Card {
+              width: parent.width
+              visible: Qcy.connected && Qcy.functions.length > 0
+
+              SectionHeader {
+                width: parent.width
+                text: Qcy.tr("More controls").toUpperCase()
+              }
+
+              Repeater {
+                model: Qcy.functions
+                Column {
+                  id: fnCell
+                  required property var modelData
+                  width: parent.width
+                  spacing: Style.space(8)
+
+                  ToggleRow {
+                    width: parent.width
+                    visible: fnCell.modelData.type === "toggle"
+                    label: fnCell.modelData.label
+                    hint: fnCell.modelData.restart ? Qcy.tr("Restarts the earbuds; this is expected, not a fault") : ""
+                    checked: fnCell.modelData.state === "on"
+                    onToggled: root.fnRequest(fnCell.modelData, fnCell.modelData.state === "on" ? "off" : "on")
+                  }
+                  ChoiceRow {
+                    width: parent.width
+                    visible: fnCell.modelData.type === "list"
+                    label: fnCell.modelData.label
+                    model: root.fnOptionModel(fnCell.modelData)
+                    current: fnCell.modelData.state ? String(fnCell.modelData.state) : ""
+                    onPicked: function (v) { root.fnRequest(fnCell.modelData, v) }
+                  }
+                  Item {
+                    width: parent.width
+                    visible: fnCell.modelData.type === "action"
+                    implicitHeight: fnActionChip.implicitHeight
+                    Text {
+                      text: fnCell.modelData.label
+                      color: root.foreground
+                      font.family: root.textFamily
+                      font.pixelSize: Style.font.body
+                      anchors.left: parent.left
+                      anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Chip {
+                      id: fnActionChip
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                      label: Qcy.tr("Run")
+                      onClicked: root.fnRequest(fnCell.modelData, "")
+                    }
+                  }
+                }
+              }
+
+              Column {
+                width: parent.width
+                visible: root.fnConfirm !== null
+                spacing: Style.space(6)
+                Text {
+                  width: parent.width
+                  text: root.fnQuestion()
+                  color: root.foreground
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+                Row {
+                  spacing: Style.space(6)
+                  Chip {
+                    label: Qcy.tr("Yes")
+                    onClicked: {
+                      var c = root.fnConfirm
+                      root.fnConfirm = null
+                      if (c) root.fnRun(c.item, c.value)
+                    }
+                  }
+                  Chip {
+                    label: Qcy.tr("No")
+                    onClicked: root.fnConfirm = null
+                  }
+                }
+              }
+
+              Text {
+                width: parent.width
+                visible: root.fnError !== ""
+                text: root.fnError
+                color: Color.urgent
+                font.family: root.textFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
               }
             }
 

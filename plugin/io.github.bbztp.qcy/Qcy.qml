@@ -600,6 +600,44 @@ Singleton {
     }
   }
 
+  // ------------------------------------------------- generic panel functions
+  //
+  // `qcyctl fn list --json`: the controls the model's panel declares that no
+  // other command covers (toggles, option lists, reset-type commands). The
+  // list is empty for a model that declares none, and the section stays hidden.
+  // It talks to the daemon, which serialises it with the other requests, so it
+  // runs on the offline queue and never touches the adapter itself.
+  property var functions: []        // [{cmdId, type, kind, label, options, state, text, restart, confirm, danger}]
+  property string _functionsKey: ""
+  property bool functionsLoading: false
+
+  function loadFunctions(force) {
+    var vendor = (report && report.model && report.model.vendorId !== undefined)
+      ? String(report.model.vendorId) : ""
+    if (!connected || vendor === "") {
+      if (functions.length > 0) functions = []
+      _functionsKey = ""
+      return
+    }
+    if (!force && _functionsKey === vendor) return
+    if (functionsLoading) return
+    _functionsKey = vendor
+    functionsLoading = true
+    runOffline(["fn", "list", "--json"], function (code, out, err) {
+      functionsLoading = false
+      var list = []
+      if (code === 0) {
+        try {
+          var j = JSON.parse(String(out || "").trim())
+          if (Array.isArray(j)) list = j
+        } catch (e) { /* keep the section hidden */ }
+      }
+      functions = list
+    })
+  }
+
+  onReportChanged: loadFunctions(false)
+
   // ------------------------------------------------------- curve library
   //
   // `qcyctl library list/seed/delete` are offline (files only, never the
