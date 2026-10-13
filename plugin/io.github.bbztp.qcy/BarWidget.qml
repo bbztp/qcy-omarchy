@@ -2753,13 +2753,27 @@ Panel {
     }
   }
 
-  // A selectable pill.
   // The shell's PanelSlider takes every mouse-wheel tick as a value change, so
   // scrolling the page over a slider moved it. Sliders get a WheelPassThrough
   // on top: a plain wheel scrolls the page, Ctrl+wheel still reaches the slider.
+  // A wheel tick moves the page a short, animated step (the page's own
+  // scrolling glides; an instant jump felt like a jolt).
+  property real wheelTarget: 0
+  NumberAnimation {
+    id: wheelGlide
+    target: scroller
+    property: "contentY"
+    duration: 160
+    easing.type: Easing.OutCubic
+  }
   function scrollPanelBy(dy) {
     var max = Math.max(0, scroller.contentHeight - scroller.height)
-    scroller.contentY = Math.max(0, Math.min(max, scroller.contentY - dy))
+    var base = wheelGlide.running ? root.wheelTarget : scroller.contentY
+    root.wheelTarget = Math.max(0, Math.min(max, base - dy * 0.5))
+    wheelGlide.stop()
+    wheelGlide.from = scroller.contentY
+    wheelGlide.to = root.wheelTarget
+    wheelGlide.start()
   }
 
   component WheelPassThrough: MouseArea {
@@ -2776,6 +2790,7 @@ Panel {
     }
   }
 
+  // A selectable pill.
   component Chip: BorderSurface {
     id: chip
     required property string label
