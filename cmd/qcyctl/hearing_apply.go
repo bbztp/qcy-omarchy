@@ -498,6 +498,8 @@ type hearingResultFile struct {
 	Result     struct {
 		MasterGain float64 `json:"masterGain"`
 	} `json:"result"`
+	// Baseline is "zero" when the run was started with --baseline zero.
+	Baseline string `json:"baseline"`
 }
 
 type hearingApplyOpts struct {
@@ -652,6 +654,9 @@ func hearingApplyFile(env hearingEnv, path string, o hearingApplyOpts) (err erro
 		return fmt.Errorf("refused to write: %d band(s) were still heard at the lowest level, so the result is only relative; rerun the test with a lower --sink-volume, or pass --accept-floor; nothing was sent", nFloor)
 	}
 
+	if o.baseline == "" { // not given on the command line: what the run recorded
+		o.baseline = baselineOrFactory(f.Baseline)
+	}
 	record := env.recorder(l, r, f.SinkVolume, f.Timestamp, o.baseline)
 	_, _, err = hearingWriteGains(env, l, r, o, record)
 	return err
@@ -752,7 +757,7 @@ func hearingApplyCmd(args []string, out io.Writer) error {
 	accept := fs.Bool("accept-floor", false, "")
 	dev := fs.Bool("device-mode", false, "")
 	noS11 := fs.Bool("no-slot11-backup", false, "")
-	baseline := fs.String("baseline", "factory", "")
+	baseline := fs.String("baseline", "", "")
 	var path string
 	var rest []string
 	for _, a := range args {
@@ -765,7 +770,7 @@ func hearingApplyCmd(args []string, out io.Writer) error {
 	if err := fs.Parse(rest); err != nil || fs.NArg() != 0 || path == "" {
 		return errors.New(usage)
 	}
-	if *baseline != "factory" && *baseline != "zero" {
+	if *baseline != "" && *baseline != "factory" && *baseline != "zero" {
 		return fmt.Errorf("--baseline must be factory (default) or zero (experiment), got %q", *baseline)
 	}
 	env, done := liveHearingEnv(out)

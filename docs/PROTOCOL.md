@@ -676,6 +676,54 @@ after the left was written the output says "MIXED STATE" with the restore
 command. Bands still heard at the lowest level of the staircase ("floor") are
 refused unless `--accept-floor` is given.
 
+`qcyctl hearing run --events [--sink NAME] [--sink-volume 90%] [--out file.json]
+[--baseline factory|zero] [--device-mode]` is the same test, with the same
+guards, for the plugin: no terminal, JSON lines on stdout, commands on stdin,
+the human progress text on stderr. It never writes to the earbuds (`--apply`,
+`--yes`, `--accept-floor`, `--dry-run` are refused): the result is saved to
+`--out` (default `~/.cache/qcy-omarchy/hearing-<timestamp>.json`, mode 0600)
+and written later with `qcyctl hearing apply <out.json> --yes [--accept-floor]
+[--baseline factory|zero]`. `--baseline zero` is recorded in the file and used
+by `hearing apply` when its own `--baseline` is not given.
+
+Commands, one per line on stdin: `heard`, `not-heard`, `repeat`, `abort`
+(case-insensitive; anything else is ignored). EOF is an abort. A command that
+arrives while no tone is playing is discarded, as a key is in the terminal run;
+a tone that died is replayed (at most twice per band, then the run fails).
+
+Events, one JSON object per line (`event` names the kind):
+
+```
+{"event":"phase","name":"pausing-music","message":"pausing the music"}
+{"event":"tone","index":1,"ear":"left","band":0,"bands":8,"freq":63,"step":4,"levelDb":-58.4,"progress":0}
+{"event":"answer","ear":"left","band":0,"heard":true}
+{"event":"result","left":[..8 ints..],"right":[..8 ints..],"floor":{"left":[..8 bools..],"right":[..8 bools..]},"masterGain":-3.5,"outFile":"/home/u/.cache/qcy-omarchy/hearing-20261013-120000.json"}
+{"event":"warning","message":"tone interrupted, answer discarded, repeating (1/2)"}
+{"event":"error","message":"no Bluetooth sink found ..."}
+{"event":"stopped","reason":"done"}
+```
+
+| Event | Fields |
+|---|---|
+| `phase` | `name`: `pausing-music`, `checking-earbuds`, `waiting-silence`, `starting`, `testing`, `finishing`, `done`, `aborted`, `error`; `message` |
+| `tone` | `index` (1-based, counts answers; a repeat of the same tone has the same `index`), `ear` (`left`/`right`), `band` (0-based), `bands` (8), `freq` (Hz), `step`, `levelDb` (dBFS), `progress` (0..1: finished bands of 16; the staircase length is not fixed) |
+| `answer` | `ear`, `band`, `heard` |
+| `result` | `left`, `right` (gain per band), `floor.left`/`floor.right` (bands still heard at the lowest level), `masterGain`, `outFile` |
+| `warning` | `message` (also for every cleanup problem) |
+| `error` | `message`; followed by `phase` `error` and `stopped` |
+| `stopped` | `reason`: `done`, `abort` (command or EOF), `signal`, `error` |
+
+Order of a complete run: `phase` pausing-music, checking-earbuds,
+waiting-silence, starting, testing; `tone`/`answer` pairs; `phase` finishing;
+`result` (the file is already written); `phase` done; `stopped`. An abort ends
+with `phase` aborted and `stopped`, with no `result`. `stopped` is always the
+last line and is written only after the cleanup: the tone is stopped, the test
+mode (when it was switched on) is off, the sink volume and mute are restored
+and the players the run paused are resumed. An abort is a normal end (exit 0);
+a signal or an error is a non-zero exit. A `heard`/`abort` that arrives during
+the music pause or the silence wait aborts the run before any volume change.
+Not verified on hardware.
+
 How the phone app handles the result (as observed): "use this
 result" writes `0x46` (left) and `0x47` (right) with effect index 11, nothing
 else (no 0x22, no slot select). Tapping the "Experiência auditiva" effect again

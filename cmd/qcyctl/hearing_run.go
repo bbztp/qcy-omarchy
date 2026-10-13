@@ -124,6 +124,12 @@ type hearingRunOpts struct {
 	// noSlot11Backup waives the slot 11 backup when there is no copy at all.
 	noSlot11Backup bool
 	outFile        string
+	// baseline "" / "factory" or "zero" (EXPERIMENT): used by --apply --yes and
+	// stored in the result file for `hearing apply`.
+	baseline string
+	// events, when set, is the --events JSON-lines stream (the progress text
+	// goes to env.out, which is stderr then).
+	events io.Writer
 }
 
 // ---------- parsing ----------
@@ -448,13 +454,15 @@ type hearingRunOut struct {
 	Right      []int      `json:"right"`
 	// Floor: bands still heard at the lowest level of the staircase (the gain
 	// is a bound, not a measurement).
-	Floor   map[string][]bool   `json:"floor"`
-	Result  resultOut           `json:"result"`
-	Applied bool                `json:"applied"`
-	Backup  string              `json:"backup,omitempty"`
-	Restore string              `json:"restore,omitempty"`
-	Writes  []*hearingCall      `json:"writes,omitempty"`
-	Final   *qcycore.EqSnapshot `json:"finalEq,omitempty"`
+	Floor   map[string][]bool `json:"floor"`
+	Result  resultOut         `json:"result"`
+	Applied bool              `json:"applied"`
+	// Baseline is "zero" for the experiment; absent means the factory baseline.
+	Baseline string              `json:"baseline,omitempty"`
+	Backup   string              `json:"backup,omitempty"`
+	Restore  string              `json:"restore,omitempty"`
+	Writes   []*hearingCall      `json:"writes,omitempty"`
+	Final    *qcycore.EqSnapshot `json:"finalEq,omitempty"`
 }
 
 type hearingBackup struct {
@@ -469,13 +477,31 @@ type hearingBackup struct {
 	Slot11Restore string `json:"slot11Restore,omitempty"`
 }
 
-// hearingRunLive runs the whole test. Cleanup runs on every return path.
-func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
+// hearingRunLive runs the whole test. Cleanup runs on every return path. With
+// o.events set it also writes the JSON-lines events (hearing_events.go); the
+// terminal event "stopped" is written only after the cleanup.
+func hearingRunLive(env hearingEnv, o hearingRunOpts) error {
+	if o.events == nil {
+		return hearingRunCore(env, o, func(string, map[string]interface{}) {})
+	}
+	emit := newEventEmitter(o.events)
+	err := hearingRunCore(env, o, emit)
+	return finishEvents(emit, err)
+}
+
+func hearingRunCore(env hearingEnv, o hearingRunOpts, emit func(string, map[string]interface{})) (err error) {
 	out := env.out
 	if env.sleep == nil {
 		env.sleep = time.Sleep
 	}
-	warnf := func(f string, a ...interface{}) { fmt.Fprintf(out, "warning: "+f+"\n", a...) }
+	eventsMode := o.events != nil
+	warnf := func(f string, a ...interface{}) {
+		fmt.Fprintf(out, "warning: "+f+"\n", a...)
+		emit("warning", map[string]interface{}{"message": fmt.Sprintf(f, a...)})
+	}
+	phase := func(name, msg string) {
+		emit("phase", map[string]interface{}{"name": name, "message": msg})
+	}
 
 	// One permanent watcher turns any signal into an abort that every phase
 	// observes (checkAbort, waitKey).
@@ -509,6 +535,42 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	}
 	defer restoreTTY()
 
+	// The key reader starts before any side effect so that, in events mode,
+	// "abort" (or EOF) on stdin is seen by every phase, the music pause and the
+	// silence wait included, and nothing is raised after it.
+	keyCh := make(chan byte, 16)
+	keyErr := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				keyErr <- fmt.Errorf("key reader panicked: %v", r)
+			}
+		}()
+		for {
+			k, e := keys.ReadKey()
+			if e != nil {
+				if eventsMode && errors.Is(e, io.EOF) {
+					ab.abort(errStopRequested) // the controller went away
+					return
+				}
+				keyErr <- e
+				return
+			}
+			if eventsMode {
+				if k == 'q' {
+					ab.abort(errStopRequested)
+					return
+				}
+				select { // never block: an "abort" behind a full queue must be read
+				case keyCh <- k:
+				default:
+				}
+				continue
+			}
+			keyCh <- k
+		}
+	}()
+
 	// 2. Side effects, each with its undo registered before it is attempted.
 	var undo []func()
 	defer func() {
@@ -536,12 +598,14 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 
 	// Music: pause what is Playing (resume only that), confirm it is paused,
 	// then refuse to go on while any stream still plays into the sink.
+	phase("pausing-music", "pausing the music")
 	if err := pauseMusic(env, mp, func(f func()) { undo = append(undo, f) }, warnf); err != nil {
 		return err
 	}
 	// The daemon is only needed from here on. `capabilities` is answered from
 	// the daemon's cache (no BLE sweep, unlike `status`, which takes ~8 s).
 	fmt.Fprintln(out, "checking the earbuds…")
+	phase("checking-earbuds", "checking the earbuds")
 	link, err := env.link()
 	if err != nil {
 		return fmt.Errorf("hearing run needs the qcyctld daemon: %w", err)
@@ -583,6 +647,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			}()
 		}()
 	}
+	phase("waiting-silence", "waiting for the sink to be silent")
 	if err := waitSinkSilent(env, tgt, checkAbort); err != nil {
 		return err
 	}
@@ -603,6 +668,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	}
 
 	// Sink volume and mute.
+	phase("starting", "setting the volume")
 	volUndo, markVol := tgt.restoreVolume(env, warnf)
 	undo = append(undo, volUndo)
 	markVol()
@@ -671,23 +737,6 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	undo = append(undo, endTone)
 
 	// 3. The staircase.
-	keyCh := make(chan byte, 16)
-	keyErr := make(chan error, 1)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				keyErr <- fmt.Errorf("key reader panicked: %v", r)
-			}
-		}()
-		for {
-			k, e := keys.ReadKey()
-			if e != nil {
-				keyErr <- e
-				return
-			}
-			keyCh <- k
-		}
-	}()
 	waitKey := func(dead <-chan struct{}) (byte, error) {
 		select { // a dead tone wins over a queued key
 		case <-dead:
@@ -730,7 +779,10 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		return fmt.Errorf("sink %s disappeared (the earbuds disconnected?): aborted", sink)
 	}
 
-	fmt.Fprintln(out, "keys: h/Enter = I hear it   n/space = I do not   r = repeat   q = abort")
+	if !eventsMode {
+		fmt.Fprintln(out, "keys: h/Enter = I hear it   n/space = I do not   r = repeat   q = abort")
+	}
+	phase("testing", "the test is running")
 	sess := hearing.NewSession(o.soundDB)
 	var answers []heardRec
 	fails := map[int]int{}
@@ -757,6 +809,11 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 				return fmt.Errorf("play tone: %w", e)
 			}
 			stopTone = stop
+			emit("tone", map[string]interface{}{
+				"index": len(answers) + 1, "ear": t.Ear.String(), "band": t.Band, "bands": hearing.Bands,
+				"freq": t.Freq, "step": t.Gain, "levelDb": t.LevelDB,
+				"progress": float64(int(t.Ear)*hearing.Bands+t.Band) / float64(2*hearing.Bands),
+			})
 			var key byte
 			died := false
 		keyLoop:
@@ -802,6 +859,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 					return fmt.Errorf("the tone player kept failing at %s ear %d Hz (%v); aborted, nothing was written", t.Ear, t.Freq, stopErr)
 				}
 				fmt.Fprintf(out, "tone interrupted, answer discarded, repeating (%d/%d) ... ", fails[id], maxToneRetries)
+				emit("warning", map[string]interface{}{"message": fmt.Sprintf("tone interrupted, answer discarded, repeating (%d/%d)", fails[id], maxToneRetries)})
 				continue
 			}
 			switch key {
@@ -810,6 +868,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			case 'h', 'H', '\r', '\n':
 				fmt.Fprintln(out, "heard")
 				answers = append(answers, heardRec{Tone: t, Heard: true})
+				emit("answer", map[string]interface{}{"ear": t.Ear.String(), "band": t.Band, "heard": true})
 				if e := sess.Answer(true); e != nil {
 					return e
 				}
@@ -818,6 +877,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			case 'n', 'N', ' ':
 				fmt.Fprintln(out, "not heard")
 				answers = append(answers, heardRec{Tone: t, Heard: false})
+				emit("answer", map[string]interface{}{"ear": t.Ear.String(), "band": t.Band, "heard": false})
 				if e := sess.Answer(false); e != nil {
 					return e
 				}
@@ -828,6 +888,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	}
 
 	// 4. Result.
+	phase("finishing", "computing the result")
 	l, r := sess.Result()
 	var gl, gr [hearing.Bands]float64
 	for i := range l {
@@ -842,6 +903,9 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 		Timestamp: env.now().Format(time.RFC3339), Sink: sink, SinkVolume: o.sinkVolume, DeviceMode: useMode,
 		SoundDB: o.soundDB[:], Answers: answers, Left: l[:], Right: r[:], Result: res,
 		Floor: map[string][]bool{"left": fl[:], "right": fr[:]},
+	}
+	if o.baseline == "zero" {
+		rec.Baseline = "zero"
 	}
 	save := func() error {
 		if o.outFile == "" {
@@ -862,7 +926,7 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 			return fmt.Errorf("refused to write: %d band(s) were still heard at the lowest level, so the result is only relative. Rerun with a lower --sink-volume (e.g. 60%%), or pass --accept-floor to write it anyway; nothing was written (restore point: %s)", nFloor, restoreCmd)
 		}
 		rec.Backup, rec.Restore = backupPath, restoreCmd
-		writes, final, e := hearingCommit(out, link, l, r, restoreCmd, modeOff, "factory", env.recorder(l, r, o.sinkVolume, rec.Timestamp, "factory"))
+		writes, final, e := hearingCommit(out, link, l, r, restoreCmd, modeOff, baselineOrFactory(o.baseline), env.recorder(l, r, o.sinkVolume, rec.Timestamp, baselineOrFactory(o.baseline)))
 		rec.Writes, rec.Final = writes, final
 		if e != nil {
 			_ = save()
@@ -874,7 +938,24 @@ func hearingRunLive(env hearingEnv, o hearingRunOpts) (err error) {
 	default:
 		fmt.Fprintln(out, "nothing was written to the earbuds (use --apply --yes to write).")
 	}
-	return save()
+	if e := save(); e != nil {
+		return e
+	}
+	if eventsMode {
+		emit("result", map[string]interface{}{
+			"left": l[:], "right": r[:],
+			"floor":      map[string][]bool{"left": fl[:], "right": fr[:]},
+			"masterGain": res.MasterGain, "outFile": o.outFile,
+		})
+	}
+	return nil
+}
+
+func baselineOrFactory(b string) string {
+	if b == "zero" {
+		return "zero"
+	}
+	return "factory"
 }
 
 // readbackBands decodes the bands of a 0x22 readback.

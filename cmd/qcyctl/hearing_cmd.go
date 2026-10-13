@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bbztp/qcy-omarchy/internal/hearing"
 )
@@ -22,6 +23,11 @@ const hearingUsage = `usage: qcyctl hearing <subcommand>
   hearing plan [--sound-db a,b,..8] [--json]                         (tones of the first step of every band)
   hearing result --left g1,..,g8 --right g1,..,g8 [--json]            (master gain, curves and the write frames as hex; nothing is sent)
   hearing run --dry-run --answers "h,n,h,..." [--sound-db ..] [--json] (simulates the staircase from answers: h = heard, n = not heard; no audio)
+  hearing run --events [--sink NAME] [--sink-volume 90%] [--out file.json] [--baseline factory|zero]
+                                                                      (for the plugin: no terminal. One JSON object per line on stdout (phase, tone, answer,
+                                                                       result, warning, error, stopped), commands on stdin, one per line: heard, not-heard,
+                                                                       repeat, abort (EOF = abort). Same guards as the terminal run; never writes to the
+                                                                       earbuds: the result goes to --out, applied later with "hearing apply")
   hearing run [--sink NAME] [--sink-volume 100%] [--sound-db ..] [--device-mode] [--apply --yes [--accept-floor] [--no-slot11-backup]] [--out file.json]
                                                                       (the real test: pauses the music (playerctl or busctl; aborts if anything still plays
                                                                        into the sink), plays the tones on the earbuds' Bluetooth sink; keys h/Enter = heard,
@@ -230,8 +236,16 @@ func hearingRunCmd(args []string, out io.Writer) error {
 	devMode := fs.Bool("device-mode", false, "")
 	acceptFloor := fs.Bool("accept-floor", false, "")
 	noS11 := fs.Bool("no-slot11-backup", false, "")
+	events := fs.Bool("events", false, "")
+	baseline := fs.String("baseline", "", "")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		return errors.New("usage: qcyctl hearing run [--dry-run --answers \"h,n,h,...\"] [--sound-db ..] [--json] [--sink NAME] [--sink-volume 100%] [--device-mode] [--apply --yes [--accept-floor] [--no-slot11-backup]] [--out file.json]")
+		return errors.New("usage: qcyctl hearing run [--dry-run --answers \"h,n,h,...\"] [--sound-db ..] [--json] [--sink NAME] [--sink-volume 100%] [--device-mode] [--apply --yes [--accept-floor] [--no-slot11-backup]] [--out file.json] [--baseline factory|zero] [--events]")
+	}
+	if *baseline != "" && *baseline != "factory" && *baseline != "zero" {
+		return fmt.Errorf("--baseline must be factory (default) or zero (experiment), got %q", *baseline)
+	}
+	if *events && (*dry || *apply || *yes || *acceptFloor || *noS11 || *answers != "" || *jsonOut) {
+		return errors.New("hearing run --events never writes to the earbuds and has no dry run: it takes only --sink, --sink-volume, --sound-db, --device-mode, --out and --baseline; apply the saved result with `hearing apply <out.json> --yes`")
 	}
 	db, err := soundDBFlag(*sdb)
 	if err != nil {
@@ -245,10 +259,25 @@ func hearingRunCmd(args []string, out io.Writer) error {
 		if err != nil || pct < 1 || pct > 100 {
 			return fmt.Errorf("--sink-volume: %q must be 1%%..100%%", *sinkVol)
 		}
+		o := hearingRunOpts{soundDB: db, sinkVolume: pct, sinkName: *sinkName,
+			apply: *apply, yes: *yes, deviceMode: *devMode, acceptFloor: *acceptFloor, noSlot11Backup: *noS11,
+			outFile: *outFile, baseline: *baseline}
+		if *events {
+			if o.outFile == "" {
+				p, err := defaultHearingOut(time.Now())
+				if err != nil {
+					return fmt.Errorf("--out: %w", err)
+				}
+				o.outFile = p
+			}
+			o.events = out
+			env, done := liveHearingEventsEnv()
+			defer done()
+			return hearingRunLive(env, o)
+		}
 		env, done := liveHearingEnv(out)
 		defer done()
-		return hearingRunLive(env, hearingRunOpts{soundDB: db, sinkVolume: pct, sinkName: *sinkName,
-			apply: *apply, yes: *yes, deviceMode: *devMode, acceptFloor: *acceptFloor, noSlot11Backup: *noS11, outFile: *outFile})
+		return hearingRunLive(env, o)
 	}
 	var seq []bool
 	for _, a := range strings.Split(*answers, ",") {
