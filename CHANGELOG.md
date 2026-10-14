@@ -6,6 +6,12 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-14
+
+### Fixed
+
+- After `omarchy plugin update` the plugin prepares the new binaries without `omarchy restart shell`: the loaded `Qcy` singleton watches `manifest.json` (read-only) and repeats the setup when its version changes or the setup had failed.
+
 ## [0.1.4] - 2026-10-14
 
 ### Added
@@ -73,6 +79,7 @@ First release.
 - Automatic setup: the plugin downloads the matching `qcyctl` and `qcyctld` release, verifies its SHA-256, and installs it inside the plugin's own `.bin` directory, so removing the plugin removes the programs (falls back to building from source with Go); the daemon starts on demand, exits by itself when its executable is removed, and can optionally run as a systemd user service.
 - Features follow each model's own panel: nothing is blocked because a model was not tested on hardware (the panel only says so). Prompt volume steps, wear sensitivity items, noise modes and equalizer geometry come from the model; features whose encoding is not understood are listed under "Not available on this model".
 
+[0.1.5]: https://github.com/bbztp/qcy-omarchy/releases/tag/v0.1.5
 [0.1.4]: https://github.com/bbztp/qcy-omarchy/releases/tag/v0.1.4
 [0.1.3]: https://github.com/bbztp/qcy-omarchy/releases/tag/v0.1.3
 [0.1.2]: https://github.com/bbztp/qcy-omarchy/releases/tag/v0.1.2

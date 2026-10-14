@@ -84,7 +84,7 @@ from source instead. That needs Go (`sudo pacman -S go`) and the repository's
 `cmd/` tree. The same step by hand: `QCY_BUILD=1 scripts/bootstrap.sh`. If
 preparation fails, the panel says why and offers "Try again".
 
-When the plugin is updated, the binaries are replaced on the next open.
+When the plugin is updated, the shell notices the new `manifest.json` version and prepares the matching binaries on its own (no shell restart).
 `qcyctl version` prints the version, which matches `manifest.json`.
 
 ## Usage

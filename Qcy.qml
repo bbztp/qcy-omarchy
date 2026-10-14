@@ -239,6 +239,37 @@ Singleton {
     id: markProc
   }
 
+  // `omarchy plugin update` replaces the files and rescans, but this singleton
+  // survives the reload, so its setup would never run again and the QML would
+  // keep calling the old binary. manifest.json is watched read-only (nothing is
+  // written under the plugin directory); when its version differs from the one
+  // the setup ran with, or the setup is in "error", the setup starts over. The
+  // debounce covers git writing several files; a setup already in flight is not
+  // duplicated, the check is retried until it ends.
+  FileView {
+    id: manifestWatch
+    path: root.pluginDir + "/manifest.json"
+    watchChanges: true
+    onFileChanged: manifestDebounce.restart()
+    onLoaded: {
+      var v = ""
+      try { v = String(JSON.parse(text()).version || "") } catch (e) {}
+      if (v === "" || Quickshell.env("QCYCTL")) return
+      if (v === root.pluginVersion && root.setupState !== "error") return
+      if (root._removing || bootstrapProc.running || manifestProc.running || probeProc.running) {
+        manifestDebounce.restart()
+        return
+      }
+      root._setupStart()
+    }
+  }
+
+  Timer {
+    id: manifestDebounce
+    interval: 2000
+    onTriggered: manifestWatch.reload()
+  }
+
   Process {
     id: bootstrapProc
     stdout: SplitParser {
