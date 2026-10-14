@@ -1,0 +1,36 @@
+name: Model report
+description: Report how a QCY model behaves with this plugin
+title: "[model] "
+labels: ["model-report"]
+body:
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      placeholder: QCY N70
+    validations:
+      required: true
+  - type: input
+    id: vendor-id
+    attributes:
+      label: vendorId
+      description: Shown in the status output below, field `model`.
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of `qcyctl status --json`
+      description: Remove the MAC address and any personal identifiers before pasting.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: results
+    attributes:
+      label: What worked and what did not
+      description: Battery, noise control, EQ, keys, toggles, and anything unexpected.
+    validations:
+      required: true
