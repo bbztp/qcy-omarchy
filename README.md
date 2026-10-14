@@ -1,135 +1,102 @@
+<div align="center">
+
 # QCY Earbuds for Omarchy
 
+Battery, noise control, equalizer and settings for QCY earbuds, from the Omarchy shell bar.
+
 [![CI](https://github.com/bbztp/qcy-omarchy/actions/workflows/ci.yml/badge.svg)](https://github.com/bbztp/qcy-omarchy/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/bbztp/qcy-omarchy)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/bbztp/qcy-omarchy)](https://github.com/bbztp/qcy-omarchy/releases)
+[![Go version](https://img.shields.io/github/go-mod/go-version/bbztp/qcy-omarchy)](go.mod)
+![Platform: Linux](https://img.shields.io/badge/platform-Linux-informational)
+![Omarchy plugin](https://img.shields.io/badge/Omarchy-plugin-blueviolet)
 
-Status: 0.1.0, verified on the MeloBuds N70 only. See the [CHANGELOG](CHANGELOG.md);
-maintainers: [docs/PUBLISHING.md](docs/PUBLISHING.md).
+<img src="preview.png" alt="The QCY panel in the Omarchy bar: Status, Sound and Settings tabs side by side" width="100%">
 
-A bar widget for the [Omarchy](https://omarchy.org) shell that controls QCY
-earbuds (developed against the **MeloBuds N70 / HT18**, but written to the
-vendor's low-energy GATT protocol) and shows their state:
+</div>
 
-- **Battery** in the panel: the earbuds' pictures (left, right, case) with a
-  level bar under each (red below 20%, amber to 49%, green from 50%) and
-  charging flags. The bar button shows the QCY wordmark.
-- **Active noise control** — Off, Adaptive, Indoor, Commuting, Noisy,
-  Anti-wind, Transparency.
-- **Toggles** — LDAC (hi-res audio), Multipoint, Game mode (low latency),
-  Sleep mode, Wind noise reduction.
-- **Readout** — firmware, EQ preset + curve, balance, auto power-off, prompt
-  volume.
-- **Settings (MeloBuds N70)** — prompt volume (4/6/8/10), wear-sensor
-  sensitivity (medium/normal/high), ear-tip fit test with a result per ear.
+A bar widget for the [Omarchy](https://omarchy.org) shell. It talks to the earbuds
+directly over Bluetooth Low Energy, with no phone and no vendor app. It is
+developed against the **MeloBuds N70 / HT18** and written to the vendor's
+low-energy GATT protocol. Only the N70 is verified on hardware.
 
-It talks to the earbuds directly over Bluetooth Low Energy — no phone, no
-vendor app. A small user daemon, `qcyctld`, holds the BLE connection so
-the widget's calls are fast; `qcyctl` is the matching Go CLI.
+## What it does
 
-The earbuds accept **one BLE client at a time**, so the daemon does not hold
-them permanently: it connects on the first request, keeps the link for an idle
-window (6 s by default, `QCYCTL_IDLE_SECONDS` or `qcyctld -idle N`, `0` = never
-release) and then disconnects, which frees the earbuds for the phone app. If
-the phone app (or anything else) holds them, requests fail with a `busy` error
-("earbuds are in use by another app"), the panel shows the last known state
-marked stale, and it recovers on the next refresh once the other app lets go.
+| Area | Features |
+| --- | --- |
+| Battery | Left, right and case as pictures with a level bar (red below 20%, amber to 49%, green from 50%) and charging flags. |
+| Noise control | Off, Adaptive, Indoor, Commuting, Noisy, Anti-wind, Transparency. |
+| Toggles | LDAC (hi-res audio), Multipoint, Game mode (low latency), Sleep mode, Wind noise reduction. |
+| Equalizer | Effect library and a 10-band editor (31 Hz to 16 kHz, ±12 dB), with a personal library of saved curves. |
+| Settings (N70) | Prompt volume (4/6/8/10), wear-sensor sensitivity (medium/normal/high), ear-tip fit test with a result per ear, touch controls, balance, auto power-off. |
+| Readout | Firmware, EQ preset and curve, balance, auto power-off, prompt volume. |
+
+### Highlights
+
+- **Fast.** A small user daemon, `qcyctld`, holds the BLE connection so the widget's calls are quick.
+- **Polite.** The earbuds accept one BLE client at a time, so the daemon releases them after an idle window (6 s by default) and your phone can reconnect.
+- **Scriptable.** `qcyctl` is the matching Go CLI; see [docs/CLI.md](docs/CLI.md).
+- **Careful with EQ.** The active slot is backed up before every EQ write.
+- **Translatable.** English by default, ships with Português (Brasil); add a language with one JSON file.
 
 ## Requirements
 
 - Omarchy (Quickshell-based shell).
-- Go (to build `qcyctl` and `qcyctld`).
 - systemd (user session) to run the `qcyctld` daemon.
 - The earbuds paired with the machine.
+- [Go](https://go.dev), only if you build from source.
 
-## Install
+## Installation
 
 ```sh
 omarchy plugin add https://github.com/bbztp/qcy-omarchy --enable
 ```
 
-That is all. On first open the plugin prepares everything itself: it downloads
-the `qcyctl`/`qcyctld` release matching its version, checks its SHA-256, and
-installs both to `~/.local/share/qcy-omarchy/bin`. The panel shows "Preparing
-QCY…" meanwhile. Nothing runs as root and nothing is executed before the
-checksum matches.
-
-If no release can be downloaded (offline, unpublished version), the plugin
-builds from source instead, which needs [Go](https://go.dev) installed
-(`sudo pacman -S go`) and the repository's `cmd/` tree. The same step is
-available by hand: `QCY_BUILD=1 scripts/bootstrap.sh`. If preparation fails the
-panel says why and offers "Try again".
-
-- **Version**: `qcyctl version` prints the version, which matches the plugin's
-  `manifest.json`; when the plugin is updated the binaries are replaced on the
-  next open.
-- **Start with the system**: Settings > Daemon turns the `qcyctld` user service
-  on or off.
-- **Remove**: Settings > Daemon > "Remove QCY data…" stops the service and deletes
-  `~/.local/share/qcy-omarchy`, `~/.config/qcy-omarchy` and
-  `~/.cache/qcy-omarchy`; then `omarchy plugin remove io.github.bbztp.qcy`.
-
-## Install for development
-
-```sh
-git clone https://github.com/bbztp/qcy-omarchy
-cd qcy-omarchy
-./scripts/install.sh
-```
-
-This builds `qcyctl` and `qcyctld`, installs them to `~/.local/bin`, installs
-and starts the `qcyctld.service` systemd user unit
-(`~/.config/systemd/user/qcyctld.service`), copies the plugin to
-`~/.config/omarchy/plugins/io.github.bbztp.qcy`, and rescans plugins. Pass
-`--no-service` to skip the unit, `--no-build` to reuse `make build` output.
-`make install` does the same. Set `QCYCTL=/path/to/qcyctl` to make the plugin
-use a specific binary without any check.
-
-Then add the widget to your bar — put this in `~/.config/omarchy/shell.json`
-under `bar.layout` (e.g. inside the `right` array), which hot-reloads on save:
+The shell may need `omarchy restart shell` once to pick the plugin up. Then add
+the widget to your bar (`bar.layout` in `~/.config/omarchy/shell.json`, which
+hot-reloads on save):
 
 ```json
 { "id": "io.github.bbztp.qcy" }
 ```
 
-or move it into place with `omarchy bar move io.github.bbztp.qcy --section right`.
+or run `omarchy bar move io.github.bbztp.qcy --section right`.
 
-The bootstrap test (local HTTP server, fake release): `scripts/bootstrap_test.sh`.
+**First open.** The plugin prepares everything itself, and the panel shows
+"Preparing QCY…" meanwhile. It downloads the `qcyctl`/`qcyctld` release matching
+its version, checks its SHA-256 and installs both to
+`~/.local/share/qcy-omarchy/bin`. Nothing runs as root and nothing is executed
+before the checksum matches.
+
+If no release can be downloaded (offline, unpublished version), the plugin builds
+from source instead. That needs Go (`sudo pacman -S go`) and the repository's
+`cmd/` tree. The same step by hand: `QCY_BUILD=1 scripts/bootstrap.sh`. If
+preparation fails, the panel says why and offers "Try again".
+
+When the plugin is updated, the binaries are replaced on the next open.
+`qcyctl version` prints the version, which matches `manifest.json`.
 
 ## Usage
 
-- **Left click** the bar button — open the panel.
-- **Right click** — refresh.
-- In the panel — **Esc** closes, **r** refreshes, **1** / **2** / **3** switch
-  tabs.
+| Input | Action |
+| --- | --- |
+| Left click on the bar button | Open the panel. |
+| Right click on the bar button | Refresh. |
+| `Esc` in the panel | Close. |
+| `r` in the panel | Refresh. |
+| `1` / `2` / `3` in the panel | Switch tab. |
 
-The full state is read on connect and when the panel opens; the panel shows
-`Reading…` while it does.
-
-The panel has three tabs (named in the active language; the pt-BR names are
-Status / Som / Ajustes):
+The full state is read on connect and when the panel opens (the panel shows
+`Reading…` meanwhile). The bar button shows the QCY wordmark.
 
 | Tab | Content |
 | --- | --- |
-| **Status** | Earbuds picture and connection state, battery (left, right, case) as pictures with a level bar, noise mode. |
-| **Sound** | The effect library (click a card to apply it) and the 10-bar equalizer (31 Hz to 16 kHz, ±12 dB). The bars show the curve of the chosen effect; drag a bar and release to apply (the sound changes right away), double-click to zero it. **Start from scratch** drops the base effect so the bars are the whole curve; **Save as…** stores what you see in the curve library. Bars are written on top of the effect as a curve in slot 255. |
-| **Settings** | Noise scenes, toggles, balance, auto power-off, prompt volume, sensor sensitivity, fit test, touch controls, device info, language. |
+| **Status** | Earbuds picture and connection state, battery (left, right, case), noise mode. |
+| **Sound** | The effect library (click a card to apply it) and the 10-bar equalizer. Drag a bar and release to apply, double-click to zero it. **Start from scratch** drops the base effect so the bars are the whole curve; **Save as…** stores what you see in the curve library. Bars are written on top of the effect as a curve in slot 255. |
+| **Settings** | Noise scenes, toggles, balance, auto power-off, prompt volume, sensor sensitivity, fit test, touch controls, device info, language, daemon. |
 
-On a model that is not a verified MeloBuds N70 the Sound tab only says that
-the equalizer is unavailable, and the Settings tab offers only what the
-product declares (see [Supported models](#supported-models)).
-
-EQ slot -> effect map (MeloBuds N70, read from the device; the phone app's own
-curves are always slot 255):
-
-| Slot | Effect | Status |
-|---|---|---|
-| 1 / 2 / 3 / 4 / 5 / 6 | Predefinido / Popular / Bass pesados / Rock / Suave / Clássico | medido |
-| 10 | Som espacial (same payload as slot 1) | medido |
-| 11 | Experiência auditiva (your hearing-test profile) | medido |
-| 14 | Agudos suaves | medido |
-| 255 | Personalizado (any custom curve made in the app) | medido |
-| 7, 8, 9, 12, 13 | ? | não observado |
-
-Slot 0 is the old test curve of this tool. Details in `docs/PROTOCOL.md`.
+On a model that is not a verified N70, the Sound tab only says that the
+equalizer is unavailable, and Settings offers only what the product declares.
 
 ## Supported models
 
@@ -138,18 +105,17 @@ advertisement, not by the Bluetooth name.
 
 | vendorId | Model | Profile |
 | --- | --- | --- |
-| 23872, 23877 | MeloBuds N70 | **verified**: everything above, including EQ and touch keys |
-| any other id in the embedded QCY product list | `qcy-<vendorId>` | conservative: only the common controls the product declares (noise control, balance, find, auto power-off, wear detection, game/sleep/LDAC/multipoint/wind toggles); **EQ, touch keys, fit test, prompt volume and sensor sensitivity are blocked**; the panel says "Unverified model" |
+| 23872, 23877 | MeloBuds N70 | **Verified**: everything above, including EQ and touch keys. |
+| any other id in the embedded QCY product list | `qcy-<vendorId>` | Conservative: only the common controls the product declares (noise control, balance, find, auto power-off, wear detection, game/sleep/LDAC/multipoint/wind toggles). EQ, touch keys, fit test, prompt volume and sensor sensitivity are blocked; the panel says "Unverified model". |
 | unknown | name, then firmware string, then `generic` | |
 
-Only the N70 was tried on real hardware. Where the product data comes from
-and how the profile is derived: `docs/WEB_API.md`.
+Where the product data comes from and how the profile is derived:
+[docs/WEB_API.md](docs/WEB_API.md).
 
 ## Languages
 
-The panel is in English by default and ships with Português (Brasil). It follows
-your system language (`LC_ALL`, `LC_MESSAGES`, `LANG`); to override it, pick a
-language in the panel under Settings → Language (Automatic restores the
+The panel follows your system language (`LC_ALL`, `LC_MESSAGES`, `LANG`). To
+override it, pick a language under Settings > Language (Automatic restores the
 system's), or run `qcyctl i18n set <code|auto>`.
 
 To add a language, no code changes are needed:
@@ -161,162 +127,98 @@ qcyctl i18n template > ~/.config/qcy-omarchy/i18n/es.json
 
 Edit `es.json`: set `_name` to the language's own name (shown in the picker),
 `_decimal` to its decimal separator, and translate the values (the keys are the
-English texts; keep `{n}`, `{name}`... markers as they are). Untranslated or
-empty entries fall back to English. Then choose the language in the panel.
-`qcyctl i18n list` shows what was found; an invalid file is skipped with a
-warning on stderr. A file named `pt-BR.json` overrides entries of the shipped
-one; `pt.json` is the fallback for any `pt-*`. User files live outside the
-plugin directory, so reinstalling the plugin keeps them.
+English texts; keep `{n}`, `{name}`... markers as they are). Untranslated or empty
+entries fall back to English. Then choose the language in the panel.
+`qcyctl i18n list` shows what was found; an invalid file is skipped with a warning
+on stderr. A file named `pt-BR.json` overrides entries of the shipped one;
+`pt.json` is the fallback for any `pt-*`. User files live outside the plugin
+directory, so reinstalling the plugin keeps them.
 
-## Device images
+## Configuration
 
-The panel can show your earbuds (left, right, case, icon) in your colour. The
-images are not part of this repository: `qcyctl model image` downloads them on
-demand, the first time they are needed, from QCY's image server
-(`img.qcymall.com`, the same files the QCY app uses; the URLs come from the
-product list embedded in the backend). Only that host is ever contacted, files
-are limited to 2 MiB and checked to be WebP/PNG before they are saved.
-
-They are kept in `~/.cache/qcy-omarchy/images/<vendorId>/<colour>/`
-(`$XDG_CACHE_HOME` is honoured) and are never fetched twice; `--refresh`
-downloads them again. The colour comes from `--color`, or from the file
-`~/.config/qcy-omarchy/color` (a colour name or index, e.g. `Purple` or `2`),
-otherwise it is the product's default colour; the colour the earbuds advertise
-is not used because the scanner does not report it reliably.
-
-Print the paths without the panel: `qcyctl model image [--vendor N]
-[--color <name|index>] [--refresh] [--no-network] [--json]`.
-
-To stop all downloads run `qcyctl model images off` (`on` re-enables,
-`status` shows); the panel then uses only what is already cached, or its drawn
-icons. Delete the cache directory to remove the files.
-
-## Settings
-
-Configurable per widget in `shell.json` (or via the shell's settings UI):
+Per widget in `shell.json` (or in the shell's settings UI):
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `scanSeconds` | `10` | How long to listen for the earbuds' advertisement (5–60 in the settings UI; values below 5 are raised to 5). |
+| `scanSeconds` | `10` | How long to listen for the earbuds' advertisement (5-60 in the settings UI; values below 5 are raised to 5). |
 | `deviceMatch` | `"qcy"` | Case-insensitive substring to recognise your earbuds. |
 
-Set `QCYCTL` in the environment to point the widget at a `qcyctl` binary that
-is not in `~/.local/bin`.
-
-## A note on safety
-
-The widget writes the EQ **master gain**. Before any EQ write, the raw EQ
-payload of the currently **active** slot, as read from the earbuds, is saved to
-`~/.local/share/qcy-omarchy/backups/`. This is not a backup of whatever the
-slot you overwrite held before: a slot's contents cannot be read while it is
-inactive. In particular, `library apply` / `library compose` into slot 255 (the
-app's "Personalizado") back up only the active payload: if slot 255 is not the
-active one, its previous content is replaced with no copy (the phone app does
-the same when you pick a curve). `qcyctl eq set` overwrites the target EQ slot and refuses to run
-without `--yes`; it changes only band positions 0-9 and leaves positions 10+
-(custom curves may use up to 20 bands) as read. The master gain range is
--12..+12 dB. When a curve uses positions 10+, the write sends the full
-143-byte payload (`fullLength: true` in `--json` output, plus a warning): the
-73-byte write is proven on the earbuds; the 143-byte one is not proven for the
-factory slots and needs `--full-length` there, but slot 255 (the app's
-"Personalizado", where the phone app itself writes up to 143 bytes) takes it
-without the flag.
+Set `QCYCTL` in the environment to point the widget at a `qcyctl` binary that is
+not in `~/.local/bin`. Settings > Daemon turns the `qcyctld` user service on or
+off at login. Other environment variables: [docs/CLI.md](docs/CLI.md#environment-variables).
 
 ## Known limitations
 
 - **Case charging.** The MeloBuds N70 (firmware 3.0.13) reports the case's battery
   level but never sets the "charging" flag for it, so the case does not show a
-  charging state. The widget already draws one (charge tone, pulse, bolt) and
-  uses it whenever a model or firmware reports the flag.
+  charging state. The widget already draws one (charge tone, pulse, bolt) and uses
+  it whenever a model or firmware reports the flag.
+- **Unverified models** get a conservative profile (see
+  [Supported models](#supported-models)).
 
-## `qcyctl`
+## Troubleshooting
 
-The backend is also usable on its own:
+| Symptom | Cause and fix |
+| --- | --- |
+| Error "earbuds are in use by another app" (`busy`) | The phone app or another client holds the earbuds. Close it or switch it off; the panel recovers on the next refresh. |
+| Panel shows stale data | The last known state is shown while the earbuds are busy. Right-click the button or press `r` to refresh. |
+| Preparation failed | The panel says why; use "Try again". Offline or unpublished version: install Go and see [Installation](#installation). |
+| Need logs | Daemon output is in `${XDG_STATE_HOME:-~/.local/state}/qcy-omarchy/qcyctld.log`. Run `qcyctl daemon status` for its state. |
+| Need a GATT trace | `QCY_DEBUG=1` for the CLI; `QCYCTL_DEBUG=1` for the daemon. See [docs/CLI.md](docs/CLI.md#environment-variables). |
+
+## Uninstall
+
+- Settings > Daemon > "Remove QCY data…" stops the service and deletes
+  `~/.local/share/qcy-omarchy`, `~/.config/qcy-omarchy` and `~/.cache/qcy-omarchy`.
+- Then run `omarchy plugin remove io.github.bbztp.qcy`.
+- Remove the `{ "id": "io.github.bbztp.qcy" }` entry from `shell.json`.
+
+For a development install, `make uninstall` disables and removes the
+`qcyctld.service` user unit, `~/.local/bin/qcyctl` and `qcyctld`, and the plugin
+directory, then rescans plugins. Backups in `~/.local/share/qcy-omarchy/backups/`
+are left in place.
+
+## Development
 
 ```sh
-qcyctl status --json          # full machine-readable snapshot
-qcyctl status                 # human-readable snapshot
-qcyctl anc noisy              # set ANC mode
-qcyctl game on                # toggles: game|sleep|multipoint|wind (wind and wear "off" write 0x00 on verified models, as the app does)
-qcyctl ldac on --yes          # restarts the earbuds; verified models only; not yet verified on hardware
-qcyctl find                   # play a beeping tone on the earbuds' audio sink to find them: 100% sink volume, tone at -3 dBFS
-                              # (--start-volume/--max-volume/--tone-level), stops after --timeout (default 60 s); asks you to take the
-                              # earbuds out of your ears first (--yes skips the question; --events = JSON lines for the plugin)
-qcyctl prompt-vol 8           # prompt volume: 4|6|8|10|low|medium|high|max (N70)
-qcyctl wear-sensitivity high  # medium|normal|high|1|2|3 (N70; needs wear detection on)
-qcyctl fit start              # ear-tip fit test (N70): plays a sound, waits and prints left/right (stop|begin also exist)
-qcyctl i18n list|bundle|template|set   # languages, offline (see Languages)
-qcyctl model image            # device pictures, downloaded on demand (see Device images)
-qcyctl library seed           # the 8 factory effects (embedded) + Experiência auditiva, offline, idempotent
-qcyctl library list [--all]   # saved EQ curves (offline): factory in the app's order, Experiência auditiva, then yours; --all also shows older seeds
-qcyctl library apply <id> --yes [--slot 255|0]   # write a saved curve to slot 255 (default: the app's "Personalizado" buffer, the only safe target while a factory effect 6/11 is active) or 0
-qcyctl library compose --base predefinido --gains 0,0,3,0,0,-2,0,0,0,4.5 --yes   # your bars on top of a factory effect, in the app's layout, into slot 255
-qcyctl library compose --base none --gains 1,0,0,0,0,0,0,0,0,0 --dry-run --json  # only print the payload and the resulting bands
+git clone https://github.com/bbztp/qcy-omarchy
+cd qcy-omarchy
+make build            # qcyctl and qcyctld
+go test ./...         # unit tests
+./scripts/install.sh  # build + install + start the user service
 ```
 
-The curve library (`qcyctl library`) keeps named EQ curves under
-`~/.local/share/qcy-omarchy/library`; `list`, `show`, `save`, `delete`,
-`export`, `import`, `seed` and `compose --dry-run` need no Bluetooth. The
-library applies and composes any curve to slot 255: every seeded curve is
-applyable (band types 0, 2, 3 and 255 are accepted, positions 0-19). `compose`
-puts the non-zero bars of `--gains` (ISO 31..16000 Hz, Q 100, type 255) first and
-the base effect's bands after them, up to 20 bands, with the base's master
-gain (or `--master`, default -12). See `docs/PROTOCOL.md`.
-
-Run `qcyctl` with no arguments for the full command list. Set `QCY_DEBUG=1` to
-trace the GATT traffic of the CLI on stderr; for the daemon set `QCYCTL_DEBUG=1`
-(e.g. `systemctl --user edit qcyctld.service`, then `journalctl --user -u qcyctld`).
-The same drop-in can set `Environment=QCYCTL_IDLE_SECONDS=<n>` to change the idle
-window.
-
-### Daemon lifecycle
-
-Commands that talk to the earbuds start `qcyctld` on demand when its socket does
-not answer: through `qcyctld.service` if that user unit is enabled, otherwise by
-launching `qcyctld` detached (looked up next to `qcyctl`, then in `PATH`, then
-`~/.local/share/qcy-omarchy/bin` and `~/.local/bin`). Its output goes to
-`${XDG_STATE_HOME:-~/.local/state}/qcy-omarchy/qcyctld.log` (truncated above
-1 MiB); concurrent starters are serialised with a lock. Offline commands (`i18n`,
-`library list/show/...`, `model`, `hearing plan|result`, `version`) never start
-it, and `QCYCTL_NO_AUTOSTART=1` disables auto-start altogether.
-
-```
-qcyctl daemon start              # idempotent
-qcyctl daemon stop               # SIGTERM to the socket owner, or systemctl stop
-qcyctl daemon status [--json]    # running, pid, managedBySystemd, serviceInstalled,
-                                 # serviceEnabled, binary, log
-qcyctl daemon install-service    # writes ~/.config/systemd/user/qcyctld.service with
-                                 # the resolved qcyctld path, then enable --now
-qcyctl daemon uninstall-service  # disable --now, removes the unit
-qcyctl version [--json]          # also: qcyctld --version
-```
-
-`packaging/qcyctld.service` is a static example; `install-service` writes the
-same unit with the real `ExecStart=` path.
-
-## Layout
+`scripts/install.sh` installs the binaries to `~/.local/bin`, installs and starts
+the `qcyctld.service` user unit, copies the plugin to
+`~/.config/omarchy/plugins/io.github.bbztp.qcy` and rescans plugins. Pass
+`--no-service` to skip the unit, `--no-build` to reuse `make build` output.
+`make install` does the same. The bootstrap test (local HTTP server, fake
+release) is `scripts/bootstrap_test.sh`.
 
 ```
 cmd/qcyctl/                 Go source for qcyctl
 cmd/qcyctld/                Go source for the qcyctld daemon
-internal/                   Go packages shared by both (qcycore, hearing)
-docs/                       PROTOCOL.md, WEB_API.md
+internal/                   Go packages shared by both (qcycore, hearing, protocol)
+docs/                       CLI.md, PROTOCOL.md, WEB_API.md, PUBLISHING.md
 packaging/qcyctld.service   systemd user unit
 manifest.json, *.qml, qmldir, assets/  the Omarchy bar widget (QML plugin, at the repo root)
-scripts/install.sh          build + install
+scripts/                    install, bootstrap, release packaging
 ```
 
-## Uninstall
+## Documentation
 
-```sh
-make uninstall
-```
+- [docs/CLI.md](docs/CLI.md): `qcyctl` commands, daemon lifecycle, environment variables, EQ slots, safety notes.
+- [docs/PROTOCOL.md](docs/PROTOCOL.md): the BLE protocol as observed.
+- [docs/WEB_API.md](docs/WEB_API.md): product data and model profiles.
+- [docs/PUBLISHING.md](docs/PUBLISHING.md): release process, for maintainers.
+- [CHANGELOG.md](CHANGELOG.md): version history.
 
-This disables and removes the `qcyctld.service` user unit, removes
-`~/.local/bin/qcyctl` and `qcyctld`, removes the plugin directory, and rescans
-plugins. Remove the `{ "id": "io.github.bbztp.qcy" }` entry from
-`shell.json` yourself. Backups in `~/.local/share/qcy-omarchy/backups/` are
-left in place.
+## Contributing
+
+Issues and pull requests are welcome. Reports from other QCY models are the most
+useful: say the model, the `vendorId` from `qcyctl status --json`, and what worked.
+Translations are a single JSON file (see [Languages](#languages)). Run
+`go test ./...` before sending a change.
 
 ## Credits
 
@@ -326,4 +228,9 @@ Protocol work builds on the public work in
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
+
+## Disclaimer
+
+This is an unofficial project. It is not affiliated with or endorsed by QCY. QCY,
+MeloBuds and other names are trademarks of their owners.
