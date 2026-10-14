@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -206,6 +208,23 @@ func TestBuildFrameMatchesLegacyEnvelope(t *testing.T) {
 		want := append([]byte{0xff, byte(len(c.params) + 2), c.op, byte(len(c.params))}, c.params...)
 		if got := buildFrame(c.op, c.params); !bytes.Equal(got, want) {
 			t.Errorf("0x%02x: got %x want %x", c.op, got, want)
+		}
+	}
+}
+
+func TestSaveCachedAddrPermissions(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(cacheFilePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	saveCachedAddr(bluetooth.Address{}, "x", 0, false)
+	for p, want := range map[string]os.FileMode{filepath.Dir(cacheFilePath()): 0o700, cacheFilePath(): 0o600} {
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != want {
+			t.Fatalf("%s mode %v, want %v", p, fi.Mode().Perm(), want)
 		}
 	}
 }

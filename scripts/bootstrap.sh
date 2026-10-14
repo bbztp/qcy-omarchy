@@ -2,20 +2,25 @@
 # Prepare qcyctl + qcyctld for the plugin: download the release matching the
 # plugin version (checksum verified), or build from source with Go.
 #
-# Binaries go to <plugin dir>/.bin, so `omarchy plugin remove` (which just
-# deletes the plugin directory) removes them too. The shell watches the whole
-# plugins directory recursively and reloads the plugin on every write inside
-# it (only paths whose top-level component starts with a dot, or that contain
-# /.git/, are ignored). So nothing is written under the plugin directory while
-# preparing: download, checksum, extraction, build, the lock and the version
-# marker all live in a staging directory `<plugins dir>/.qcy-stage.XXXXXX`
-# (a dot-directory at the top of the watched tree, same filesystem), and the
-# finished directory (qcyctl, qcyctld, .version) is installed with a single
-# rename onto <plugin dir>/.bin. An older .bin is renamed into the staging
-# directory first (a running daemon keeps its open executable) and removed with
-# it. When the plugin directory or its parent is not writable everything goes to
-# ${XDG_DATA_HOME:-~/.local/share}/qcy-omarchy/bin instead. Nothing is left
-# under ~/.cache.
+# Binaries go to ${XDG_DATA_HOME:-~/.local/share}/qcy-omarchy/bin, never into
+# the plugin directory. The shell watches ~/.config/omarchy/plugins recursively
+# and reloads every plugin on any write below it, so this script (like the
+# plugins that ship binaries) prepares everything outside that tree and leaves
+# the checkout untouched. The Go fallback keeps GOCACHE and GOTMPDIR in the
+# staging directory; the module cache is the user's normal one (outside the tree).
+#
+# `bootstrap.sh --mark-plugin` only refreshes the plugin-dir record.
+#
+# Layout under <data>/bin:
+#   <version>/{qcyctl,qcyctld,plugin-dir}   one directory per installed version
+#   current -> <version>                    switched by one atomic rename
+#   qcyctl, qcyctld -> current/<name>       stable paths (the daemon search order)
+# plugin-dir records the plugin directory that installed this version; the
+# daemon exits once that directory is gone (`omarchy plugin remove` has no
+# hook). Download, checksum, extraction, build caches and the lock all live in
+# <data>/.stage.XXXXXX, on the same filesystem. Old versions are removed except
+# the previous one while a daemon still runs from it. A legacy <plugin>/.bin is
+# ignored (deleting it at runtime would reload the shell; remove it by hand).
 #
 # Progress is one line per step on stdout:
 #   STEP <key> <text>      keys: check, download, verify, install, build, done
@@ -24,7 +29,7 @@
 #
 # Overrides (tests, mirrors):
 #   QCY_RELEASE_BASE_URL  directory URL holding the tarball and SHA256SUMS
-#   QCY_DATA_DIR          replaces ${XDG_DATA_HOME}/qcy-omarchy (fallback location only)
+#   QCY_DATA_DIR          replaces ${XDG_DATA_HOME}/qcy-omarchy
 #   QCY_SRC_DIR           source tree for the build fallback (default: repo root)
 #   QCY_BUILD=1           skip the download and build from source
 set -euo pipefail
@@ -40,18 +45,14 @@ manifest="${repo_dir}/manifest.json"
 [ -r "${manifest}" ] || fail "manifest.json not found next to the plugin"
 version="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${manifest}" | head -n 1)"
 case "${version}" in
-  ""|*[!0-9A-Za-z.+-]*) fail "could not read a valid version from manifest.json" ;;
+  ""|-*|*..*|*[!0-9A-Za-z.+-]*) fail "could not read a valid version from manifest.json" ;;
 esac
 
 data_dir="${QCY_DATA_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/qcy-omarchy}"
-stage_root="$(dirname "${repo_dir}")"
-bin_dir="${repo_dir}/.bin"
-if [ ! -w "${repo_dir}" ] || [ ! -w "${stage_root}" ] || { [ -e "${bin_dir}" ] && [ ! -d "${bin_dir}" ]; }; then
-  bin_dir="${data_dir}/bin"
-  stage_root="${data_dir}"
-  mkdir -p "${data_dir}"
-  chmod 0700 "${data_dir}" 2>/dev/null || true
-fi
+bin_root="${data_dir}/bin"
+mkdir -p "${bin_root}" || fail "could not create ${bin_root}"
+chmod 0700 "${data_dir}" 2>/dev/null || true
+stage_root="${data_dir}"
 
 case "$(uname -m)" in
   x86_64|amd64) arch=amd64; elf_machine="3e00" ;;
@@ -67,22 +68,49 @@ if command -v flock >/dev/null 2>&1; then
 fi
 
 ready() {
-  [ -x "${bin_dir}/qcyctl" ] && [ -x "${bin_dir}/qcyctld" ] || return 1
-  [ "$("${bin_dir}/qcyctl" version 2>/dev/null | head -n 1)" = "qcyctl ${version}" ]
+  [ -x "${bin_root}/qcyctl" ] && [ -x "${bin_root}/qcyctld" ] || return 1
+  [ "$("${bin_root}/qcyctl" version 2>/dev/null | head -n 1)" = "qcyctl ${version}" ]
 }
+
+# Record which plugin directory owns the current version (data dir only).
+# The daemon reads plugin-dir verbatim (only the final newline is dropped), so a
+# path with edge whitespace or a newline is not recorded: then nothing is checked.
+plugin_dir_recordable() {
+  case "${repo_dir}" in
+    ""|" "*|*" "|*$'\t'|$'\t'*|*$'\n'*) return 1 ;;
+  esac
+}
+
+mark_plugin() { # dir
+  local cur
+  plugin_dir_recordable || return 0
+  cur="$(cat "$1/plugin-dir" 2>/dev/null || true)"
+  [ "${cur}" = "${repo_dir}" ] && return 0
+  printf '%s\n' "${repo_dir}" > "$1/.plugin-dir.$$" && mv -f "$1/.plugin-dir.$$" "$1/plugin-dir"
+}
+
+# Light mode for the plugin when a matching binary was found elsewhere:
+# refresh the plugin-dir record of the installed version, nothing else.
+if [ "${1:-}" = "--mark-plugin" ]; then
+  if [ -L "${bin_root}/current" ]; then
+    mark_plugin "$(cd "${bin_root}/current" && pwd -P)" 2>/dev/null || true
+  fi
+  exit 0
+fi
 
 step check "Checking the installed version"
 if [ "${QCY_BUILD:-0}" != 1 ] && ready; then
-  printf 'BIN %s\n' "${bin_dir}/qcyctl"
+  mark_plugin "$(cd "${bin_root}/current" && pwd -P)" 2>/dev/null || true
+  printf 'BIN %s\n' "${bin_root}/qcyctl"
   step done "Ready (${version})"
   exit 0
 fi
 
 # Staging directories left by an interrupted run (we hold the lock).
-for d in "${stage_root}"/.qcy-stage.*; do
+for d in "${stage_root}"/.stage.* "${stage_root}"/.qcy-stage.*; do
   [ -d "${d}" ] && [ ! -L "${d}" ] && rm -rf "${d}"
 done
-tmp="$(mktemp -d "${stage_root}/.qcy-stage.XXXXXX")"
+tmp="$(mktemp -d "${stage_root}/.stage.XXXXXX")"
 chmod 0700 "${tmp}"
 stage_bin="${tmp}/bin"
 mkdir -p "${stage_bin}"
@@ -105,18 +133,55 @@ install_from() { # dir containing qcyctl and qcyctld
     cp "$1/${f}" "${stage_bin}/${f}"
     chmod 0755 "${stage_bin}/${f}"
   done
-  printf '%s\n' "${version}" > "${stage_bin}/.version"
+  if plugin_dir_recordable; then printf '%s\n' "${repo_dir}" > "${stage_bin}/plugin-dir"; fi
 }
 
-# The single visible change: stage_bin becomes bin_dir by rename.
+# Point a stable name at a target with one rename (atomic replace).
+relink() { # target name
+  rm -f "${bin_root}/.link.$$"
+  ln -s "$1" "${bin_root}/.link.$$" && mv -T "${bin_root}/.link.$$" "${bin_root}/$2"
+}
+
+# True when a running process executes a binary inside directory $1.
+in_use() {
+  local e
+  for e in /proc/[0-9]*/exe; do
+    case "$(readlink "${e}" 2>/dev/null)" in
+      "$1"/*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# stage_bin becomes <data>/bin/<dir>; `current` then moves with one rename.
+# A reinstall of the same version gets a fresh directory name, so `current`
+# never points at a missing or half-replaced directory and a failure at any
+# step leaves the previous install untouched.
 commit() {
-  if [ -e "${bin_dir}" ]; then
-    mv "${bin_dir}" "${tmp}/old" || return 1
+  local prev="" dir="${version}"
+  if [ -L "${bin_root}/current" ]; then
+    prev="$(readlink "${bin_root}/current")"
   fi
-  if ! mv "${stage_bin}" "${bin_dir}"; then
-    [ ! -e "${tmp}/old" ] || mv "${tmp}/old" "${bin_dir}"
-    return 1
+  if [ -e "${bin_root}/${dir}" ]; then
+    dir="${version}+r$$"
+    rm -rf "${bin_root}/${dir}"
   fi
+  mv "${stage_bin}" "${bin_root}/${dir}" || return 1
+  relink "${dir}" current || { rm -rf "${bin_root}/${dir}"; return 1; }
+  [ -L "${bin_root}/qcyctl" ] && [ "$(readlink "${bin_root}/qcyctl")" = "current/qcyctl" ] \
+    || relink current/qcyctl qcyctl || return 1
+  [ -L "${bin_root}/qcyctld" ] && [ "$(readlink "${bin_root}/qcyctld")" = "current/qcyctld" ] \
+    || relink current/qcyctld qcyctld || return 1
+  # Old versions go; the previous one stays while a daemon still runs from it.
+  local d name
+  for d in "${bin_root}"/*/; do
+    d="${d%/}"; name="${d##*/}"
+    [ -d "${d}" ] && [ ! -L "${d}" ] || continue
+    [ "${name}" != "${dir}" ] || continue
+    if [ "${name}" = "${prev}" ] && in_use "${d}"; then continue; fi
+    rm -rf "${d}"
+  done
+  rm -f "${bin_root}/.version" "${bin_root}"/.link.* 2>/dev/null || true
 }
 
 download() {
@@ -162,7 +227,7 @@ build() {
   command -v go >/dev/null 2>&1 || fail "no release available; install Go (pacman -S go) and try again"
   mkdir -p "${out}" "${cache}"
   step build "Building from source (this takes a minute)"
-  ( cd "${src_dir}" && GOCACHE="${cache}" go build -trimpath -ldflags "-X main.version=${version}" \
+  ( cd "${src_dir}" && env -u GOFLAGS GOWORK=off GOTOOLCHAIN=local GOCACHE="${cache}" GOTMPDIR="${tmp}" go build -buildvcs=false -trimpath -ldflags "-X main.version=${version}" \
       -o "${out}/" ./cmd/qcyctl ./cmd/qcyctld ) >"${tmp}/build.log" 2>&1 \
     || fail "build failed: $(tail -n 1 "${tmp}/build.log")"
   install_from "${out}" || fail "the built binaries were rejected"
@@ -173,8 +238,11 @@ if [ "${QCY_BUILD:-0}" != 1 ]; then
   if download; then done_ok=1; fi
 fi
 if [ "${done_ok}" = 0 ]; then
+  if [ "${QCY_BUILD:-0}" != 1 ]; then
+    step build "Download or checksum check failed; falling back to a local build"
+  fi
   build
 fi
-commit || fail "could not install into ${bin_dir}"
-printf 'BIN %s\n' "${bin_dir}/qcyctl"
+commit || fail "could not install into ${bin_root}"
+printf 'BIN %s\n' "${bin_root}/qcyctl"
 step done "Ready (${version})"

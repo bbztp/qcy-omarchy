@@ -240,9 +240,10 @@ func spawnDetached(bin, logPath string) (int, <-chan struct{}, error) {
 	return cmd.Process.Pid, done, nil
 }
 
-// resolveDaemonBinary finds qcyctld: next to this executable (the plugin's own
-// .bin directory when qcyctl runs from there), then the managed data directory,
-// ~/.local/bin and finally PATH.
+// resolveDaemonBinary finds qcyctld: next to this executable, then the managed
+// data directory, ~/.local/bin and finally PATH. Under the data directory the
+// versioned install (bin/<version>/) is reported by its stable name
+// (bin/qcyctld) so a service unit survives upgrades.
 func (d *daemonDeps) resolveDaemonBinary() (string, error) {
 	var tried []string
 	if exe, err := d.executable(); err == nil {
@@ -252,7 +253,7 @@ func (d *daemonDeps) resolveDaemonBinary() (string, error) {
 		p := filepath.Join(filepath.Dir(exe), "qcyctld")
 		tried = append(tried, p)
 		if d.isExec(p) {
-			return p, nil
+			return d.stableName(p), nil
 		}
 	}
 	for _, p := range []string{
@@ -269,6 +270,26 @@ func (d *daemonDeps) resolveDaemonBinary() (string, error) {
 	}
 	tried = append(tried, "$PATH")
 	return "", fmt.Errorf("qcyctld not found (looked in: %s)", strings.Join(tried, ", "))
+}
+
+// stableName maps <bin>/<version>/qcyctld to <bin>/qcyctld when that stable
+// name resolves to the same file, and returns p otherwise.
+func (d *daemonDeps) stableName(p string) string {
+	verDir := filepath.Dir(p)
+	binDir := filepath.Dir(verDir)
+	// Only the plugin's layout: .../qcy-omarchy/bin/<version>/<name>.
+	if filepath.Base(binDir) != "bin" || filepath.Base(filepath.Dir(binDir)) != "qcy-omarchy" {
+		return p
+	}
+	stable := filepath.Join(binDir, filepath.Base(p))
+	if stable == p || !d.isExec(stable) {
+		return p
+	}
+	r, err := filepath.EvalSymlinks(stable)
+	if err != nil || r != p {
+		return p
+	}
+	return stable
 }
 
 func (d *daemonDeps) serviceInstalled() bool {
@@ -455,8 +476,8 @@ func parseJSONFlag(args []string, usage string) (bool, error) {
 // unitContents renders the user unit for the resolved qcyctld path.
 func unitContents(bin string) string {
 	q := strings.NewReplacer(`\`, `\\`, `"`, `\"`, `%`, `%%`, `$`, `$$`).Replace(bin)
-	// The condition keeps a removed plugin (its binaries live inside the plugin
-	// directory) from leaving a unit that fails in a restart loop.
+	// The condition keeps a removed data directory from leaving a unit that
+	// fails in a restart loop.
 	cond := strings.NewReplacer(`%`, `%%`).Replace(bin)
 	return "[Unit]\nDescription=" + unitDescription + "\nConditionPathExists=" + cond + "\n\n[Service]\nType=simple\n" +
 		unitIdleComments +

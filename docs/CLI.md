@@ -85,9 +85,12 @@ payload of the currently **active** slot, as read from the earbuds, is saved to
 
 Commands that talk to the earbuds start `qcyctld` on demand when its socket does
 not answer: through `qcyctld.service` if that user unit is enabled, otherwise by
-launching `qcyctld` detached (looked up next to `qcyctl` — the plugin's
-`.bin` directory for the plugin's own copy — then in
-`~/.local/share/qcy-omarchy/bin`, `~/.local/bin` and finally `PATH`). Its output goes to
+launching `qcyctld` detached (looked up next to `qcyctl`, then in
+`~/.local/share/qcy-omarchy/bin` — where the plugin installs it —
+`~/.local/bin` and finally `PATH`). A daemon installed by the plugin also exits
+by itself when the plugin directory recorded in `plugin-dir` next to its binary
+is gone (checked every 30 s, only when idle); binaries without that file are
+never checked. Its output goes to
 `${XDG_STATE_HOME:-~/.local/state}/qcy-omarchy/qcyctld.log` (truncated above
 1 MiB); concurrent starters are serialised with a lock. Offline commands (`i18n`,
 `library list/show/...`, `model`, `hearing plan|result`, `version`) never start

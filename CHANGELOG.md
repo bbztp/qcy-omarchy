@@ -6,9 +6,15 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `qcyctl` and `qcyctld` now live in `~/.local/share/qcy-omarchy/bin/<version>` (stable `qcyctl`/`qcyctld` links beside it), not in the plugin folder. `omarchy plugin remove` does not delete them; the daemon exits by itself within about 30 s once the plugin folder is gone, and "Remove QCY data…" deletes them. A leftover `<plugin dir>/.bin` from an earlier build is ignored; remove it by hand.
+- "Remove QCY data…" stops the daemon before deleting, and its confirmation mentions the downloaded programs.
+- A systemd unit written by `qcyctl daemon install-service` points at the stable `bin/qcyctld`, so it survives upgrades.
+
 ### Fixed
 
-- First-time setup no longer makes the shell reload the plugin over and over (and leave the widget missing until `omarchy restart shell`): the bootstrap now prepares the binaries in a hidden staging directory beside the plugin and installs them into `.bin` with a single rename, writing nothing under the plugin directory meanwhile; interrupted runs leave nothing behind and a failed update keeps the installed binaries.
+- First-time setup no longer makes the shell reload every plugin (and leave the widget missing until `omarchy restart shell`): the shell reloads on any write under `~/.config/omarchy/plugins`, so the bootstrap now downloads, builds and installs entirely in `~/.local/share/qcy-omarchy` and never writes under the plugin directory; interrupted runs leave nothing behind and a failed update keeps the installed binaries.
 
 ### Fixed
 

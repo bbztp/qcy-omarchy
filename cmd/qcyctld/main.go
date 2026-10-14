@@ -523,14 +523,17 @@ func loadCachedAddr() (bluetooth.Address, bool) {
 // saw it) the vendorId, which is what model detection uses on the fast path.
 func saveCachedAddr(addr bluetooth.Address, name string, vendor uint16, haveVendor bool) {
 	p := cacheFilePath()
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return
 	}
+	_ = os.Chmod(filepath.Dir(p), 0o700)
 	line := formatCacheEntry(cacheEntry{
 		Addr: addr.String(), Random: addr.IsRandom(), Name: name,
 		VendorID: vendor, HaveVendor: haveVendor,
 	})
-	_ = os.WriteFile(p, []byte(line), 0o644)
+	if os.WriteFile(p, []byte(line), 0o600) == nil {
+		_ = os.Chmod(p, 0o600)
+	}
 }
 
 // loadCachedName returns the name stored alongside a cached address.
@@ -2373,10 +2376,11 @@ func main() {
 	}()
 
 	// Exit (releasing BLE and the socket) when the binary was removed or
-	// replaced underneath the daemon, e.g. by `omarchy plugin remove`.
+	// replaced underneath the daemon, or when the plugin directory that installed
+	// it is gone (`omarchy plugin remove`).
 	exeTick := time.NewTicker(exeWatchEvery)
 	defer exeTick.Stop()
-	go d.watchExecutable(exeTick.C, executableGone, func() { _ = l.Close() })
+	go d.watchExecutable(exeTick.C, ownerGone, func() { _ = l.Close() })
 
 	for {
 		conn, err := l.Accept()

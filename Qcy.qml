@@ -98,14 +98,14 @@ Singleton {
   // ----------------------------------------------------------------- setup
   //
   // The plugin prepares its own binaries on first use (scripts/bootstrap.sh
-  // downloads the matching release, or builds with Go). They live in the hidden
-  // <plugin dir>/.bin so `omarchy plugin remove` deletes them with the plugin.
-  // The shell watches the plugins directory recursively and reloads the plugin
-  // on any write below it (only top-level dot-directories are ignored), so the
-  // bootstrap prepares everything in a `.qcy-stage.*` directory next to the
-  // plugin and installs it with one rename onto .bin; this file writes nothing
-  // under the plugin directory. ~/.local/share/qcy-omarchy/bin is the fallback
-  // when the plugin directory is not writable.
+  // downloads the matching release, or builds with Go) into
+  // ~/.local/share/qcy-omarchy/bin/<version>, with stable qcyctl/qcyctld links
+  // beside it. The shell watches ~/.config/omarchy/plugins recursively and
+  // reloads every plugin on any write below it, so nothing is ever written
+  // under the plugin directory: downloads, builds and the install all happen in
+  // the data directory. `omarchy plugin remove` has no hook and does not delete
+  // those binaries; the daemon exits on its own once the plugin directory is
+  // gone, and "Remove QCY data…" deletes them.
   //
   // setupState: "checking" (looking for a matching qcyctl), "preparing"
   // (bootstrap running), "ready", "error". No other process of the plugin calls
@@ -114,18 +114,20 @@ Singleton {
   property string setupStep: ""        // last STEP text from the bootstrap
   property string setupMessage: ""     // error text when setupState is "error"
   property string _bootstrapBinary: "" // qcyctl path the bootstrap reported (BIN line)
-  readonly property bool ready: setupState === "ready"
+  // False while "Remove QCY data…" runs between the daemon stop and the delete,
+  // so no poll, refresh or setter can start the daemon again (all of them gate
+  // on `ready`; the removal steps themselves bypass it in _offNext).
+  property bool _removing: false
+  readonly property bool ready: setupState === "ready" && !_removing
 
   readonly property string _home: Quickshell.env("HOME")
   readonly property string dataDir: (Quickshell.env("XDG_DATA_HOME")
     ? Quickshell.env("XDG_DATA_HOME") : (_home + "/.local/share")) + "/qcy-omarchy"
-  readonly property string _pluginBinary: pluginDir + "/.bin/qcyctl"
   readonly property string _dataBinary: dataDir + "/bin/qcyctl"
 
-  // The binary in use: QCYCTL, else the plugin's own copy; after the check it
-  // becomes whichever matching candidate was found (old data dir copy,
-  // ~/.local/bin, PATH).
-  property string binary: Quickshell.env("QCYCTL") || _pluginBinary
+  // The binary in use: QCYCTL, else the data dir install; after the check it
+  // becomes whichever matching candidate was found (~/.local/bin, PATH).
+  property string binary: Quickshell.env("QCYCTL") || _dataBinary
 
   // Directory the plugin was loaded from.
   readonly property string pluginDir: {
@@ -214,17 +216,27 @@ Singleton {
       + "*) c=\"$(command -v \"$c\" 2>/dev/null)\" || continue ;; esac; "
       + "o=\"$(\"$c\" version 2>/dev/null | head -n 1)\"; "
       + "if [ \"$o\" = \"qcyctl $v\" ]; then printf '%s\\n' \"$c\"; exit 0; fi; done; exit 1",
-      "qcyprobe", root.pluginVersion, root._pluginBinary, root._dataBinary,
+      "qcyprobe", root.pluginVersion, root._dataBinary,
       root._home + "/.local/bin/qcyctl", "qcyctl"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: probeProc.found = String(text).trim().split("\n")[0]
     }
     onExited: function (exitCode) {
-      if (exitCode === 0 && probeProc.found !== "") root._setupReady(probeProc.found)
+      if (exitCode === 0 && probeProc.found !== "") {
+        // Keep the daemon's plugin-dir record current (data dir only; no
+        // download, no write under the plugin directory).
+        markProc.command = ["bash", root.pluginDir + "/scripts/bootstrap.sh", "--mark-plugin"]
+        markProc.running = true
+        root._setupReady(probeProc.found)
+      }
       else root._setupPrepare()
       probeProc.found = ""
     }
+  }
+
+  Process {
+    id: markProc
   }
 
   Process {
@@ -234,7 +246,7 @@ Singleton {
     }
     onExited: function (exitCode) {
       if (exitCode === 0) {
-        root._setupReady(root._bootstrapBinary !== "" ? root._bootstrapBinary : root._pluginBinary)
+        root._setupReady(root._bootstrapBinary !== "" ? root._bootstrapBinary : root._dataBinary)
       } else {
         root.setupState = "error"
         if (root.setupMessage === "")
@@ -277,28 +289,36 @@ Singleton {
       })
   }
 
-  // The three directories the plugin owns, each checked to sit under $HOME and
-  // to end in exactly "qcy-omarchy".
+  // The three directories the plugin owns (XDG-aware like the Go side), each
+  // absolute, free of "..", and ending in exactly "qcy-omarchy".
   function _ownedDirs() {
     var h = _home
-    if (!h || h.charAt(0) !== "/" || h === "/" || h.indexOf("..") !== -1) return []
+    if (!h || h.charAt(0) !== "/" || h === "/") return []
     h = h.replace(/\/+$/, "")
-    var xs = [h + "/.local/share/qcy-omarchy", h + "/.config/qcy-omarchy", h + "/.cache/qcy-omarchy"]
+    var cfg = Quickshell.env("XDG_CONFIG_HOME") || (h + "/.config")
+    var cache = Quickshell.env("XDG_CACHE_HOME") || (h + "/.cache")
+    var xs = [dataDir, cfg.replace(/\/+$/, "") + "/qcy-omarchy", cache.replace(/\/+$/, "") + "/qcy-omarchy"]
     return xs.filter(function (p) {
-      return p.indexOf(h + "/") === 0 && /\/qcy-omarchy$/.test(p) && p.indexOf("..") === -1
+      return p.charAt(0) === "/" && /\/qcy-omarchy$/.test(p) && p.indexOf("..") === -1
     })
   }
 
-  // Stops and removes the service, then deletes the data, config and cache.
+  // Stops the daemon and the service, then deletes the data (which includes the
+  // binaries in <data>/bin), config and cache.
   function removeData() {
     if (daemonBusy) return
     var dirs = _ownedDirs()
     if (dirs.length !== 3) { daemonError = tr("Refusing to remove: unexpected home directory"); return }
     daemonBusy = true
     daemonError = ""
-    runOffline(["daemon", "uninstall-service", "--json"], function (code, out, err) {
-      removeProc.command = ["rm", "-rf", "--"].concat(dirs)
-      removeProc.running = true
+    _removing = true
+    // The daemon is asked to stop first: it runs from the binaries that are
+    // about to be deleted (<data>/bin is inside the data directory).
+    runOffline(["daemon", "stop"], function () {
+      root.runOffline(["daemon", "uninstall-service", "--json"], function () {
+        removeProc.command = ["rm", "-rf", "--"].concat(dirs)
+        removeProc.running = true
+      })
     })
   }
 
@@ -306,6 +326,7 @@ Singleton {
     id: removeProc
     onExited: function (exitCode) {
       root.daemonBusy = false
+      root._removing = false
       if (exitCode !== 0) {
         root.daemonError = root.tr("The command failed (code {code})", { code: exitCode })
         return
@@ -1251,7 +1272,7 @@ Singleton {
   }
 
   function _offNext() {
-    if (!ready || offProc.running || _offRun !== null || _offQueue.length === 0) return
+    if (!(ready || _removing) || offProc.running || _offRun !== null || _offQueue.length === 0) return
     var j = _offQueue[0]
     _offQueue = _offQueue.slice(1)
     _offRun = { done: j.done, exit: -1, out: "", err: "", haveExit: false, haveOut: false, haveErr: false }

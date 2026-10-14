@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -466,12 +467,15 @@ func (d *daemon) staleFor(cmd string) (map[string]interface{}, bool) {
 	return out, true
 }
 
-// ---- executable watch ----
+// ---- executable and plugin watch ----
 
-// The binaries live inside the plugin directory, which `omarchy plugin remove`
-// deletes without any hook, and which an update replaces. A daemon whose
-// executable is gone must not linger holding the socket (and, when busy, the
+// The binaries live in the data directory, outside the plugin, so
+// `omarchy plugin remove` (which has no hook) does not delete them. The
+// bootstrap records the owning plugin directory next to the binaries
+// (plugin-dir); a daemon whose plugin directory is gone, or whose executable was
+// deleted or replaced, must not linger holding the socket (and, when busy, the
 // earbuds): it exits once idle and the next request starts the current one.
+// Binaries installed without a plugin-dir file (CLI-only use) are never checked.
 
 const exeWatchEvery = 30 * time.Second
 
@@ -484,6 +488,38 @@ func executableGone() bool {
 	return strings.HasSuffix(p, " (deleted)")
 }
 
+// pluginDirGone reports whether the plugin directory recorded next to exe is
+// gone. Unreadable or absent records, and any stat error other than "does not
+// exist", mean "not gone". readFile and stat are injected for tests.
+func pluginDirGone(exe string, readFile func(string) ([]byte, error), stat func(string) (os.FileInfo, error)) bool {
+	b, err := readFile(filepath.Join(filepath.Dir(exe), "plugin-dir"))
+	if err != nil {
+		return false
+	}
+	// Verbatim: only the final newline goes, so edge spaces in a path survive.
+	dir := strings.TrimSuffix(string(b), "\n")
+	if dir == "" || !filepath.IsAbs(dir) {
+		return false
+	}
+	_, err = stat(dir)
+	return errors.Is(err, os.ErrNotExist)
+}
+
+// ownerGone is the production check: executable deleted, or plugin dir gone.
+func ownerGone() bool {
+	if executableGone() {
+		return true
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	if r, err := filepath.EvalSymlinks(strings.TrimSuffix(exe, " (deleted)")); err == nil {
+		exe = r
+	}
+	return pluginDirGone(exe, os.ReadFile, os.Stat)
+}
+
 // shouldExitForGoneExecutable is true when the executable is gone and no
 // request or background hold is in flight.
 func (d *daemon) shouldExitForGoneExecutable(gone func() bool) bool {
@@ -493,11 +529,17 @@ func (d *daemon) shouldExitForGoneExecutable(gone func() bool) bool {
 	return !busy && gone()
 }
 
-// watchExecutable calls stop once, on the first tick at which the executable is
-// gone and the daemon is idle.
+// watchExecutable calls stop once, after two consecutive ticks at which the
+// owner is gone and the daemon is idle. The second tick covers the short window
+// of a plugin update (the directory is replaced) and a stale record.
 func (d *daemon) watchExecutable(tick <-chan time.Time, gone func() bool, stop func()) {
+	n := 0
 	for range tick {
-		if d.shouldExitForGoneExecutable(gone) {
+		if !d.shouldExitForGoneExecutable(gone) {
+			n = 0
+			continue
+		}
+		if n++; n >= 2 {
 			stop()
 			return
 		}

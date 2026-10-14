@@ -527,3 +527,62 @@ func TestVersionLineIsWhatTheBootstrapCompares(t *testing.T) {
 		t.Fatalf("version line %q", got)
 	}
 }
+
+func TestResolveDaemonBinaryPrefersStableName(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "qcy-omarchy", "bin")
+	ver := filepath.Join(bin, "0.1.2")
+	if err := os.MkdirAll(ver, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"qcyctl", "qcyctld"} {
+		if err := os.WriteFile(filepath.Join(ver, n), []byte("x"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join("current", n), filepath.Join(bin, n)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("0.1.2", filepath.Join(bin, "current")); err != nil {
+		t.Fatal(err)
+	}
+	d := &daemonDeps{
+		executable: func() (string, error) { return filepath.Join(ver, "qcyctl"), nil },
+		lookPath:   func(string) (string, error) { return "", errors.New("none") },
+		isExec:     isExecutableFile,
+		home:       filepath.Join(root, "home"),
+	}
+	got, err := d.resolveDaemonBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(bin, "qcyctld"); got != want {
+		t.Fatalf("got %q, want the stable %q (a unit pointing at the versioned dir breaks on upgrade)", got, want)
+	}
+}
+
+func TestStableNameOnlyForPluginLayout(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// <root>/other/bin/0.1/qcyctld with a stable link, but no qcy-omarchy dir.
+	ver := filepath.Join(root, "other", "bin", "0.1")
+	if err := os.MkdirAll(ver, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(ver, "qcyctld")
+	if err := os.WriteFile(p, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("0.1/qcyctld", filepath.Join(root, "other", "bin", "qcyctld")); err != nil {
+		t.Fatal(err)
+	}
+	d := &daemonDeps{isExec: isExecutableFile}
+	if got := d.stableName(p); got != p {
+		t.Fatalf("got %q, want %q unchanged outside the qcy-omarchy/bin layout", got, p)
+	}
+}
