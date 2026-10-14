@@ -170,7 +170,7 @@ const (
 	FeatureFind         FeatureFlag = "find"         // Find my earbuds
 	FeatureBatteryCase  FeatureFlag = "batteryCase"  // Case battery level
 	FeatureKeysRemap    FeatureFlag = "keysRemap"    // Touch key remapping
-	FeatureFit          FeatureFlag = "fit"          // Ear-tip fit test (verified models only)
+	FeatureFit          FeatureFlag = "fit"          // Ear-tip fit test (panel type 110, cmd 17)
 	FeatureEQ           FeatureFlag = "eq"           // EQ curve + master gain (read/write via eqApply, backed up)
 )
 
@@ -196,12 +196,29 @@ type Capabilities struct {
 	Features     []FeatureFlag `json:"features"`     // supported features
 	Actions      []ActionSpec  `json:"actions"`      // settable actions
 	BatteryChars []string      `json:"batteryChars"` // "left", "right", "case"
-	// Verified is true only for models this tool was exercised against (the
-	// verified-model set, see verifiedVendorIDs). Anything else runs on the
-	// shared, conservative command set.
+	// Verified is informational only: true for the models this tool was
+	// exercised against on hardware (see verifiedVendorIDs). It never gates a
+	// feature; what a model offers is what its Features and Actions declare.
 	Verified     bool   `json:"verified"`
 	VendorID     int    `json:"vendorId,omitempty"`     // manufacturer-data vendorId, when known
 	ProductTitle string `json:"productTitle,omitempty"` // product name from the Quicky database
+
+	// Per-model parameters read from the model's embedded server panel (the
+	// N70 handler carries its own). Empty when the model does not declare the
+	// feature or declares it in an encoding this tool does not drive.
+	PromptVolumeSteps    []int         `json:"promptVolumeSteps,omitempty"`    // values the prompt-volume write accepts
+	WearSensitivityItems []NamedValue  `json:"wearSensitivityItems,omitempty"` // wear-sensor sensitivity choices
+	ANCModes             []ANCModeSpec `json:"ancModes,omitempty"`             // packed-value ANC groups
+	EQ                   *EQSpec       `json:"eq,omitempty"`                   // equalizer geometry and slots
+	// Notes say why a feature the panel lists is not offered ("not
+	// understood": the encoding is not known to this tool).
+	Notes []string `json:"notes,omitempty"`
+
+	// Wire details derived from the panel, never serialised.
+	WearOffZero bool `json:"-"` // wear off is written as 0x00 (the panel's "Close" is 0)
+	WindOffZero bool `json:"-"` // wind-noise off is written as 0x00 (the panel's off frame)
+	HearingTest bool `json:"-"` // the hearing-test frames (0x45-0x47) are driven for this model
+	StrictEQ    bool `json:"-"` // explicit EQ slots are limited to EQ.Slots and EQ.ProtectedSlots applies
 }
 
 // ModelHandler defines the interface each model implements.
@@ -307,6 +324,7 @@ func (GenericHandler) OnDisconnect(d *daemon)    {}
 type meloBudsN70Handler struct{}
 
 func (meloBudsN70Handler) Capabilities() Capabilities {
+	pp := n70PanelParams()
 	return Capabilities{
 		ModelID:     "melobuds-n70",
 		DisplayName: "QCY MeloBuds N70",
@@ -343,6 +361,14 @@ func (meloBudsN70Handler) Capabilities() Capabilities {
 		},
 		BatteryChars: []string{"left", "right", "case"},
 		Verified:     true,
+
+		PromptVolumeSteps:    []int{4, 6, 8, 10},
+		WearSensitivityItems: []NamedValue{{"Medium", 1}, {"Normal", 2}, {"High", 3}},
+		ANCModes:             pp.ancModes,
+		EQ:                   pp.eq,
+		WearOffZero:          true,
+		WindOffZero:          true,
+		HearingTest:          true,
 	}
 }
 
@@ -586,10 +612,10 @@ func detectModelFromVersion(fw string) string {
 	return "generic"
 }
 
-// verifiedVendorIDs are the manufacturer-data vendorIds of the models whose
-// behaviour was verified on hardware. Today that is only the QCY MeloBuds N70
-// (the device used as the test model for this code; other models are
-// unverified), and this set is the single place that names it.
+// verifiedVendorIDs are the manufacturer-data vendorIds of the models this
+// tool was tested against on hardware: only the QCY MeloBuds N70 (the device
+// used as the test model for this code). It is informational ("tested"), the
+// N70 keeps its hand-written handler, and nothing is gated on it.
 // Exactly these two: the neighbouring ids are other products (23873/23878
 // AilyBuds E50, 23874/23879 MeloBuds N60, 23875 CT03) and 23876 is not in the
 // database, so a range would verify earbuds this tool was never tried on.
@@ -598,8 +624,8 @@ var verifiedVendorIDs = map[uint16]bool{23872: true, 23877: true}
 // detectModel picks the model id. Precedence: the vendorId from the
 // advertisement (the real identifier), then the advertised name, then the
 // firmware string, then "generic". A vendorId the Quicky database knows but
-// that is not a verified model becomes "qcy-<vendorId>", driven by a profile generated
-// from the product entry, never by assumptions about the verified model.
+// that is not the N70 becomes "qcy-<vendorId>", driven by a profile generated
+// from the product entry, never by assumptions about the N70.
 func detectModel(vendorID uint16, haveVendor bool, name, version string) string {
 	if haveVendor {
 		if verifiedVendorIDs[vendorID] {
@@ -921,20 +947,21 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 	case "wear":
 		// Read 0x2C, set byte 0, keep the remaining bytes, write, confirm.
 		// state 1 = on, 2 = off. "Off" is written as 0x00 (what the vendor app
-		// writes, verified on hardware 2026-10-13) on a verified model and as
-		// 0x02 on any other (conservative). The diagnostic {literal:true}
-		// writes exactly the byte given (0 or 2); 0 is refused on a model
-		// that is not verified. Returns the confirmed payload.
+		// writes, verified on hardware 2026-10-13) when the model's panel
+		// declares 0 as the off value (the N70 does), and as 0x02 otherwise
+		// (conservative). The diagnostic {literal:true} writes exactly the
+		// byte given (0 or 2); 0 is refused where the panel does not declare
+		// it. Returns the confirmed payload.
 		st, ok := req.Args["state"].(float64)
 		literal, _ := req.Args["literal"].(bool)
 		if !ok || (st != 1 && st != 2 && !(st == 0 && literal)) {
 			return nil, errors.New("wear: state must be 1 (on) or 2 (off); 0 is only the diagnostic off byte (literal)")
 		}
-		verified := handler.Capabilities().Verified
-		if st == 0 && !verified {
-			return nil, errors.New("wear: off byte 0 is only written on a verified model")
+		zeroOff := handler.Capabilities().WearOffZero
+		if st == 0 && !zeroOff {
+			return nil, errors.New("wear: off byte 0 is only written on a model whose panel declares it")
 		}
-		if st == 2 && !literal && verified {
+		if st == 2 && !literal && zeroOff {
 			st = 0
 		}
 		got, err := d.wearSet(byte(st))
@@ -948,6 +975,9 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 		b, ok := req.Args["byte"].(float64)
 		if !ok || (b != 0 && b != 2) {
 			return nil, errors.New("windOffByte: byte must be 0 or 2")
+		}
+		if b == 0 && !handler.Capabilities().WindOffZero {
+			return nil, errors.New("windOffByte: off byte 0 is only written on a model whose panel declares it")
 		}
 		got, err := d.windOff(byte(b))
 		if err != nil {
@@ -977,6 +1007,9 @@ func (d *daemon) handleRequest(req request) (interface{}, error) {
 		return bytesJSON(k), nil
 	case "keysSet":
 		raw := decodeParams(req.Args["raw"])
+		if err := d.checkKeyPairs(handler, raw); err != nil {
+			return nil, err
+		}
 		return nil, d.writeKeys(raw)
 	default:
 		return nil, fmt.Errorf("unknown command: %s", req.Cmd)
@@ -1018,20 +1051,21 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 		}
 		// Model-dependent, derived from the handler of this connection.
 		caps["eq"] = d.handlerHasFeature(FeatureEQ)
-		// ldac restarts the earbuds and is only writable on a verified
-		// model, so the panel is told "available" only for those.
+		// ldac restarts the earbuds: the panel is told "available" only
+		// when the model declares it and the device answered the probe.
 		h := d.knownHandler()
-		caps["ldac"] = snap["ldac"] && h != nil && h.Capabilities().Verified
+		caps["ldac"] = snap["ldac"] && h != nil && writableDeclared(h.Capabilities(), "ldac")
 		rep["capabilities"] = caps
 	}
 	if p, err := d.query(protocol.OpSpatial, 800*time.Millisecond); err == nil && len(p) >= 1 {
 		rep["spatial"] = bytesJSON(p)
 	}
-	// Wear-sensor sensitivity: only asked of a verified model that answered
-	// the capability probe, so a silent unit does not slow every status.
+	// Wear-sensor sensitivity: only asked of a model that declares it and
+	// answered the capability probe, so a silent unit does not slow every
+	// status.
 	if snap := d.capabilitiesSnapshot(); snap["wearSensitivity"] {
-		if h := d.knownHandler(); h != nil && h.Capabilities().Verified {
-			if p, err := d.query(protocol.OpWearSensitivity, 800*time.Millisecond); err == nil && len(p) >= 1 && p[0] >= 1 && p[0] <= 3 {
+		if h := d.knownHandler(); h != nil && writableDeclared(h.Capabilities(), "wearSensitivity") {
+			if p, err := d.query(protocol.OpWearSensitivity, 800*time.Millisecond); err == nil && len(p) >= 1 && p[0] >= 1 {
 				rep["wearSensitivity"] = int(p[0])
 			}
 		}
@@ -1127,7 +1161,7 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 	// ldac (0x23) restarts the earbuds: the vendor server declares the action
 	// with "Turning on LDAC will restart the device" (docs/WEB_API.md), so the
 	// restart is expected. It is writable on verified models only
-	// (verifiedOnlyActions), once per request, and the restart that follows an
+	// (declaredOnlyActions), once per request, and the restart that follows an
 	// accepted write is not an error (see the ldac branch below). Multipoint
 	// (0x24) restarts the earbuds too and is documented the same way.
 	// Answering a query is not the same as honouring a write: readOnlyCmds
@@ -1146,26 +1180,25 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 	}
 	// Setters whose frame shape and value set come from the vendor app:
 	// validate and normalise before anything is written.
-	if verifiedOnlyActions[action] {
-		if h := d.knownHandler(); h == nil || !h.Capabilities().Verified {
-			return nil, fmt.Errorf("%s is only available on a verified model", action)
-		}
+	var caps Capabilities
+	if h := d.knownHandler(); h != nil {
+		caps = h.Capabilities()
 	}
-	params, expect, err := prepareSetter(action, params, expect)
+	if declaredOnlyActions[action] && !writableDeclared(caps, action) {
+		return nil, fmt.Errorf("%s is not declared by this model", action)
+	}
+	params, expect, err := prepareSetter(caps, action, params, expect)
 	if err != nil {
 		return nil, err
 	}
 	if action == "wind" && len(params) == 1 {
 		// Wind detection "off": 0x00 as the vendor app writes it (verified on
-		// hardware 2026-10-13) on a verified model, 0x02 on any other.
-		verified := false
-		if h := d.knownHandler(); h != nil {
-			verified = h.Capabilities().Verified
-		}
+		// hardware 2026-10-13) where the model's panel declares it, 0x02 on
+		// any other.
 		switch {
-		case params[0] == 0 && !verified:
-			return nil, errors.New("wind: off byte 0 is only written on a verified model")
-		case params[0] == 2 && verified:
+		case params[0] == 0 && !caps.WindOffZero:
+			return nil, errors.New("wind: off byte 0 is only written on a model whose panel declares it")
+		case params[0] == 2 && caps.WindOffZero:
 			params = []byte{0}
 		}
 	}
@@ -1243,13 +1276,16 @@ func (d *daemon) setAction(action string, params, expect []byte) ([]byte, error)
 // Set false to restore the read-only behaviour.
 const promptVolWritable = true
 
-// verifiedPromptVolumeSteps is the value list the vendor server gives the verified model
-// (Quieter / Medium / Louder / Maximum). Per-model spec, constant for now.
-var verifiedPromptVolumeSteps = []byte{4, 6, 8, 10}
+// declaredOnlyActions are the setters outside the shared set: they are
+// written only when the connected model declares them (its panel lists the
+// function and the encoding is understood), never on the generic fallback.
+var declaredOnlyActions = map[string]bool{"promptVol": true, "wearSensitivity": true, "ldac": true}
 
-// verifiedOnlyActions are setters whose frames were read from the app for the verified model
-// and are refused on any model that is not verified.
-var verifiedOnlyActions = map[string]bool{"promptVol": true, "wearSensitivity": true, "ldac": true}
+// writableDeclared reports whether c declares the action and is a recognised
+// model (the generic fallback declares the shared set but no panel).
+func writableDeclared(c Capabilities, action string) bool {
+	return c.ModelID != "" && c.ModelID != "generic" && declaresAction(c, action)
+}
 
 // indeterminateError reports a write whose outcome cannot be known yet; the
 // "set" reply carries it as {indeterminate: msg}, not as a failure.
@@ -1270,15 +1306,22 @@ var settleBeforeQuery = map[string]time.Duration{
 // prepareSetter validates the value of the setters with a fixed value set and
 // returns the exact frame parameters and the readback expectation. Other
 // actions pass through unchanged.
-func prepareSetter(action string, params, expect []byte) ([]byte, []byte, error) {
+func prepareSetter(c Capabilities, action string, params, expect []byte) ([]byte, []byte, error) {
 	switch action {
 	case "promptVol":
+		steps := c.PromptVolumeSteps
 		if len(params) < 1 || len(params) > 2 || (len(params) == 2 && params[1] != 0) {
-			return nil, nil, errors.New("promptVol: expected one value (4, 6, 8 or 10)")
+			return nil, nil, fmt.Errorf("promptVol: expected one value of %v", steps)
 		}
 		v := params[0]
-		if !bytes.Contains(verifiedPromptVolumeSteps, []byte{v}) {
-			return nil, nil, fmt.Errorf("promptVol: %d is not one of %v", v, verifiedPromptVolumeSteps)
+		listed := false
+		for _, s := range steps {
+			if s == int(v) {
+				listed = true
+			}
+		}
+		if !listed {
+			return nil, nil, fmt.Errorf("promptVol: %d is not one of %v", v, steps)
 		}
 		// Two parameter bytes, the second 0, as the vendor app writes it.
 		return []byte{v, 0}, []byte{v}, nil
@@ -1295,8 +1338,14 @@ func prepareSetter(action string, params, expect []byte) ([]byte, []byte, error)
 		}
 		return params, []byte{params[0]}, nil
 	case "wearSensitivity":
-		if len(params) != 1 || params[0] < 1 || params[0] > 3 {
-			return nil, nil, errors.New("wearSensitivity: expected 1 (medium), 2 (normal) or 3 (high)")
+		listed := false
+		for _, it := range c.WearSensitivityItems {
+			if len(params) == 1 && it.Value == int(params[0]) {
+				listed = true
+			}
+		}
+		if len(params) != 1 || !listed {
+			return nil, nil, fmt.Errorf("wearSensitivity: expected one of %v", c.WearSensitivityItems)
 		}
 		return params, []byte{params[0]}, nil
 	}
@@ -1588,6 +1637,17 @@ var eqConfirmTimeout = 4 * time.Second
 // sweep or probe from draining the echo, or from interleaving its own write
 // between our read and our write.
 func (d *daemon) eqApply(op qcycore.EqOp) (*qcycore.EqResult, error) {
+	// A model recognised from its panel writes only into the slots the panel
+	// declares (and the custom slot 255), with the panel's protected slots.
+	// The N70 keeps the package defaults.
+	if h := d.knownHandler(); h != nil {
+		if c := h.Capabilities(); c.StrictEQ && c.EQ != nil {
+			op.ProtectedSlots = c.EQ.ProtectedSlots
+			if op.Slot != nil && *op.Slot != qcycore.SlotCustomApp && !containsInt(c.EQ.Slots, *op.Slot) {
+				return nil, fmt.Errorf("eq: slot %d is not one of the slots %s declares (%v) nor %d", *op.Slot, c.DisplayName, c.EQ.Slots, qcycore.SlotCustomApp)
+			}
+		}
+	}
 	d.txMu.Lock()
 	defer d.txMu.Unlock()
 	if !d.isConnected() {
@@ -1733,7 +1793,7 @@ var readOnlyCmds = buildReadOnlyCmds()
 
 func buildReadOnlyCmds() map[string]string {
 	// ldac (0x23) is no longer here: it is a verified-only setter whose
-	// restart the vendor server declares (verifiedOnlyActions).
+	// restart the vendor server declares (declaredOnlyActions).
 	m := map[string]string{}
 	if !promptVolWritable {
 		// One-byte writes to 0x1D were ignored (read back 06 0f). The
@@ -1755,6 +1815,15 @@ func sanePromptVolume(p []byte) bool {
 	return max > 0 && max <= 255 && int(p[0]) <= max
 }
 
+func containsInt(l []int, v int) bool {
+	for _, x := range l {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
 // handlerHasFeature reports whether the current handler declares the feature.
 func (d *daemon) handlerHasFeature(f FeatureFlag) bool {
 	h := d.knownHandler()
@@ -1769,24 +1838,51 @@ func (d *daemon) handlerHasFeature(f FeatureFlag) bool {
 	return false
 }
 
-// verifiedOnlyCmds are the daemon commands whose wire behaviour was only ever
-// established on the verified model: they are refused on any model that is not verified.
-var verifiedOnlyCmds = map[string]bool{"eqApply": true, "eqMasterGain": true, "keysSet": true, "fitTest": true,
-	"hearingMode": true, "hearingWrite": true, "windOffByte": true}
+// hasFeature reports whether c declares the feature.
+func hasFeature(c Capabilities, f FeatureFlag) bool {
+	for _, x := range c.Features {
+		if x == f {
+			return true
+		}
+	}
+	return false
+}
 
 // gateCommand is the single gate between a request and the model-specific
-// commands. A model that is not Verified gets none of the verified-only commands,
-// and "wear" only when its profile declares the wearDetect action.
+// commands: a command runs only when the connected model declares the
+// feature it drives (its Capabilities, derived from the model's panel where
+// the encoding is understood). Whether the model was tested on hardware plays
+// no part.
 func gateCommand(h ModelHandler, cmd string) error {
 	c := h.Capabilities()
-	if c.Verified {
-		return nil
+	refuse := func() error {
+		return fmt.Errorf("%s is disabled: %s does not declare it", cmd, c.DisplayName)
 	}
-	if verifiedOnlyCmds[cmd] {
-		return fmt.Errorf("%s is disabled: %s is not a verified model", cmd, c.DisplayName)
-	}
-	if cmd == "wear" && !declaresAction(c, "wearDetect") {
-		return fmt.Errorf("wear is disabled: %s does not declare it", c.DisplayName)
+	switch cmd {
+	case "eqApply", "eqMasterGain":
+		if !hasFeature(c, FeatureEQ) {
+			return refuse()
+		}
+	case "keysSet":
+		if !hasFeature(c, FeatureKeysRemap) {
+			return refuse()
+		}
+	case "fitTest":
+		if !hasFeature(c, FeatureFit) {
+			return refuse()
+		}
+	case "hearingMode", "hearingWrite":
+		if !c.HearingTest {
+			return refuse()
+		}
+	case "windOffByte":
+		if !declaresAction(c, "windNoise") {
+			return refuse()
+		}
+	case "wear":
+		if !declaresAction(c, "wearDetect") {
+			return refuse()
+		}
 	}
 	return nil
 }
@@ -1818,10 +1914,29 @@ func (d *daemon) modelReport() map[string]interface{} {
 		features = append(features, string(f))
 	}
 	m := map[string]interface{}{
-		"modelId": id, "displayName": c.DisplayName, "verified": c.Verified,
+		"modelId": id, "displayName": c.DisplayName,
+		// verified is informational ("tested on hardware"); the panel must not
+		// use it to gate a control. tested carries the same value under the
+		// name that says what it means.
+		"verified": c.Verified, "tested": c.Verified,
 		// What the connected model declares; the panel crosses its probe
 		// results with these so an undeclared control is never offered.
 		"actions": actions, "features": features,
+	}
+	if len(c.PromptVolumeSteps) > 0 {
+		m["promptVolumeSteps"] = c.PromptVolumeSteps
+	}
+	if len(c.WearSensitivityItems) > 0 {
+		m["wearSensitivityItems"] = c.WearSensitivityItems
+	}
+	if len(c.ANCModes) > 0 {
+		m["ancModes"] = c.ANCModes
+	}
+	if c.EQ != nil {
+		m["eq"] = c.EQ
+	}
+	if len(c.Notes) > 0 {
+		m["notes"] = c.Notes
 	}
 	if have {
 		m["vendorId"] = int(vendor)
@@ -1959,6 +2074,38 @@ func (d *daemon) readKeysLocked() ([]byte, error) {
 		return nil, fmt.Errorf("read keys 000D: %w", err)
 	}
 	return append([]byte(nil), buf[:n]...), nil
+}
+
+// checkKeyPairs, for a model recognised from its panel, accepts only
+// <keyId><actionId> pairs the panel lists (keyActionsFor). The N70 handler
+// keeps the unrestricted path it always had.
+func (d *daemon) checkKeyPairs(h ModelHandler, raw []byte) error {
+	if _, ok := h.(*profileHandler); !ok {
+		return nil
+	}
+	d.mu.Lock()
+	vendor, have := d.vendorID, d.haveVendor
+	d.mu.Unlock()
+	if !have {
+		return errors.New("keys set: the model is not known, no action list to check against")
+	}
+	ka := keyActionsFor(vendor)
+	for i := 0; i+1 < len(raw); i += 2 {
+		acts, ok := ka[fmt.Sprintf("%02x", raw[i])]
+		if !ok {
+			return fmt.Errorf("keys set: key %02x is not one the panel lists for this model", raw[i])
+		}
+		listed := false
+		for _, a := range acts {
+			if id, _ := a["id"].(int); id == int(raw[i+1]) {
+				listed = true
+			}
+		}
+		if !listed {
+			return fmt.Errorf("keys set: action %d is not one the panel lists for key %02x", raw[i+1], raw[i])
+		}
+	}
+	return nil
 }
 
 // writeKeys writes the remap table and reads it back, because the device sends

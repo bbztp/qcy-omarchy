@@ -219,6 +219,24 @@ type EqOp struct {
 	// writes up to 143 bytes there, so that target implies the flag. The
 	// implicit allowance looks at Slot only, never at the active slot.
 	AllowFullLength bool
+	// ProtectedSlots, when non-nil, replaces the package default
+	// (ProtectedSlots) for this write: the slots a model's panel marks as not
+	// to be overwritten. nil keeps the default; an empty non-nil slice
+	// protects nothing.
+	ProtectedSlots []int
+}
+
+// protects reports whether slot is protected for this write.
+func (op EqOp) protects(slot int) bool {
+	if op.ProtectedSlots == nil {
+		return IsProtectedSlot(slot)
+	}
+	for _, p := range op.ProtectedSlots {
+		if p == slot {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateEq checks a payload read from the device is usable for a
@@ -411,11 +429,11 @@ func checkProtected(active, target int, op EqOp) error {
 		return nil
 	}
 	switch {
-	case op.Slot != nil && IsProtectedSlot(*op.Slot):
+	case op.Slot != nil && op.protects(*op.Slot):
 		return refuse(*op.Slot, "factory or hearing-test curve whose current content cannot be read back once replaced; omit the slot to adjust the active one")
-	case IsProtectedSlot(active) && target != active:
+	case op.protects(active) && target != active:
 		return refuse(active, fmt.Sprintf("it is the active slot and writing slot %d would switch the device away from it", target))
-	case IsProtectedSlot(active) && op.Bands != nil:
+	case op.protects(active) && op.Bands != nil:
 		return refuse(active, "a full band list would replace its whole curve")
 	}
 	return nil

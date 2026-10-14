@@ -915,3 +915,24 @@ func TestEqMatchEmptyPositionTypeByte(t *testing.T) {
 		t.Fatal("stray type byte in an empty position confirmed")
 	}
 }
+
+// EqOp.ProtectedSlots replaces the default set for one write: nil keeps it,
+// an empty slice protects nothing, a list protects exactly those slots.
+func TestEqOpProtectedSlotsOverride(t *testing.T) {
+	cur := make([]byte, EqLen)
+	cur[0] = 8
+	cur[1], cur[2] = 0, 0
+	slot := func(n int) *int { return &n }
+	if _, err := ApplyEq(cur, EqOp{Slot: slot(6)}); !errors.Is(err, ErrProtectedSlot) {
+		t.Fatalf("default: %v", err)
+	}
+	if _, err := ApplyEq(cur, EqOp{Slot: slot(6), ProtectedSlots: []int{}}); err != nil {
+		t.Fatalf("empty list protects nothing: %v", err)
+	}
+	if _, err := ApplyEq(cur, EqOp{Slot: slot(3), ProtectedSlots: []int{3}}); !errors.Is(err, ErrProtectedSlot) {
+		t.Fatalf("listed slot: %v", err)
+	}
+	if _, err := ApplyEq(cur, EqOp{Slot: slot(11), ProtectedSlots: []int{6}}); err != nil {
+		t.Fatalf("unlisted slot: %v", err)
+	}
+}

@@ -12,7 +12,8 @@ import (
 	"github.com/bbztp/qcy-omarchy/internal/qcycore"
 )
 
-// Hearing test (phase 2): two raw-frame commands, only for verified models.
+// Hearing test (phase 2): two raw-frame commands, only for a model whose
+// handler drives them (Capabilities.HearingTest: the N70).
 //
 //	hearingMode  {on: bool, confirm:true}           FF 03 45 01 0x   (0x45: NOT verified on hardware)
 //	hearingWrite {ear, gains[8], confirm:true,      FF <n> 46|47 <n-2> 0B <mg> {bands}

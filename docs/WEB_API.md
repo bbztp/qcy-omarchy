@@ -87,8 +87,10 @@ big-endian, company id `0x521c`) instead of by the Bluetooth name:
 2. vendorId present in the Quicky product database (199 products) but not an N70 ->
    `qcy-<vendorId>`, driven by a profile generated from the product entry
    (`Features`: ANC, channel balance, find, auto-off, settings by cmdid 9/16/35/36/42/44
-   or by name). It offers only the actions of the shared command set that the product
-   declares; EQ is never offered or written, `promptVol` stays read-only; `ldac` is written on verified models only.
+   or by name). A model with an embedded panel offers what the panel declares and the
+   daemon understands (shared actions, 10-band EQ, type-10 keys, fit test, prompt volume,
+   wear sensitivity, packed ANC), with the panel's own parameters; one known only from
+   Quicky offers the shared actions it declares. Whether the model was tested is not a gate.
 3. otherwise the advertised name, then the firmware string, then `generic`.
 
 The vendorId is only visible in a scan, so it is stored as an extra last field of
@@ -96,19 +98,22 @@ The vendorId is only visible in a scan, so it is stored as an extra last field o
 files still load) and used on the fast path, which does not scan.
 
 `capabilities` carries `verified` (true only for the N70), `vendorId` and
-`productTitle` (both omitted when unknown). `status` adds a `model` object (also `actions` and `features`, the ids the model declares; the panel hides anything undeclared on an unverified model)
-(`modelId`, `displayName`, `verified`, `vendorId`, `productTitle`) and `capabilities.verified`.
-The panel shows "Unverified model" in Settings > Device when `verified` is false.
+`productTitle` (both omitted when unknown). `status` adds a `model` object (`modelId`,
+`displayName`, `verified`/`tested`, `vendorId`, `productTitle`, and `actions`, `features` and the
+per-model parameters the model declares; see PROTOCOL.md) and `capabilities.verified`.
+`verified` only says "tested on hardware": the panel may mention it but must not hide a
+declared feature because of it.
 
 ## Embedded snapshot
 `internal/qcycore/models/models.json` (embedded with `go:embed`, package `models`) is a
 snapshot, dated 2026-10-13, of the QCY product list (193 earbuds) and of the
 `product/findControlPanels` response for each vendorId (221 files; 191 with a panel). The
 daemon uses it without network access: `qcy-<vendorId>` is derived from the panel (ANC,
-balance, find, auto-off, wear detection and the `type` 4 toggles by cmdid 9/16/35/36/42);
-EQ, fit test, prompt volume and wear sensitivity are still not offered to unverified
-models even when the panel lists them. With no entry in the snapshot, it falls back to the
-Quicky database.
+balance, find, auto-off, wear detection and the `type` 4 toggles by cmdid 9/16/35/36/42,
+plus the 10-band EQ, type-10 keys, fit test, prompt volume, wear sensitivity and packed
+ANC groups with the panel's parameters). A feature whose encoding is not understood
+(5-band EQ, single-byte ANC, legacy key layouts) is left out and noted in `model.notes`.
+With no entry in the snapshot, it falls back to the Quicky database.
 
 - Source: the public QCY product list
   and the server panel JSON per vendorId (outside the repository).

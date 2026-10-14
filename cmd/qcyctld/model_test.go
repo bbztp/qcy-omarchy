@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -112,8 +113,17 @@ func TestProfileHandlerMatchesProduct(t *testing.T) {
 	for _, f := range c.Features {
 		feats[f] = true
 	}
-	if feats[FeatureEQ] || feats[FeatureKeysRemap] || feats[FeatureFit] {
-		t.Error("EQ/keys/fit must not be offered on an unverified model")
+	// The panel lists a 10-band EQ and type-10 keys: both are offered although
+	// the model was never tested here. It has no fit test.
+	if !feats[FeatureEQ] || !feats[FeatureKeysRemap] {
+		t.Errorf("EQ/keys must be offered from the panel: %v", c.Features)
+	}
+	if feats[FeatureFit] || feats[FeaturePromptVolume] {
+		t.Errorf("fit/promptVolume offered without a panel entry: %v", c.Features)
+	}
+	if c.EQ == nil || c.EQ.Bands != 10 || len(c.EQ.Freqs) != 10 || c.EQ.MinDb != -8 || c.EQ.MaxDb != 8 ||
+		len(c.EQ.ProtectedSlots) != 1 || c.EQ.ProtectedSlots[0] != 6 {
+		t.Errorf("eq spec %+v", c.EQ)
 	}
 	if !feats[FeatureFind] || !feats[FeatureANC] || !feats[FeatureBalance] || !feats[FeatureAutoOff] {
 		t.Errorf("features %v", c.Features)
@@ -153,7 +163,7 @@ type vendorDialer struct {
 
 func (v vendorDialer) VendorID() (uint16, bool) { return v.vendor, true }
 
-func TestDaemonUsesVendorIDAndKeepsProfileReadOnly(t *testing.T) {
+func TestDaemonProfileOffersWhatItsPanelDeclares(t *testing.T) {
 	cfg := defaultLifecycle()
 	cfg.idle = time.Hour
 	d := newDaemon(vendorDialer{&fakeDialer{}, 19786}, cfg)
@@ -164,57 +174,50 @@ func TestDaemonUsesVendorIDAndKeepsProfileReadOnly(t *testing.T) {
 	if !ok {
 		t.Fatalf("status has no model: %v", rep)
 	}
-	if m["modelId"] != "qcy-19786" || m["verified"] != false || m["vendorId"] != 19786 || m["productTitle"] != "QCY MeloBuds Pro" {
+	if m["modelId"] != "qcy-19786" || m["verified"] != false || m["tested"] != false || m["vendorId"] != 19786 || m["productTitle"] != "QCY MeloBuds Pro" {
 		t.Fatalf("model %v", m)
 	}
-	if c, _ := mustStatus(t, d)["capabilities"].(map[string]interface{}); c["eq"] != false {
-		t.Errorf("eq must be false on an unverified model: %v", c)
+	if c, _ := mustStatus(t, d)["capabilities"].(map[string]interface{}); c["eq"] != true {
+		t.Errorf("eq must be offered from the panel on an untested model: %v", c)
+	}
+	if e, ok := m["eq"].(*EQSpec); !ok || e.Bands != 10 {
+		t.Errorf("model.eq = %v", m["eq"])
+	}
+	if _, ok := m["keyActions"]; !ok {
+		t.Errorf("model.keyActions missing: %v", m)
+	}
+	if modes, _ := m["ancModes"].([]ANCModeSpec); len(modes) == 0 || len(modes[0].Params) != 3 {
+		t.Errorf("model.ancModes = %v", m["ancModes"])
 	}
 
-	for _, cmd := range []string{"eqApply", "eqMasterGain", "keysSet", "hearingMode", "hearingWrite"} {
+	// Undeclared commands and actions are refused as "not declared".
+	for _, cmd := range []string{"fitTest", "hearingMode", "hearingWrite"} {
 		_, err := d.handleRequest(request{Cmd: cmd, Args: map[string]interface{}{"masterGain": float64(0)}})
-		if err == nil || !strings.Contains(err.Error(), "not a verified model") {
+		if err == nil || !strings.Contains(err.Error(), "does not declare") {
 			t.Errorf("%s: %v", cmd, err)
 		}
 	}
-	// An action the product does not declare is refused with a clear error.
-	_, err := d.handleRequest(request{Cmd: "set", Args: map[string]interface{}{"action": "windNoise"}})
-	if err == nil || !strings.Contains(err.Error(), "not declared") {
-		t.Errorf("windNoise: %v", err)
-	}
-	_, err = d.handleRequest(request{Cmd: "set", Args: map[string]interface{}{"action": "wind"}})
-	if err == nil || !strings.Contains(err.Error(), "not declared") {
-		t.Errorf("wind (daemon id): %v", err)
-	}
-	// promptVol and wearSensitivity are N70-only: a profile does not declare them.
-	for _, a := range []string{"promptVol", "wearSensitivity"} {
-		_, err = d.handleRequest(request{Cmd: "set", Args: map[string]interface{}{"action": a, "params": []interface{}{float64(6)}}})
+	for _, a := range []string{"windNoise", "wind"} {
+		_, err := d.handleRequest(request{Cmd: "set", Args: map[string]interface{}{"action": a}})
 		if err == nil || !strings.Contains(err.Error(), "not declared") {
 			t.Errorf("%s: %v", a, err)
 		}
 	}
-	if _, err = d.handleRequest(request{Cmd: "fitTest"}); err == nil || !strings.Contains(err.Error(), "not a verified model") {
-		t.Errorf("fitTest: %v", err)
-	}
-	_, err = d.handleRequest(request{Cmd: "set", Args: map[string]interface{}{"action": "ldac"}})
-	if err == nil || !strings.Contains(err.Error(), "verified model") {
-		t.Errorf("ldac: %v", err)
+	// This panel has no beep or wear-sensitivity entry.
+	for _, a := range []string{"promptVol", "wearSensitivity"} {
+		_, err := d.handleRequest(request{Cmd: "set", Args: map[string]interface{}{"action": a, "params": []interface{}{float64(6)}}})
+		if err == nil || !strings.Contains(err.Error(), "not declared") {
+			t.Errorf("%s: %v", a, err)
+		}
 	}
 	if acts, _ := m["actions"].([]string); len(acts) == 0 {
 		t.Errorf("model.actions missing: %v", m)
 	}
-	// ldac (verified models only) and promptVol are not writable here.
-	for _, a := range []string{"ldac", "promptVol"} {
-		_, err := d.handleRequest(request{Cmd: "set", Args: map[string]interface{}{"action": a}})
-		if err == nil {
-			t.Errorf("%s was writable", a)
-		}
-	}
 	if _, ro := readOnlyCmds["ldac"]; ro {
-		t.Error("ldac must not be in readOnlyCmds any more (verified-only instead)")
+		t.Error("ldac must not be in readOnlyCmds")
 	}
-	if !verifiedOnlyActions["ldac"] {
-		t.Error("ldac must be a verified-only action")
+	if !declaredOnlyActions["ldac"] {
+		t.Error("ldac must be a declared-only action")
 	}
 	if _, ro := readOnlyCmds["promptVol"]; ro == promptVolWritable {
 		t.Errorf("promptVol read-only=%v with promptVolWritable=%v", ro, promptVolWritable)
@@ -295,8 +298,11 @@ func TestEQCapabilityFollowsTheConnectedModel(t *testing.T) {
 		wantFirst   bool
 		wantNext    bool
 	}{
-		{"non-n70 then n70", 19786, 23872, false, true},
-		{"n70 then non-n70", 23872, 19786, true, false},
+		// 18863 (T2C) declares a 5-band EQ, which the payload builder does not
+		// write: not offered. 19786 declares 10 bands: offered.
+		{"5-band then n70", 18863, 23872, false, true},
+		{"n70 then 5-band", 23872, 18863, true, false},
+		{"10-band non-n70 then 5-band", 19786, 18863, true, false},
 	} {
 		v := c.first
 		cfg := defaultLifecycle()
@@ -315,16 +321,21 @@ func TestEQCapabilityFollowsTheConnectedModel(t *testing.T) {
 	}
 }
 
-func TestNeighbourVendorIDsAreNotVerified(t *testing.T) {
+func TestNeighbourVendorIDsAreProfilesWithTheirOwnPanel(t *testing.T) {
 	for _, v := range []uint16{23873, 23874, 23875} {
 		c := GetHandler(detectModel(v, true, "", "")).Capabilities()
 		if c.Verified {
 			t.Errorf("%d verified", v)
 		}
+		eq := false
 		for _, f := range c.Features {
 			if f == FeatureEQ {
-				t.Errorf("%d offers EQ", v)
+				eq = true
 			}
+		}
+		// 23875 (CT03) has no panel: nothing to drive an EQ from.
+		if want := v != 23875; eq != want {
+			t.Errorf("%d: eq offered = %v, want %v", v, eq, want)
 		}
 	}
 	if _, ok := GetHandler(detectModel(23876, true, "", "")).(GenericHandler); !ok {
@@ -333,8 +344,9 @@ func TestNeighbourVendorIDsAreNotVerified(t *testing.T) {
 }
 
 // 23880 (MeloBuds N70i) is only in the embedded snapshot, not in Quicky. Its
-// panel lists EQ, fit, beep volume and wear sensitivity: none may be offered.
-func TestSnapshotOnlyVendorIsAnUnverifiedProfile(t *testing.T) {
+// panel lists EQ, fit, beep volume, wear sensitivity and type-10 keys: all are
+// offered from the panel, with the panel's parameters, though it is untested.
+func TestSnapshotOnlyVendorOffersItsPanel(t *testing.T) {
 	if _, ok := quickyProduct(23880); ok {
 		t.Skip("23880 is now in the Quicky database; pick another snapshot-only vendor")
 	}
@@ -353,24 +365,35 @@ func TestSnapshotOnlyVendorIsAnUnverifiedProfile(t *testing.T) {
 	for _, f := range c.Features {
 		feats[f] = true
 	}
-	if feats[FeatureEQ] || feats[FeatureFit] || feats[FeatureKeysRemap] {
-		t.Errorf("EQ/fit/keys offered: %v", c.Features)
-	}
-	if !feats[FeatureANC] || !feats[FeatureWearDetect] || !feats[FeatureFind] {
-		t.Errorf("features %v", c.Features)
-	}
-	for _, a := range c.Actions {
-		switch a.ID {
-		case "promptVolume", "wearSensitivity":
-			t.Errorf("action %s must not be offered", a.ID)
+	for _, f := range []FeatureFlag{FeatureEQ, FeatureFit, FeatureKeysRemap, FeaturePromptVolume, FeatureANC, FeatureWearDetect, FeatureFind} {
+		if !feats[f] {
+			t.Errorf("feature %s missing: %v", f, c.Features)
 		}
+	}
+	for _, id := range []string{"promptVolume", "wearSensitivity", "anc"} {
+		if !declaresAction(c, id) {
+			t.Errorf("action %s missing", id)
+		}
+	}
+	if fmt.Sprint(c.PromptVolumeSteps) != "[4 6 8 10]" || len(c.WearSensitivityItems) != 3 || c.WearSensitivityItems[2].Value != 3 {
+		t.Errorf("steps %v items %v", c.PromptVolumeSteps, c.WearSensitivityItems)
+	}
+	if c.EQ == nil || fmt.Sprint(c.EQ.ProtectedSlots) != "[6 11]" || !containsInt(c.EQ.Slots, 11) || !containsInt(c.EQ.Slots, 14) && !containsInt(c.EQ.Slots, 10) {
+		t.Errorf("eq %+v", c.EQ)
+	}
+	if !c.WearOffZero || !c.WindOffZero {
+		t.Errorf("off bytes: wear %v wind %v", c.WearOffZero, c.WindOffZero)
+	}
+	if c.HearingTest {
+		t.Error("hearing-test frames are only driven for the N70")
 	}
 	// The verified N70 is unchanged.
 	if detectModel(23872, true, "", "") != "melobuds-n70" || detectModel(23877, true, "", "") != "melobuds-n70" {
 		t.Error("n70 detection changed")
 	}
-	if !GetHandler("melobuds-n70").Capabilities().Verified {
-		t.Error("n70 must stay verified")
+	n := GetHandler("melobuds-n70").Capabilities()
+	if !n.Verified || !n.HearingTest || n.StrictEQ {
+		t.Error("n70 must stay verified, hearing-capable and on the default EQ rules")
 	}
 }
 

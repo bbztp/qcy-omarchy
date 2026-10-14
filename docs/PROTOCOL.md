@@ -61,7 +61,7 @@ answer a game-mode query with `0x02` when it is off.
 | `0x1E` | music control | `[1, action]` | unverified |
 | `0x20` | EQ v1 write | — | unverified |
 | `0x22` | EQ v2 read **and** write | see [EQ](#eq) | verified read and write; every write is read-modify-write with a backup |
-| `0x23` | LDAC | `[1, 1\|2]` | restarts the earbuds (the official panel declares it: "Turning on LDAC will restart the device"); write enabled on verified models only; **not verified on hardware**: the readback after the restart is unobserved |
+| `0x23` | LDAC | `[1, 1\|2]` | restarts the earbuds (the official panel declares it: "Turning on LDAC will restart the device"); written on any model whose panel declares it (cmd 35); **not verified on hardware**: the readback after the restart is unobserved |
 | `0x24` | multipoint | `[1, 1\|2]` | verified: reboots the earbuds, expected |
 | `0x2A` | wind noise reduction | `[1, 1\|2]` | verified (added — was missing from this table) |
 | `0x2A` | wind detection | `[1, 1\|2]`; off is **0x00** as the app writes it (**verified on hardware 2026-10-13**: `FF 03 2A 01 00` reads back 0x00); 0x02 also reads as off (also verified) | verified |
@@ -98,7 +98,7 @@ Every wired setter was exercised through the daemon and read back with
 | spatial `0x2D` | no query reply on this model |
 | fit `0x11` | no query reply (the app never queries it); start `FF 05 11 03 01 01 01` / stop `FF 05 11 03 00 00 00` verified 2026-10-13: the final notification `[2, left, right]` arrives |
 | eq `0x22` | honours the write; only written through a read-patch-backup-write transaction (see [EQ](#eq)) |
-| ldac `0x23` | an earlier test rebooted the earbuds; the restart is declared by the official panel, so the write is now allowed on verified models (`qcyctl ldac <on\|off> --yes`); **not verified on hardware since this change** |
+| ldac `0x23` | an earlier test rebooted the earbuds; the restart is declared by the official panel, so the write is allowed on any model whose panel declares it (`qcyctl ldac <on\|off> --yes`); **not verified on hardware since this change** |
 
 Game, sleep and wind read back `false` after a reconnect and wind persisted
 across one, so treat their post-reconnect value as unsettled rather than as
@@ -407,7 +407,7 @@ Two writes restart the earbuds:
 - **LDAC (`0x23`) — expected, per the official panel.** The vendor server
   declares the action with the text "Turning on LDAC will restart the device"
   (see WEB_API.md), so the restart is documented behaviour, like multipoint.
-  The setter is therefore enabled on verified models only
+  The setter is therefore enabled on models that declare it
   (`qcyctl ldac <on|off> --yes`; the `ldac` capability comes from the `FE 01 23`
   probe). The write is sent once and never repeated: if the link drops right
   after the write was accepted, the daemon reports "applied, the earbuds
@@ -478,14 +478,14 @@ daemon and `qcyctl prompt-vol <4|6|8|10|low|medium|high|max>` now write the
 app's frame and confirm by reading back (after ~200 ms) that byte 0 equals v;
 a mismatch is reported as "escrito mas o aparelho reportou X". The constant
 `promptVolWritable` (daemon and CLI, currently `true`) turns this back into
-read-only. The write is limited to verified models (verified on the N70): a model that is not verified refuses it.
+read-only. The write is offered to every model whose panel declares a beep list on command 29 (the daemon takes the values from the panel; the frame is verified on the N70); a model that does not declare it refuses it.
 
-The two other controls, also limited to verified models (verified on the N70), read from the same app:
+The two other controls, offered to every model whose panel declares them (frames verified on the N70), read from the same app:
 
 | Control | Write | Query | Values |
 |---|---|---|---|
-| Prompt volume `0x1D` | `FF 04 1D 02 v 00` | `FF 03 FE 01 1D` -> `<value> <max>` | v 4 / 6 / 8 / 10 |
-| Wear-sensor sensitivity `0x48` | `FF 03 48 01 p` | `FF 03 FE 01 48` -> `<p>` | 1 medium, 2 normal, 3 high |
+| Prompt volume `0x1D` | `FF 04 1D 02 v 00` | `FF 03 FE 01 1D` -> `<value> <max>` | v from the panel's list (`model.promptVolumeSteps`; 4 / 6 / 8 / 10 on the N70) |
+| Wear-sensor sensitivity `0x48` | `FF 03 48 01 p` | `FF 03 FE 01 48` -> `<p>` | p from the panel (`model.wearSensitivityItems`; 1 medium, 2 normal, 3 high) |
 | Fit (seal) test `0x11` | start `FF 05 11 03 01 01 01`, stop `FF 05 11 03 00 00 00` | none | notification `[status, left, right]`; the daemon waits for status 2; per ear 3 sealed, 2 good, 1 fair, 0 poor |
 
 All three were verified on the N70 on 2026-10-13. The daemon and `qcyctl`
@@ -558,22 +558,62 @@ If the scan finds nothing and no cached address answers, the daemon replies `{"o
 | `eq` | none | `{slot, effect (when known), masterGain (dB), bands[{freq,gain,q,type}], payload (hex)}` |
 | `eqApply` | optional `gains` (10 ints, centi-dB), `masterGain` (int, centi-dB), `slot` (int), `bands` (array of `{index, freq, gain (dB, number), q, type}`, exclusive with `gains`), `allowProtected` (bool), `allowFull` (bool). Nothing else: unknown keys and raw payloads (`payload`, `raw`, `hex`, ...) are rejected | the `eq` object plus `previous`, `fullLength`, `backupFirst`, `backupHistory` |
 | `eqMasterGain` | `masterGain` (int, centi-dB), required; optional `allowProtected`, `allowFull` | same as `eqApply` |
-| `wear` | `state`: 1 on / 2 off (written as 0x00 on verified models, 0x02 otherwise); `literal: true` with `state` 0 or 2 writes exactly that byte (0 refused on unverified models) | confirmed `0x2C` payload (byte array) |
-| `fitTest` | optional `seconds` (5..60, default 30) | `{status, left, right}` once the notification with status 2 arrives; the stop frame is always sent at the end; verified models only (verified on the N70) |
+| `wear` | `state`: 1 on / 2 off (written as 0x00 where the model's panel declares 0 as off, as the N70 does, 0x02 otherwise); `literal: true` with `state` 0 or 2 writes exactly that byte (0 refused where the panel does not declare it) | confirmed `0x2C` payload (byte array) |
+| `fitTest` | optional `seconds` (5..60, default 30) | `{status, left, right}` once the notification with status 2 arrives; the stop frame is always sent at the end; models whose panel declares the fit test (cmd 17) |
 | `fitStop` | none | cancels a running `fitTest` (which then fails with `fit: cancelled`), otherwise sends the stop frame |
 | `noise` | none | raw `0x17` payload `[mode, scene, level]` |
 | `find`, `keys`, `keysSet`, `disconnect` | as before | |
 
-`set` also accepts `promptVol` (`params` `[v]`, v in 4/6/8/10; sent as `[v, 0]`) and `wearSensitivity` (`params` `[1..3]`), both limited to verified models (verified on the N70) and read back after ~200 ms; `status` carries `wearSensitivity` (1..3) only when the unit answers `0x48`.
+`set` also accepts `promptVol` (`params` `[v]`, v one of `model.promptVolumeSteps`; sent as `[v, 0]`) and `wearSensitivity` (`params` `[p]`, p one of `model.wearSensitivityItems`), both only when the model declares them, and read back after ~200 ms; `status` carries `wearSensitivity` only when the model declares it and the unit answers `0x48`.
 
-`eqApply`, `eqMasterGain`, `keysSet` and `fitTest` are refused on a model that
-is not verified (`<cmd> is disabled: <model> is not a verified model`), and so
-are the `promptVol` and `wearSensitivity` setters. `wear` is refused unless the
-model's profile declares wear detection. `status` carries a `model` object:
-`{modelId, displayName, verified, actions, features, vendorId?, productTitle?, keyActions?}`.
-`keyActions` maps each music-mode key id (two hex digits, as in the `keys`
-pairs) to the actions the model's panel offers for it, `[{id, name}]`; it is
-absent when the panel declares none. Call-mode keys are not listed.
+Nothing is gated on whether a model was tested on hardware. A command runs when
+the connected model declares the feature it drives: `eqApply` and
+`eqMasterGain` need `eq` in `model.features`, `keysSet` needs `keysRemap`,
+`fitTest` needs `fit`, `wear` needs the `wearDetect` action, `windOffByte` the
+`windNoise` action, and the `promptVol`, `wearSensitivity` and `ldac` setters
+their own action (`<cmd> is disabled: <model> does not declare it`, or `<action>
+is not declared by this model`). The generic fallback (unknown model) declares
+no panel, so those three setters are refused there. `hearingMode` and
+`hearingWrite` are driven for the N70 only (the baseline levels and the
+`0x45`-`0x47` frames are not known for other models). Only firmware/OTA
+writing is forbidden for every model.
+
+`status` carries a `model` object:
+`{modelId, displayName, verified, tested, actions, features, vendorId?, productTitle?, keyActions?, promptVolumeSteps?, wearSensitivityItems?, ancModes?, eq?, notes?}`.
+
+- `verified` / `tested` (same value): informational, "this tool was tested on
+  hardware with this model" (only the N70). It gates nothing; a client must not
+  hide a declared feature because it is false.
+- `actions` / `features`: what the model declares (see `capabilities`).
+- `keyActions` maps each music-mode key id (two hex digits, as in the `keys`
+  pairs) to the actions the model's panel offers for it, `[{id, name}]`; it is
+  absent when the panel declares none. Call-mode keys are not listed. Present
+  together with the `keysRemap` feature, which is declared only for panels with
+  the type-10 key layout; the daemon checks every `keysSet` pair against it for
+  models other than the N70.
+- `promptVolumeSteps`: `[int]`, the values `promptVol` accepts (the panel's
+  beep list). Present with the `promptVolume` action.
+- `wearSensitivityItems`: `[{name, value}]`, the choices of `wearSensitivity`,
+  ascending. Present with that action.
+- `ancModes`: `[{name, start, end, default, params, items?[{name, start, end,
+  params}]}]`, the ANC groups of the panel. `start`, `end` and `default` are the
+  packed values `(mode<<16)|(scene<<8)|level`; `params` is `default` (for an
+  item `start`) split into the three bytes `[mode, scene, level]` that `set anc`
+  carries. Present only with the packed encoding (all values >= 65536); a panel
+  with single-byte ANC values gets no `anc` action and a note.
+- `eq`: `{bands, freqs, minDb, maxDb, slots, protectedSlots}`. `bands` is 10
+  (the only layout `eqApply` writes), `freqs` the panel's band centres, `minDb`
+  and `maxDb` the panel's own range as signed values (the daemon itself accepts
+  +-12 dB), `slots` the effect ids the panel lists (an effect without an id takes
+  its list position + 1) plus the personalised-listening slot, `protectedSlots`
+  the personalised-listening slot and the classic curve (id 6) when listed.
+  For a model other than the N70, `eqApply` accepts an explicit `slot` only
+  among `slots` and 255, and refuses `protectedSlots` without `allowProtected`.
+  A 5-band panel gets no `eq` and a note.
+- `notes`: `[string]`, why a feature the panel lists is not offered: its
+  encoding is not understood by this tool (for example `anc: encoding not
+  supported ...`, `eq: 5-band layout not supported ...`, `keys: layout not
+  supported ...`). Absent when there is nothing to say.
 
 `eqApply`, `eqMasterGain` and `wear` read, patch and write under a single
 transaction lock, so a concurrent status sweep cannot interleave. `eqApply` is

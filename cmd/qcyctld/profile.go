@@ -43,10 +43,10 @@ func vendorFromModelID(id string) (uint16, bool) {
 	return uint16(n), true
 }
 
-// profileHandler drives a QCY model that is in the product database but was
-// never exercised here. It offers only the shared command set (the
-// GenericHandler's actions) and only the part of it the product declares. It
-// never writes EQ and never invents opcodes.
+// profileHandler drives a QCY model that is in the product database. It offers
+// the shared command set (the GenericHandler's actions) that the product
+// declares, and the panel-driven features of its embedded panel. It never
+// invents opcodes; "not tested on hardware" (Verified false) gates nothing.
 type profileHandler struct {
 	vendorID uint16
 	title    string
@@ -88,36 +88,29 @@ var featureOfAction = map[string]FeatureFlag{
 // dedicated gaming/multi-device layouts) onto the shared action it drives.
 var toggleByCmd = map[int]string{9: "gameMode", 16: "sleepMode", 35: "ldac", 36: "multipoint", 42: "windNoise", 44: "wearDetect"}
 
-// snapshotCapabilities derives the offer from the server panel. Only the
-// shared command set is offered, filtered by what the panel declares: EQ, fit,
-// prompt volume and wear sensitivity are never offered on an unverified model
-// even though the panel lists them.
+// snapshotCapabilities derives the offer from the server panel: the shared
+// command set filtered by what the panel declares, plus the panel-driven
+// features whose encoding this tool understands (EQ, keys, fit, prompt volume,
+// wear sensitivity, ANC groups) with the parameters the panel gives. A feature
+// the panel lists in an encoding that is not understood is left out and
+// explained in Notes.
 func snapshotCapabilities(vendorID uint16, p models.Product) Capabilities {
-	pn := p.Panel
-	declared := map[string]bool{}
-	if pn.ANC != nil {
-		declared["anc"] = true
+	dv := deriveFromPanel(vendorID, p)
+	var find *bool
+	if dv.find {
+		find = &dv.find
 	}
-	if pn.Balance {
-		declared["balance"] = true
-	}
-	if pn.AutoOff != nil {
-		declared["autoOff"] = true
-	}
-	if pn.Wear != nil {
-		declared["wearDetect"] = true
-	}
-	for _, o := range pn.Other {
-		if o.Type == nil || o.CmdID == nil {
-			continue
-		}
-		if *o.Type == 4 || *o.Type == 113 {
-			if id, ok := toggleByCmd[*o.CmdID]; ok {
-				declared[id] = true
-			}
-		}
-	}
-	return baseProfileCaps(vendorID, p.Title, declared, &pn.Find)
+	c := baseProfileCaps(vendorID, p.Title, dv.declared, find)
+	c.Features = append(c.Features, dv.features...)
+	c.Actions = append(c.Actions, dv.actions...)
+	c.PromptVolumeSteps = dv.promptSteps
+	c.WearSensitivityItems = dv.wearItems
+	c.ANCModes = dv.ancModes
+	c.EQ = dv.eq
+	c.Notes = dv.notes
+	c.StrictEQ = dv.eq != nil
+	c.WearOffZero, c.WindOffZero = dv.wearOffZero, dv.windOffZero
+	return c
 }
 
 // baseProfileCaps builds the capabilities from the set of declared shared
@@ -206,8 +199,9 @@ func profileCapabilities(vendorID uint16, p *quicky.Product) Capabilities {
 		features = append(features, FeatureFind)
 	}
 	features = append(features, FeatureBatteryCase)
-	// Features.EQ is deliberately not mapped: EQ stays unavailable on models
-	// that were not verified, so no write path is advertised.
+	// Features.EQ carries no geometry or slot ids, so there is nothing to
+	// drive it from: EQ, keys, prompt volume and wear sensitivity are only
+	// offered from an embedded panel (snapshotCapabilities).
 	return Capabilities{
 		ModelID:      "qcy-" + strconv.Itoa(int(vendorID)),
 		DisplayName:  p.Title,
@@ -217,6 +211,7 @@ func profileCapabilities(vendorID uint16, p *quicky.Product) Capabilities {
 		Verified:     false,
 		VendorID:     int(vendorID),
 		ProductTitle: p.Title,
+		Notes:        []string{"eq, keys, prompt volume, wear sensitivity: no embedded panel for this model, nothing to drive them from"},
 	}
 }
 

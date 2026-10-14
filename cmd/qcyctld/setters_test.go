@@ -268,16 +268,22 @@ func TestFitStopCancelsARunningTest(t *testing.T) {
 	}
 }
 
-func TestN70DeclaresTheNewActionsProfileDoesNot(t *testing.T) {
+// A profile declares prompt volume and wear sensitivity exactly when its panel
+// lists them: 19786 does not, 23873 (AilyBuds E50) does, like the N70.
+func TestN70AndPanelProfilesDeclareTheNewActionsFromTheirPanel(t *testing.T) {
 	has := func(c Capabilities, id string) bool { return declaresAction(c, id) }
 	n70 := GetHandler("melobuds-n70").Capabilities()
-	prof := GetHandler("qcy-19786").Capabilities()
+	without := GetHandler("qcy-19786").Capabilities()
+	with := GetHandler("qcy-23873").Capabilities()
 	for _, id := range []string{"wearSensitivity", "promptVolume"} {
 		if !has(n70, id) {
 			t.Errorf("n70 lacks %s", id)
 		}
-		if has(prof, id) {
-			t.Errorf("profile declares %s", id)
+		if has(without, id) {
+			t.Errorf("19786 declares %s although its panel does not", id)
+		}
+		if !has(with, id) {
+			t.Errorf("23873 lacks %s although its panel lists it", id)
 		}
 	}
 }
@@ -435,7 +441,8 @@ func TestWearOffByteZeroConfirmsOnEitherOffByte(t *testing.T) {
 }
 
 // scriptVendorDialer is a scripted link that reports a vendorId, so a test
-// can make the daemon see an unverified model.
+// can make the daemon see a model other than the N70 (vendor 0: the generic
+// fallback, which declares no panel).
 type scriptVendorDialer struct {
 	scriptDialer
 	vendor uint16
@@ -446,6 +453,17 @@ func (v scriptVendorDialer) VendorID() (uint16, bool) { return v.vendor, true }
 func (v scriptVendorDialer) Dial(onNotify func([]byte)) (session, string, error) {
 	sess, _, err := v.scriptDialer.Dial(onNotify)
 	return sess, "QCY Earbuds", err
+}
+
+func vendorScriptDaemon(t *testing.T, vendor uint16, onWrite func(*scriptSession, byte, []byte)) (*daemon, *scriptSession) {
+	t.Helper()
+	s := &scriptSession{state: map[byte][]byte{}, onWrite: onWrite}
+	cfg := defaultLifecycle()
+	cfg.idle = time.Hour
+	d := newDaemon(scriptVendorDialer{scriptDialer{s}, vendor}, cfg)
+	mustStatus(t, d)
+	settle(t, d)
+	return d, s
 }
 
 func unverifiedScriptDaemon(t *testing.T, onWrite func(*scriptSession, byte, []byte)) (*daemon, *scriptSession) {
@@ -510,28 +528,28 @@ func TestWindOffDefaultIsZeroOnVerified(t *testing.T) {
 	}
 }
 
-func TestOffByteZeroRefusedOnUnverifiedModel(t *testing.T) {
+func TestOffByteZeroRefusedWhereNoPanelDeclaresIt(t *testing.T) {
 	d, s := unverifiedScriptDaemon(t, nil)
 	s.set(0x2C, []byte{1, 5, 6})
 	if _, err := d.handleRequest(request{Cmd: "wear", Args: map[string]interface{}{"state": float64(0), "literal": true}}); err == nil {
-		t.Error("wear off byte 0 accepted on an unverified model")
+		t.Error("wear off byte 0 accepted without a declaring panel")
 	}
 	if _, err := d.handleRequest(setReq("wind", 0)); err == nil {
-		t.Error("wind off byte 0 accepted on an unverified model")
+		t.Error("wind off byte 0 accepted without a declaring panel")
 	}
 	if _, err := d.handleRequest(request{Cmd: "windOffByte", Args: map[string]interface{}{"byte": float64(0)}}); err == nil {
-		t.Error("windOffByte accepted on an unverified model")
+		t.Error("windOffByte accepted without a declaring panel")
 	}
 	// Off keeps the conservative 0x02.
 	_, _ = d.handleRequest(setReq("wind", 2))
 	fr := framesOf(s, 0x2A)
 	if len(fr) != 1 || fr[0][4] != 0x02 {
-		t.Fatalf("unverified wind off frame %x", fr)
+		t.Fatalf("generic wind off frame %x", fr)
 	}
 	_, _ = d.handleRequest(request{Cmd: "wear", Args: map[string]interface{}{"state": float64(2)}})
 	fr = framesOf(s, 0x2C)
 	if len(fr) != 1 || fr[0][4] != 0x02 {
-		t.Fatalf("unverified wear off frame %x", fr)
+		t.Fatalf("generic wear off frame %x", fr)
 	}
 	if n := len(framesOf(s, 0x2C)); n != 1 {
 		t.Fatalf("%d wear frames", n)
