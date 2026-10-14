@@ -16,19 +16,27 @@ Battery, noise control, equalizer and settings for QCY earbuds, from the Omarchy
 </div>
 
 A bar widget for the [Omarchy](https://omarchy.org) shell. It talks to the earbuds
-directly over Bluetooth Low Energy, with no phone and no vendor app. It is
-developed against the **MeloBuds N70 / HT18** and written to the vendor's
-low-energy GATT protocol. Every model follows what its own panel declares; only the N70 is tested on hardware.
+directly over Bluetooth Low Energy, with no phone and no vendor app. It speaks
+the vendor's low-energy GATT protocol and works for **QCY earbuds in general**:
+each model offers what its own product panel declares, so controls such as the
+equalizer, touch keys or noise modes appear only when the model has them.
+
+> **Hardware status.** So far it has been tested on real hardware with the
+> **MeloBuds N70** only. Other models are driven from their declared panel and
+> covered by automated tests, but have not been exercised on a device. See
+> [Supported models](#supported-models) and [Contributing](#contributing).
 
 ## What it does
+
+Availability depends on the model's panel; the list below is the full set.
 
 | Area | Features |
 | --- | --- |
 | Battery | Left, right and case as pictures with a level bar (red below 20%, amber to 49%, green from 50%) and charging flags. |
 | Noise control | Off, Adaptive, Indoor, Commuting, Noisy, Anti-wind, Transparency. |
 | Toggles | LDAC (hi-res audio), Multipoint, Game mode (low latency), Sleep mode, Wind noise reduction. |
-| Equalizer | Effect library and a 10-band editor (31 Hz to 16 kHz, ±12 dB), with a personal library of saved curves. |
-| Settings (N70) | Prompt volume (4/6/8/10), wear-sensor sensitivity (medium/normal/high), ear-tip fit test with a result per ear, touch controls, balance, auto power-off. |
+| Equalizer | Effect library and a band editor (10 bands, 31 Hz to 16 kHz; range from the model's panel, ±12 dB on the N70), with a personal library of saved curves. |
+| Settings | Prompt volume, wear-sensor sensitivity, ear-tip fit test with a result per ear, touch controls, balance, auto power-off; value sets come from the model's panel. |
 | Readout | Firmware, EQ preset and curve, balance, auto power-off, prompt volume. |
 
 ### Highlights
@@ -107,8 +115,8 @@ advertisement, not by the Bluetooth name.
 
 | vendorId | Model | Profile |
 | --- | --- | --- |
-| 23872, 23877 | MeloBuds N70 | **Tested on hardware**: everything above, including EQ and touch keys. |
-| any other id in the embedded QCY product list | `qcy-<vendorId>` | Everything the product's panel declares and this tool understands (noise control, EQ, touch keys, fit test, prompt volume, sensor sensitivity, toggles, ...). Not tested on hardware: the panel says "Not tested on this model yet". |
+| 23872, 23877 | MeloBuds N70 | **Tested on hardware**: everything above, including EQ, touch keys and the hearing test. |
+| any other id in the embedded QCY product list (about 190 models) | `qcy-<vendorId>` | Everything the model's panel declares and this tool understands: noise control, EQ, touch keys, fit test, prompt volume, sensor sensitivity, toggles. **Not yet tested on hardware**: the panel shows "Not tested on this model yet". |
 | unknown | name, then firmware string, then `generic` | |
 
 Where the product data comes from and how the profile is derived:
@@ -155,10 +163,12 @@ off at login. Other environment variables: [docs/CLI.md](docs/CLI.md#environment
   level but never sets the "charging" flag for it, so the case does not show a
   charging state. The widget already draws one (charge tone, pulse, bolt) and uses
   it whenever a model or firmware reports the flag.
-- **Models other than the N70 are not tested on hardware.** They get what their
-  panel declares; a feature whose encoding is not understood is absent and listed
-  in the panel under "Not available on this model" (see
-  [Supported models](#supported-models)). The hearing test is driven for the N70 only.
+- **Only the MeloBuds N70 has been tested on hardware.** Other models get what
+  their panel declares; a feature whose encoding is not understood is absent and
+  listed in the panel under "Not available on this model" (see
+  [Supported models](#supported-models)). The hearing test is driven for the N70
+  only. Problems on other models are expected and are fixed through pull requests
+  (see [Contributing](#contributing)).
 
 ## Troubleshooting
 
@@ -219,10 +229,21 @@ scripts/                    install, bootstrap, release packaging
 
 ## Contributing
 
-Issues and pull requests are welcome. Reports from other QCY models are the most
-useful: say the model, the `vendorId` from `qcyctl status --json`, and what worked.
-Translations are a single JSON file (see [Languages](#languages)). Run
-`go test ./...` before sending a change.
+Only the N70 can be tested by the maintainer, so **fixes for other models come
+from people who own them, as pull requests**. If a control misbehaves on your
+model:
+
+1. Reproduce it with `qcyctl` and capture the output of `qcyctl status --json`
+   (it carries your model's `vendorId`, declared features and notes) and, if
+   useful, a trace with `QCY_DEBUG=1`.
+2. Open a pull request with the fix and a test. Model-specific behaviour is driven
+   by the embedded panel data; see [docs/WEB_API.md](docs/WEB_API.md) and
+   [docs/PROTOCOL.md](docs/PROTOCOL.md). Say which model and firmware you tested on.
+3. Run `go test ./...` and `gofmt -l .` before sending it.
+
+Issues are welcome for questions and reports, but without a device to reproduce
+on they can only be resolved by a contributor who has one. Translations are a
+single JSON file (see [Languages](#languages)).
 
 ## Credits
 
