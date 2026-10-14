@@ -1334,6 +1334,8 @@ func prepareSetter(c Capabilities, action string, params, expect []byte) ([]byte
 		}
 		// Two parameter bytes, the second 0, as the vendor app writes it.
 		return []byte{v, 0}, []byte{v}, nil
+	case "anc":
+		return params, expect, checkANC(c, params)
 	case "autoOff":
 		// [lo, hi, 0, 0] minutes; ffff = never. 0 is "power off now" in the
 		// vendor app, never a timer value: nothing may send it.
@@ -1359,6 +1361,45 @@ func prepareSetter(c Capabilities, action string, params, expect []byte) ([]byte
 		return params, []byte{params[0]}, nil
 	}
 	return params, expect, nil
+}
+
+// genericANCScenes are the (mode, scene) pairs of the named CLI modes
+// (off, adaptive, indoor, commuting, noisy, antiwind, transparency): all the
+// generic fallback and a model without panel ANC groups may write.
+var genericANCScenes = map[[2]byte]bool{
+	{2, 0}: true, {1, 5}: true, {1, 1}: true, {1, 2}: true, {1, 3}: true, {1, 4}: true, {3, 1}: true,
+}
+
+// checkANC validates an ANC write [mode, scene, level]. The N70 stays
+// unrestricted (it always was). A model with panel ANC groups accepts only a
+// packed value (mode<<16|scene<<8|level) inside a group or item range the
+// panel declares. Any other model (generic fallback, no panel groups) accepts
+// the named modes only, never arbitrary bytes.
+func checkANC(c Capabilities, params []byte) error {
+	if c.ModelID == "melobuds-n70" {
+		return nil
+	}
+	if len(params) != 3 {
+		return fmt.Errorf("anc: expected [mode, scene, level], got %d byte(s)", len(params))
+	}
+	if len(c.ANCModes) == 0 {
+		if !genericANCScenes[[2]byte{params[0], params[1]}] || params[2] > 4 {
+			return fmt.Errorf("anc: %d,%d,%d is not one of the named modes and this model declares no ANC values", params[0], params[1], params[2])
+		}
+		return nil
+	}
+	v := int(params[0])<<16 | int(params[1])<<8 | int(params[2])
+	for _, m := range c.ANCModes {
+		if v >= m.Start && v <= m.End {
+			return nil
+		}
+		for _, it := range m.Items {
+			if v >= it.Start && v <= it.End {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("anc: %d,%d,%d (packed %d) is outside every range %s declares", params[0], params[1], params[2], v, c.DisplayName)
 }
 
 // fitStart / fitStop are the frames the vendor app sends for the ear-tip fit

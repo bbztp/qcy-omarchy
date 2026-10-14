@@ -2019,18 +2019,11 @@ func cmdAnc(args []string) error {
 // cmdAncRaw writes the three ANC bytes as given: the panel of a model whose
 // values differ from the named modes above lists its own (status model.ancModes).
 func cmdAncRaw(args []string) error {
-	if len(args) < 3 {
-		return errors.New("usage: qcyctl anc --raw <mode> <scene> <level> [seconds]")
+	p, rest, err := parseAncRaw(args)
+	if err != nil {
+		return err
 	}
-	var p [3]byte
-	for i := 0; i < 3; i++ {
-		n, err := strconv.Atoi(args[i])
-		if err != nil || n < 0 || n > 255 {
-			return fmt.Errorf("anc --raw: invalid byte %q (0-255)", args[i])
-		}
-		p[i] = byte(n)
-	}
-	scanSeconds, err := parseSeconds(args[3:], 30)
+	scanSeconds, err := parseSeconds(rest, 30)
 	if err != nil {
 		return err
 	}
@@ -2041,6 +2034,23 @@ func cmdAncRaw(args []string) error {
 		fmt.Printf("anc raw=%d,%d,%d sent\n", p[0], p[1], p[2])
 		return nil
 	})
+}
+
+// parseAncRaw reads the three bytes (0-255 each) of `anc --raw` and returns
+// the remaining arguments (the scan seconds).
+func parseAncRaw(args []string) ([3]byte, []string, error) {
+	var p [3]byte
+	if len(args) < 3 {
+		return p, nil, errors.New("usage: qcyctl anc --raw <mode> <scene> <level> [seconds]")
+	}
+	for i := 0; i < 3; i++ {
+		n, err := strconv.Atoi(args[i])
+		if err != nil || n < 0 || n > 255 {
+			return p, nil, fmt.Errorf("anc --raw: invalid byte %q (0-255)", args[i])
+		}
+		p[i] = byte(n)
+	}
+	return p, args[3:], nil
 }
 
 func cmdNoise(args []string) error {
@@ -2270,19 +2280,49 @@ func wearItemsFromStatus(st map[string]interface{}) []wearItem {
 	return out
 }
 
+// promptVolWords maps the words onto the model's steps: low is the first
+// step, max the last, medium and high sit a third and two thirds of the way.
+// With fewer than four steps medium and/or high would land on the same step
+// as another word, so they are left out (ambiguous) rather than guessed.
+func promptVolWords(steps []int) map[string]int {
+	last := len(steps) - 1
+	w := map[string]int{"low": 0, "max": last}
+	med, high := (last+1)/3, (2*last+1)/3
+	if med != 0 && med != last {
+		w["medium"] = med
+	}
+	if high != 0 && high != last && high != med {
+		w["high"] = high
+	}
+	return w
+}
+
+// promptVolWordsHelp lists the words that work for steps, e.g.
+// "low=6, medium=10, max=12".
+func promptVolWordsHelp(steps []int) string {
+	w := promptVolWords(steps)
+	var parts []string
+	for _, k := range []string{"low", "medium", "high", "max"} {
+		if i, ok := w[k]; ok {
+			parts = append(parts, fmt.Sprintf("%s=%d", k, steps[i]))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
 // parsePromptVol accepts one of the model's steps (a number) or a word mapped
-// onto them: low is the first step, max the last, medium and high sit a third
-// and two thirds of the way.
+// onto them (see promptVolWords). A word that is ambiguous for this model's
+// step count is refused with the mapping that does work.
 func parsePromptVol(s string, steps []int) (byte, error) {
 	if len(steps) == 0 {
 		steps = defaultPromptVolSteps
 	}
-	last := len(steps) - 1
-	words := map[string]int{
-		"low": 0, "medium": (last + 1) / 3, "high": (2*last + 1) / 3, "max": last,
-	}
-	if i, ok := words[strings.ToLower(s)]; ok {
+	word := strings.ToLower(s)
+	if i, ok := promptVolWords(steps)[word]; ok {
 		return byte(steps[i]), nil
+	}
+	if word == "medium" || word == "high" {
+		return 0, fmt.Errorf("prompt-vol: %q is ambiguous with %d steps; use a number or one of %s", s, len(steps), promptVolWordsHelp(steps))
 	}
 	if n, err := strconv.Atoi(s); err == nil {
 		for _, v := range steps {
@@ -2295,7 +2335,7 @@ func parsePromptVol(s string, steps []int) (byte, error) {
 	for i, v := range steps {
 		list[i] = strconv.Itoa(v)
 	}
-	return 0, fmt.Errorf("prompt-vol: invalid value %q (%s or low|medium|high|max)", s, strings.Join(list, "|"))
+	return 0, fmt.Errorf("prompt-vol: invalid value %q (%s, or %s)", s, strings.Join(list, "|"), promptVolWordsHelp(steps))
 }
 
 // wearItem is one wear-sensitivity choice a model's panel declares.

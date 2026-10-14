@@ -578,3 +578,62 @@ func TestFnSetCannotReachSpecialisedOpcodes(t *testing.T) {
 		t.Fatal("a frame reached the link")
 	}
 }
+
+func ancReq(m, sc, l byte) request { return setReq("anc", m, sc, l) }
+
+// ANC writes are validated daemon-side: a panel model takes only packed values
+// inside its declared ranges; the generic fallback only the named modes; the
+// N70 stays unrestricted.
+func TestANCWriteIsValidatedAgainstThePanel(t *testing.T) {
+	d, s := vendorScriptDaemon(t, 19786, nil)
+	// Inside: indoor (1,1,2) in 65792-65794, transparency default (3,1,4), normal.
+	for _, v := range [][3]byte{{1, 1, 2}, {1, 1, 0}, {3, 1, 4}, {2, 0, 0}, {1, 5, 0}} {
+		if _, err := d.handleRequest(ancReq(v[0], v[1], v[2])); err != nil {
+			t.Errorf("%v refused: %v", v, err)
+		}
+	}
+	n := len(framesOf(s, 0x17))
+	// Outside every range, or not three bytes.
+	for _, v := range [][3]byte{{9, 9, 9}, {0, 0, 0}, {4, 1, 0}, {2, 1, 0}} {
+		if _, err := d.handleRequest(ancReq(v[0], v[1], v[2])); err == nil || !strings.Contains(err.Error(), "outside every range") {
+			t.Errorf("%v: %v", v, err)
+		}
+	}
+	if _, err := d.handleRequest(setReq("anc", 1, 1)); err == nil {
+		t.Error("two bytes accepted")
+	}
+	if got := len(framesOf(s, 0x17)); got != n {
+		t.Fatalf("%d refused ANC frames reached the link", got-n)
+	}
+}
+
+func TestANCGenericFallbackRefusesRawBytes(t *testing.T) {
+	d, s := unverifiedScriptDaemon(t, nil)
+	if _, err := d.handleRequest(ancReq(9, 9, 9)); err == nil {
+		t.Error("arbitrary bytes accepted on the generic fallback")
+	}
+	if _, err := d.handleRequest(ancReq(1, 1, 9)); err == nil {
+		t.Error("level 9 accepted")
+	}
+	if len(framesOf(s, 0x17)) != 0 {
+		t.Fatal("written")
+	}
+	// The named modes keep working.
+	for _, v := range [][3]byte{{2, 0, 0}, {1, 5, 0}, {1, 1, 2}, {3, 1, 4}, {1, 3, 0}} {
+		if _, err := d.handleRequest(ancReq(v[0], v[1], v[2])); err != nil {
+			t.Errorf("named %v refused: %v", v, err)
+		}
+	}
+}
+
+func TestANCN70StaysUnrestricted(t *testing.T) {
+	d, s := scriptDaemon(t, nil)
+	for _, v := range [][3]byte{{9, 9, 9}, {1, 1, 200}, {0, 0, 0}} {
+		if _, err := d.handleRequest(ancReq(v[0], v[1], v[2])); err != nil {
+			t.Errorf("n70 %v: %v", v, err)
+		}
+	}
+	if got := len(framesOf(s, 0x17)); got != 3 {
+		t.Fatalf("%d frames", got)
+	}
+}

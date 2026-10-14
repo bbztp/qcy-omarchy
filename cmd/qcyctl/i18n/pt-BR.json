@@ -132,7 +132,7 @@
   "Equalizer is not available on this model.": "Equalizador indisponível neste modelo.",
   "Loading effects…": "Carregando os efeitos…",
   "No effect found. Tap Refresh.": "Nenhum efeito encontrado. Toque em Atualizar.",
-  "The bars show the chosen effect. Drag (±12 dB) and release: the sound changes right away. Double-click to zero a bar. \"Save as…\" keeps what you see.": "As barras mostram o efeito escolhido. Arraste (±12 dB) e solte: o som muda na hora. Toque duas vezes para zerar uma barra. \"Salvar como…\" guarda o que você vê.",
+  "The bars show the chosen effect. Drag (±{db} dB) and release: the sound changes right away. Double-click to zero a bar. \"Save as…\" keeps what you see.": "As barras mostram o efeito escolhido. Arraste (±{db} dB) e solte: o som muda na hora. Toque duas vezes para zerar uma barra. \"Salvar como…\" guarda o que você vê.",
   "Overall gain": "Ganho geral",
   "base: {name}": "base: {name}",
   "Zero": "Zerar",

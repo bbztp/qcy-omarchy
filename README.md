@@ -116,7 +116,7 @@ advertisement, not by the Bluetooth name.
 | vendorId | Model | Profile |
 | --- | --- | --- |
 | 23872, 23877 | MeloBuds N70 | **Tested on hardware**: everything above, including EQ, touch keys and the hearing test. |
-| any other id in the embedded QCY product list (about 190 models) | `qcy-<vendorId>` | Everything the model's panel declares and this tool understands: noise control, EQ, touch keys, fit test, prompt volume, sensor sensitivity, toggles. **Not yet tested on hardware**: the panel shows "Not tested on this model yet". |
+| any other id in the embedded QCY product list (191 models with a panel) | `qcy-<vendorId>` | Everything the model's panel declares and this tool understands: noise control, EQ, touch keys, fit test, prompt volume, sensor sensitivity, toggles. **Not yet tested on hardware**: the panel shows "Not tested on this model yet". |
 | unknown | name, then firmware string, then `generic` | |
 
 Where the product data comes from and how the profile is derived:

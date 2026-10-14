@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -271,13 +273,32 @@ func TestParsePromptVol(t *testing.T) {
 	}
 	// A model with its own steps: words map onto them, other numbers refused.
 	steps := []int{6, 10, 12}
-	for in, want := range map[string]byte{"6": 6, "12": 12, "low": 6, "max": 12, "medium": 10, "high": 10} {
+	for in, want := range map[string]byte{"6": 6, "12": 12, "low": 6, "max": 12, "medium": 10} {
 		if got, err := parsePromptVol(in, steps); err != nil || got != want {
 			t.Errorf("steps %q: %d %v", in, got, err)
 		}
 	}
 	if _, err := parsePromptVol("4", steps); err == nil {
 		t.Error("4 accepted on 6/10/12")
+	}
+	// With three steps "high" would land on the same step as "medium": it is
+	// refused, and the message names the words that do work.
+	_, err := parsePromptVol("high", steps)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") || !strings.Contains(err.Error(), "low=6, medium=10, max=12") {
+		t.Errorf("high on 3 steps: %v", err)
+	}
+	// Two steps: only low and max are unambiguous.
+	for _, w := range []string{"medium", "high"} {
+		if _, err := parsePromptVol(w, []int{5, 9}); err == nil {
+			t.Errorf("%s accepted on 2 steps", w)
+		}
+	}
+	if got, err := parsePromptVol("max", []int{5, 9}); err != nil || got != 9 {
+		t.Errorf("max on 2 steps: %d %v", got, err)
+	}
+	// Five steps keep four distinct words.
+	if h := promptVolWordsHelp([]int{1, 2, 3, 4, 5}); h != "low=1, medium=2, high=4, max=5" {
+		t.Errorf("5 steps: %s", h)
 	}
 }
 
@@ -325,5 +346,71 @@ func TestStatusFromDaemonWearSensitivity(t *testing.T) {
 	}
 	if r := statusFromDaemon(map[string]interface{}{}); r.WearSensitivity != nil {
 		t.Fatal("must be absent when unanswered")
+	}
+}
+
+func TestParseAncRaw(t *testing.T) {
+	p, rest, err := parseAncRaw([]string{"1", "5", "0", "20"})
+	if err != nil || p != [3]byte{1, 5, 0} || len(rest) != 1 || rest[0] != "20" {
+		t.Fatalf("%v %v %v", p, rest, err)
+	}
+	if p, _, err := parseAncRaw([]string{"0", "255", "128"}); err != nil || p != [3]byte{0, 255, 128} {
+		t.Fatalf("bounds: %v %v", p, err)
+	}
+	for _, bad := range [][]string{
+		nil, {"1"}, {"1", "2"}, {"256", "0", "0"}, {"-1", "0", "0"}, {"a", "0", "0"}, {"1", "2", ""}, {"1.5", "0", "0"},
+	} {
+		if _, _, err := parseAncRaw(bad); err == nil {
+			t.Errorf("%v accepted", bad)
+		}
+	}
+	// cmdAncRaw reports the same errors before any link is opened, and a bad
+	// seconds value after the bytes.
+	if err := cmdAncRaw([]string{"1", "2"}); err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Errorf("usage: %v", err)
+	}
+	if err := cmdAncRaw([]string{"300", "0", "0"}); err == nil || !strings.Contains(err.Error(), "invalid byte") {
+		t.Errorf("range: %v", err)
+	}
+	if err := cmdAncRaw([]string{"1", "1", "0", "nope"}); err == nil {
+		t.Error("bad seconds accepted")
+	}
+	if err := cmdAnc([]string{"--raw"}); err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Errorf("cmdAnc --raw: %v", err)
+	}
+}
+
+// The named modes the CLI writes are the ones BarWidget.qml's ancNamedTuples
+// lists (the plugin maps a panel value to a name with that table).
+func TestNamedAncModesMatchThePluginTable(t *testing.T) {
+	src, err := os.ReadFile("../../BarWidget.qml")
+	if err != nil {
+		t.Skip("BarWidget.qml not found")
+	}
+	re := regexp.MustCompile(`(\w+): \[(\d+), (\d+), (\d+)\]`)
+	start := strings.Index(string(src), "ancNamedTuples")
+	if start < 0 {
+		t.Fatal("ancNamedTuples not found")
+	}
+	block := string(src)[start : start+400]
+	found := 0
+	for _, m := range re.FindAllStringSubmatch(block, -1) {
+		want, ok := ancModes[m[1]]
+		if !ok {
+			t.Errorf("QML names %q, the CLI does not", m[1])
+			continue
+		}
+		got := [3]byte{}
+		for i := 0; i < 3; i++ {
+			n, _ := strconv.Atoi(m[2+i])
+			got[i] = byte(n)
+		}
+		if got != want {
+			t.Errorf("%s: QML %v, CLI %v", m[1], got, want)
+		}
+		found++
+	}
+	if found != 7 {
+		t.Errorf("found %d named tuples in the QML table, want 7", found)
 	}
 }

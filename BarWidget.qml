@@ -100,6 +100,17 @@ Panel {
   readonly property var ancLayout: {
     var ms = unitModel ? unitModel.ancModes : null
     if (!ms || ms.length === 0) return null
+    // A named key may stand for one item only: when two overlapping items of
+    // the panel resolve to the same named tuple, both are written with their
+    // own raw params instead, so the chips stay unambiguous.
+    var count = {}
+    for (var a = 0; a < ms.length; a++) {
+      var its0 = ms[a].items || []
+      for (var b = 0; b < its0.length; b++) {
+        var k0 = ancKeyFor(its0[b].start, its0[b].end, its0[b].params)
+        count[k0] = (count[k0] || 0) + 1
+      }
+    }
     var groups = [], scenes = []
     for (var i = 0; i < ms.length; i++) {
       var g = ms[i]
@@ -108,6 +119,7 @@ Panel {
       var its = []
       for (var j = 0; j < items.length; j++) {
         var k = ancKeyFor(items[j].start, items[j].end, items[j].params)
+        if (count[k] > 1 && k.indexOf("raw:") !== 0) k = "raw:" + (items[j].params || []).join(",")
         ik.push(k)
         its.push({ key: k, label: ancLabelFor(k, items[j].name, false), start: items[j].start, end: items[j].end })
       }
@@ -2015,7 +2027,7 @@ Panel {
 
                 Text {
                   width: parent.width
-                  text: Qcy.tr("The bars show the chosen effect. Drag (±12 dB) and release: the sound changes right away. Double-click to zero a bar. \"Save as…\" keeps what you see.")
+                  text: Qcy.tr("The bars show the chosen effect. Drag (±{db} dB) and release: the sound changes right away. Double-click to zero a bar. \"Save as…\" keeps what you see.", { db: root.editorMaxDb })
                   color: root.muted
                   font.family: root.textFamily
                   font.pixelSize: Style.font.caption
@@ -3474,7 +3486,7 @@ Panel {
   component EqMini: Canvas {
     id: mini
     required property var bands
-    readonly property real maxDb: 12
+    readonly property real maxDb: root.editorMaxDb
 
     implicitHeight: Style.spacing.controlHeight * 1.1
     antialiasing: true
