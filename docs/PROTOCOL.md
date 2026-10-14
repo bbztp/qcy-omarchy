@@ -191,18 +191,18 @@ master-gain slider now needs `allowFull`).
   | Slot | Effect | Status |
   |---|---|---|
   | 0 | (none: the old test curve of this tool) | n/a |
-  | 1 | Predefinido | medido |
-  | 2 | Popular | medido |
-  | 3 | Bass pesados | medido |
-  | 4 | Rock | medido |
-  | 5 | Suave | medido |
-  | 6 | Clássico | medido |
-  | 7, 8, 9 | ? | não observado |
-  | 10 | Som espacial (payload identical to slot 1) | medido |
-  | 11 | Experiência auditiva (the user's hearing-test profile) | medido |
-  | 12, 13 | ? | não observado |
-  | 14 | Agudos suaves | medido |
-  | 255 | Personalizado | medido |
+  | 1 | Default | measured |
+  | 2 | Popular | measured |
+  | 3 | Heavy bass | measured |
+  | 4 | Rock | measured |
+  | 5 | Soft | measured |
+  | 6 | Classical | measured |
+  | 7, 8, 9 | ? | not observed |
+  | 10 | Spatial sound (payload identical to slot 1) | measured |
+  | 11 | Hearing experience (the user's hearing-test profile) | measured |
+  | 12, 13 | ? | not observed |
+  | 14 | Soft treble | measured |
+  | 255 | Custom | measured |
 
   Rule: any curve of its own made in the phone app is written to **slot 255**;
   the name given there stays on the phone only, so 255 is always reported as
@@ -330,10 +330,10 @@ replaces unless `--replace`, and then only a source=user curve),
 `seed [--json]`, and `compose --dry-run` (below). Unreadable files go to stderr.
 
 **Display order of `list`:** the factory effects in the phone app's order
-(Predefinido, Popular, Bass pesados, Rock, Suave, Clássico, Agudos suaves, Som
-espacial), then Experiência auditiva, then your own curves (source user, by
+(Default, Popular, Heavy bass, Rock, Soft, Classical, Soft treble, Spatial
+sound), then Hearing experience, then your own curves (source user, by
 name), then everything else (device imports such as the old slot 0 curve and
-"Personalizado (slot 255)"). Older seeds that a newer curve replaces
+"Custom (slot 255)"). Older seeds that a newer curve replaces
 (`classico-slot-6`, `slot-11-primeira-leitura`, `experiencia-auditiva-slot-11`,
 `<effect>-slot-N`, `slot-N-primeira-leitura`; see `qcycore.SupersededCurveIDs`)
 are hidden by default and shown by `--all`; they are never deleted or renamed
@@ -345,9 +345,9 @@ already in the library is skipped, whatever its source). It creates:
 
 | Curve (id) | Source | Slot | From |
 |---|---|---|---|
-| Predefinido, Popular, Bass pesados, Rock, Suave, Clássico, Agudos suaves, Som espacial | factory-snapshot | 1, 2, 3, 4, 5, 6, 14, 10 | payloads **embedded in the binary** (`internal/qcycore/factory.go`; public factory data, measured on the device) |
-| Experiência auditiva (`experiencia-auditiva`) | device-import | 11 | `<backups>/eq-slot11-first.hex`, else `<backups>/preset-map/experiencia-auditiva-slot11-*.json` (`payload`); skipped with a reason when neither exists |
-| Slot 0 (primeira leitura), Personalizado (slot 255), ... | device-import | N | every other `<backups>/eq-slotN-first.hex`, named as older versions named them; factory slots and 11 are no longer seeded this way, the curves above replace them |
+| Default, Popular, Heavy bass, Rock, Soft, Classical, Soft treble, Spatial sound | factory-snapshot | 1, 2, 3, 4, 5, 6, 14, 10 | payloads **embedded in the binary** (`internal/qcycore/factory.go`; public factory data, measured on the device) |
+| Hearing experience (`experiencia-auditiva`) | device-import | 11 | `<backups>/eq-slot11-first.hex`, else `<backups>/preset-map/experiencia-auditiva-slot11-*.json` (`payload`); skipped with a reason when neither exists |
+| Slot 0 (first read), Custom (slot 255), ... | device-import | N | every other `<backups>/eq-slotN-first.hex`, named as older versions named them; factory slots and 11 are no longer seeded this way, the curves above replace them |
 
 Every seeded curve is `applyable` (see below).
 
@@ -416,7 +416,9 @@ Two writes restart the earbuds:
   unverified until it is.
   When the earbuds still echo the old value at 4 s and the link is up, `set`
   replies `{"indeterminate": "indeterminado: aplicado possivelmente, reinício
-  pendente — releia o estado"}` (not an error, never rewritten); the plugin then
+  pendente — releia o estado"}` (the string is Portuguese verbatim; it means
+  "indeterminate: possibly applied, restart pending, read the state again")
+  (not an error, never rewritten); the plugin then
   reads the state again instead of assuming success.
 
 ## Find my earbuds
@@ -743,7 +745,7 @@ Not verified on hardware.
 
 How the phone app handles the result (as observed): "use this
 result" writes `0x46` (left) and `0x47` (right) with effect index 11, nothing
-else (no 0x22, no slot select). Tapping the "Experiência auditiva" effect again
+else (no 0x22, no slot select). Tapping the "Hearing experience" effect again
 with curves already saved does NOT reopen the test: the app re-sends 0x46/0x47
 index 11 from the left/right curves it keeps on the phone. The earbuds only
 report the active EQ through 0x22.
@@ -761,7 +763,7 @@ after the earbuds were written, a warning says so and nothing is undone.
 
 Slot 11 is what the hearing-test frames overwrite, and the earbuds report only
 the ACTIVE slot, so before writing the tool preserves it as a user entry of the
-library, "Experiência auditiva (backup AAAA-MM-DD HH:MM)" (id
+library, "Hearing experience (backup YYYY-MM-DD HH:MM)" (id
 `slot11-backup-<timestamp>`): read directly when slot 11 is the active slot,
 otherwise a clone of the last known copy (`experiencia-auditiva`, else the most
 recent entry with slot 11) with a note stating when that copy was read. With no
@@ -770,7 +772,7 @@ given. Restore with `qcyctl library apply <id> --yes`.
 
 **Measured on a MeloBuds N70 (first real write of 0x46/0x47 index 11).** The
 earbuds sent NO echo for 0x46 or 0x47 (`ack=false` for both). Afterwards the
-0x22 reports slot 11 active ("Experiência auditiva"), the written master gain
+0x22 reports slot 11 active ("Hearing experience"), the written master gain
 (-10 dB) and 13 bands: positions 0-4 are the 5 bands of the default effect
 (50/200/900/2800/8000 Hz, Q 60/60/70/120/350, which the firmware prefixes) and
 positions 5-12 are the 8 test bands (63..8000 Hz, Q 70, type 2) with the gains

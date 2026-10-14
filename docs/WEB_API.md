@@ -78,7 +78,7 @@ itself (`EQItemView`: custom effects use `soundEffectId` = saveIndex + 19, or 25
 - The N70 panel lists fit detection (0x11), wear sensitivity (0x48) and beep volume (0x1D).
   The capability probe of this tool reports them as absent on this firmware; not resolved.
 
-## Detecção por vendorId
+## Detection by vendorId
 
 The daemon identifies the model by the `vendorId` (manufacturer data bytes 0-1,
 big-endian, company id `0x521c`) instead of by the Bluetooth name:
@@ -98,29 +98,28 @@ files still load) and used on the fast path, which does not scan.
 `capabilities` carries `verified` (true only for the N70), `vendorId` and
 `productTitle` (both omitted when unknown). `status` adds a `model` object (also `actions` and `features`, the ids the model declares; the panel hides anything undeclared on an unverified model)
 (`modelId`, `displayName`, `verified`, `vendorId`, `productTitle`) and `capabilities.verified`.
-The panel shows "Modelo não verificado" in Ajustes > Aparelho when `verified` is false.
+The panel shows "Unverified model" in Settings > Device when `verified` is false.
 
-## Snapshot embutido
+## Embedded snapshot
+`internal/qcycore/models/models.json` (embedded with `go:embed`, package `models`) is a
+snapshot, dated 2026-10-13, of the QCY product list (193 earbuds) and of the
+`product/findControlPanels` response for each vendorId (221 files; 191 with a panel). The
+daemon uses it without network access: `qcy-<vendorId>` is derived from the panel (ANC,
+balance, find, auto-off, wear detection and the `type` 4 toggles by cmdid 9/16/35/36/42);
+EQ, fit test, prompt volume and wear sensitivity are still not offered to unverified
+models even when the panel lists them. With no entry in the snapshot, it falls back to the
+Quicky database.
 
-`internal/qcycore/models/models.json` (embutido com `go:embed`, pacote `models`) é um
-instantâneo, de 2026-10-13, da lista de produtos da QCY (193 fones) e da resposta de
-`product/findControlPanels` de cada vendorId (221 arquivos; 191 com painel). O daemon
-o usa sem rede: `qcy-<vendorId>` é derivado do painel (ANC, balanço, localizar,
-desligamento automático, detecção de uso e os toggles de `type` 4 por cmdid 9/16/35/36/42);
-EQ, teste de ajuste, volume dos avisos e sensibilidade de uso continuam não oferecidos a
-modelos não verificados mesmo quando o painel os lista. Sem entrada no snapshot, cai no
-banco da Quicky.
-
-- Origem: a lista pública de produtos da QCY
-  e o JSON de painel do servidor por vendorId (fora do repositório).
-- Regenerar: `python3 scripts/gen_models.py [lista.json] [pasta_paineis] [saida.json]`
-  (saída determinística, chaves ordenadas).
-- Descartado: URLs e imagens, HTML dos textos (`info`, `msg`), textos de pareamento,
-  cores, `character` (UUIDs GATT) e os comandos hexadecimais de `sub_items`. Layouts
-  não interpretados (`type` 6, 11, 13, 105, 108, 109, 112 a 116...) ficam só como
-  `other: {type, name, cmdId}`; teclas (`type` 1, 10, 14) ficam como eventos com a
-  lista de ações (nome e cmd).
-- Ressalva: são dados vindos do servidor da QCY, de uma única consulta com firmware
-  genérico; o snapshot guarda a faixa `firmwareversionGte/Lte` devolvida, mas não há
-  painel por faixa de firmware específica. Um modelo pode declarar no painel algo que
-  o firmware real não implementa (ver o N70 acima).
+- Source: the public QCY product list
+  and the server panel JSON per vendorId (outside the repository).
+- Regenerate: `python3 scripts/gen_models.py [list.json] [panels_dir] [out.json]`
+  (deterministic output, sorted keys).
+- Discarded: URLs and images, HTML in texts (`info`, `msg`), pairing texts, colors,
+  `character` (GATT UUIDs) and the hexadecimal commands of `sub_items`. Layouts that are
+  not interpreted (`type` 6, 11, 13, 105, 108, 109, 112 to 116...) are kept only as
+  `other: {type, name, cmdId}`; keys (`type` 1, 10, 14) are kept as events with the list
+  of actions (name and cmd).
+- Caveat: this is data from the QCY server, from a single query with generic firmware;
+  the snapshot keeps the `firmwareversionGte/Lte` range returned, but there is no panel
+  per specific firmware range. A model may declare in its panel something that the real
+  firmware does not implement (see the N70 above).

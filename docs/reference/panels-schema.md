@@ -300,8 +300,8 @@ cmdid -> function is in `panels-by-model.json` (`func`, `cmdid`, `values`) and s
 
 Standby/auto-off is `1000/cmd 31` (63 models, options in minutes: 5, 10, 30, 60, never; 2 models
 20) and `102/cmd 20` (107, `repeat`); the N70 declares both. "Seal test" is `110 Fit detection,
-cmd 17` (20 models) plus one item-301 text row. There is no separate "teste de vedação" type.
-"Idioma do tom" is `1001 Tone Switch`, cmd 25 (41 models, English/Chinese; the visible list
+cmd 17` (20 models) plus one item-301 text row. There is no separate "seal test" type.
+"Tone language" is `1001 Tone Switch`, cmd 25 (41 models, English/Chinese; the visible list
 depends on the phone locale).
 
 ## 8. What `models.json` already covers, and what it lacks
