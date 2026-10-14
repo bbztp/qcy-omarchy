@@ -6,6 +6,8 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-14
+
 ### Changed
 
 - `qcyctl` and `qcyctld` now live in `~/.local/share/qcy-omarchy/bin/<version>` (stable `qcyctl`/`qcyctld` links beside it), not in the plugin folder. `omarchy plugin remove` does not delete them; the daemon exits by itself within about 30 s once the plugin folder is gone, and "Remove QCY data…" deletes them. A leftover `<plugin dir>/.bin` from an earlier build is ignored; remove it by hand.
@@ -52,6 +54,7 @@ First release.
 - Automatic setup: the plugin downloads the matching `qcyctl` and `qcyctld` release, verifies its SHA-256, and installs it inside the plugin's own `.bin` directory, so removing the plugin removes the programs (falls back to building from source with Go); the daemon starts on demand, exits by itself when its executable is removed, and can optionally run as a systemd user service.
 - Features follow each model's own panel: nothing is blocked because a model was not tested on hardware (the panel only says so). Prompt volume steps, wear sensitivity items, noise modes and equalizer geometry come from the model; features whose encoding is not understood are listed under "Not available on this model".
 
+[0.1.3]: https://github.com/bbztp/qcy-omarchy/releases/tag/v0.1.3
 [0.1.2]: https://github.com/bbztp/qcy-omarchy/releases/tag/v0.1.2
 [0.1.1]: https://github.com/bbztp/qcy-omarchy/releases/tag/v0.1.1
 [0.1.0]: https://github.com/bbztp/qcy-omarchy/releases/tag/v0.1.0
