@@ -6,6 +6,14 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- First-time setup no longer makes the shell reload the plugin over and over (and leave the widget missing until `omarchy restart shell`): the bootstrap now prepares the binaries in a hidden staging directory beside the plugin and installs them into `.bin` with a single rename, writing nothing under the plugin directory meanwhile; interrupted runs leave nothing behind and a failed update keeps the installed binaries.
+
+### Fixed
+
+- The equalizer graph now follows the bands the earbuds report when the library has no entry for the effect in use (for example the hearing experience on a computer without the local backup), instead of drawing a flat line.
+
 ## [0.1.2] - 2026-10-14
 
 ### Fixed

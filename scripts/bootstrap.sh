@@ -3,13 +3,19 @@
 # plugin version (checksum verified), or build from source with Go.
 #
 # Binaries go to <plugin dir>/.bin, so `omarchy plugin remove` (which just
-# deletes the plugin directory) removes them too. The directory is hidden on
-# purpose: the shell reloads a plugin on every write under it except for paths
-# whose first component starts with a dot. When the plugin directory is not
-# writable they go to ${XDG_DATA_HOME:-~/.local/share}/qcy-omarchy/bin instead.
-# The version marker, the lock, the staging directory and the Go build cache
-# (build fallback) all live next to the binaries or in a staging directory that
-# is removed on exit; nothing is left under ~/.cache.
+# deletes the plugin directory) removes them too. The shell watches the whole
+# plugins directory recursively and reloads the plugin on every write inside
+# it (only paths whose top-level component starts with a dot, or that contain
+# /.git/, are ignored). So nothing is written under the plugin directory while
+# preparing: download, checksum, extraction, build, the lock and the version
+# marker all live in a staging directory `<plugins dir>/.qcy-stage.XXXXXX`
+# (a dot-directory at the top of the watched tree, same filesystem), and the
+# finished directory (qcyctl, qcyctld, .version) is installed with a single
+# rename onto <plugin dir>/.bin. An older .bin is renamed into the staging
+# directory first (a running daemon keeps its open executable) and removed with
+# it. When the plugin directory or its parent is not writable everything goes to
+# ${XDG_DATA_HOME:-~/.local/share}/qcy-omarchy/bin instead. Nothing is left
+# under ~/.cache.
 #
 # Progress is one line per step on stdout:
 #   STEP <key> <text>      keys: check, download, verify, install, build, done
@@ -38,10 +44,13 @@ case "${version}" in
 esac
 
 data_dir="${QCY_DATA_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/qcy-omarchy}"
+stage_root="$(dirname "${repo_dir}")"
 bin_dir="${repo_dir}/.bin"
-if ! { [ -d "${bin_dir}" ] || { [ -w "${repo_dir}" ] && mkdir -p "${bin_dir}" 2>/dev/null; }; } \
-   || [ ! -w "${bin_dir}" ]; then
+if [ ! -w "${repo_dir}" ] || [ ! -w "${stage_root}" ] || { [ -e "${bin_dir}" ] && [ ! -d "${bin_dir}" ]; }; then
   bin_dir="${data_dir}/bin"
+  stage_root="${data_dir}"
+  mkdir -p "${data_dir}"
+  chmod 0700 "${data_dir}" 2>/dev/null || true
 fi
 
 case "$(uname -m)" in
@@ -50,12 +59,10 @@ case "$(uname -m)" in
   *) fail "unsupported architecture: $(uname -m)" ;;
 esac
 
-mkdir -p "${bin_dir}"
-[ "${bin_dir}" != "${data_dir}/bin" ] || chmod 0700 "${data_dir}" 2>/dev/null || true
-
-# One bootstrap at a time; a second waits and then finds everything ready.
+# One bootstrap at a time (a second waits and then finds everything ready):
+# the lock is on the staging parent directory itself, so no file is created.
 if command -v flock >/dev/null 2>&1; then
-  exec 9>"${bin_dir}/.bootstrap.lock"
+  exec 9<"${stage_root}"
   flock -w 300 9 || fail "another preparation is still running"
 fi
 
@@ -71,8 +78,14 @@ if [ "${QCY_BUILD:-0}" != 1 ] && ready; then
   exit 0
 fi
 
-tmp="$(mktemp -d "${bin_dir}/.bootstrap.XXXXXX")"
+# Staging directories left by an interrupted run (we hold the lock).
+for d in "${stage_root}"/.qcy-stage.*; do
+  [ -d "${d}" ] && [ ! -L "${d}" ] && rm -rf "${d}"
+done
+tmp="$(mktemp -d "${stage_root}/.qcy-stage.XXXXXX")"
 chmod 0700 "${tmp}"
+stage_bin="${tmp}/bin"
+mkdir -p "${stage_bin}"
 trap 'rm -rf "${tmp}"' EXIT
 
 is_elf() { # file: ELF magic + the machine of this architecture
@@ -89,12 +102,21 @@ install_from() { # dir containing qcyctl and qcyctld
     is_elf "$1/${f}" || return 1
   done
   for f in qcyctl qcyctld; do
-    cp "$1/${f}" "${bin_dir}/.${f}.new"
-    chmod 0755 "${bin_dir}/.${f}.new"
-    mv -f "${bin_dir}/.${f}.new" "${bin_dir}/${f}"
+    cp "$1/${f}" "${stage_bin}/${f}"
+    chmod 0755 "${stage_bin}/${f}"
   done
-  printf '%s\n' "${version}" > "${bin_dir}/.version.new"
-  mv -f "${bin_dir}/.version.new" "${bin_dir}/.version"
+  printf '%s\n' "${version}" > "${stage_bin}/.version"
+}
+
+# The single visible change: stage_bin becomes bin_dir by rename.
+commit() {
+  if [ -e "${bin_dir}" ]; then
+    mv "${bin_dir}" "${tmp}/old" || return 1
+  fi
+  if ! mv "${stage_bin}" "${bin_dir}"; then
+    [ ! -e "${tmp}/old" ] || mv "${tmp}/old" "${bin_dir}"
+    return 1
+  fi
 }
 
 download() {
@@ -153,5 +175,6 @@ fi
 if [ "${done_ok}" = 0 ]; then
   build
 fi
+commit || fail "could not install into ${bin_dir}"
 printf 'BIN %s\n' "${bin_dir}/qcyctl"
 step done "Ready (${version})"

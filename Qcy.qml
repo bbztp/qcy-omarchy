@@ -99,9 +99,13 @@ Singleton {
   //
   // The plugin prepares its own binaries on first use (scripts/bootstrap.sh
   // downloads the matching release, or builds with Go). They live in the hidden
-  // <plugin dir>/.bin so `omarchy plugin remove` deletes them with the plugin
-  // (the shell ignores writes under dot-directories; ~/.local/share/qcy-omarchy/bin
-  // is the fallback when the plugin directory is not writable).
+  // <plugin dir>/.bin so `omarchy plugin remove` deletes them with the plugin.
+  // The shell watches the plugins directory recursively and reloads the plugin
+  // on any write below it (only top-level dot-directories are ignored), so the
+  // bootstrap prepares everything in a `.qcy-stage.*` directory next to the
+  // plugin and installs it with one rename onto .bin; this file writes nothing
+  // under the plugin directory. ~/.local/share/qcy-omarchy/bin is the fallback
+  // when the plugin directory is not writable.
   //
   // setupState: "checking" (looking for a matching qcyctl), "preparing"
   // (bootstrap running), "ready", "error". No other process of the plugin calls

@@ -132,8 +132,9 @@ so a scanner will flag the following. All of it is deliberate:
   repository's own GitHub release (https only, host restricted to github.com
   and *.githubusercontent.com), verifies the SHA-256, checks the files are
   ELF binaries for this architecture, and installs them to the plugin's own
-  .bin directory (~/.local/share/qcy-omarchy/bin if that is not writable). Nothing is executed before the checksum
-  matches. The release is built by .github/workflows/release.yml from the
+  .bin directory (~/.local/share/qcy-omarchy/bin if that is not writable),
+  staged in a hidden .qcy-stage.* directory beside the plugin and moved in
+  with one rename. Nothing is executed before the checksum matches. The release is built by .github/workflows/release.yml from the
   tagged source (static, -trimpath).
 - Fallback: if no release can be downloaded, it runs `go build` on the cloned
   source (needs Go; no network beyond Go's module cache).

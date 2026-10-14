@@ -386,7 +386,11 @@ Panel {
     var id = root.activeEntryId
     var adj = root.adjusted && id === root.baseId
     if (root.activeSlot === 255) {
-      if (id === "") return Qcy.tr("Custom")
+      if (id === "") {
+        var eff255 = rep.eq.effect
+        if (eff255 !== undefined && eff255 !== null && String(eff255) !== "") return root.deviceEffectLabel(eff255)
+        return Qcy.tr("Custom")
+      }
       return adj ? Qcy.tr("{name} (adjusted)", { name: root.curveName(id) }) : root.curveName(id)
     }
     var eff = rep.eq.effect
@@ -400,6 +404,10 @@ Panel {
     && (root.masterTouched || root.editGains.some(function (g) { return Number(g) !== 0 }))
 
   function baseLabel() {
+    if (root.deviceBaseActive) {
+      var eff = rep && rep.eq ? rep.eq.effect : null
+      return eff !== undefined && eff !== null && String(eff) !== "" ? root.deviceEffectLabel(eff) : Qcy.tr("Custom")
+    }
     return root.composeBase === "none" ? Qcy.tr("no effect") : root.curveName(root.composeBase)
   }
 
@@ -464,11 +472,21 @@ Panel {
   // bell (gain / (1 + Q^2 (f/f0 - f0/f)^2), Q stored x100) summed at the ten
   // bar frequencies. An approximation to show and to edit from; the effect
   // itself is still written whole and the bars add on top of it.
+  // The library only names and composes; the graph follows what the earbuds
+  // report. With no library entry for the effect in use (another computer, no
+  // local backup) and nothing pinned, the bands in the status are the base.
+  readonly property bool deviceBaseActive: {
+    if (root.baseId !== "" || root.composeBase !== "none") return false
+    var b = root.eqBandModel
+    return !!b && b.length > 0
+  }
+
   readonly property var baseGains: {
     var out = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     var l = Qcy.library
     var e = null
     for (var k = 0; k < l.length; k++) if (l[k].id === root.composeBase) { e = l[k]; break }
+    if (root.deviceBaseActive) e = { bands: root.eqBandModel }
     if (!e || !e.bands) return out
     for (var i = 0; i < 10; i++) {
       var f = root.editorFreqs[i]
@@ -541,6 +559,13 @@ Panel {
   function applyEq() {
     eqTimer.stop()
     if (!root.canApplyLibrary) return
+    // Base taken from the earbuds' own bands (no library entry): the bars on
+    // screen are the whole curve, so they become the curve with no base.
+    if (root.deviceBaseActive) {
+      if (root.editGains.every(function (g) { return Number(g) === 0 })) return
+      root.editGains = root.shownGains.slice()
+      root.baseId = "none"
+    }
     // Without a base effect the bars alone are the whole curve: all at zero
     // there is nothing to write.
     var flat = root.editGains.every(function (g) { return Number(g) === 0 })

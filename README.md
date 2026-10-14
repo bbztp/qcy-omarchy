@@ -74,7 +74,9 @@ or run `omarchy bar move io.github.bbztp.qcy --section right`.
 "Preparing QCY…" meanwhile. It downloads the `qcyctl`/`qcyctld` release matching
 its version, checks its SHA-256 and installs both to the plugin's own hidden
 `.bin` directory (`~/.config/omarchy/plugins/io.github.bbztp.qcy/.bin`), so
-removing the plugin removes them; if that directory is not writable they go to
+removing the plugin removes them (prepared in a hidden `.qcy-stage.*` directory
+next to the plugin and moved in with one rename, so the shell reloads the plugin
+at most once); if that directory is not writable they go to
 `~/.local/share/qcy-omarchy/bin` instead. Nothing runs as root and nothing is
 executed before the checksum matches.
 

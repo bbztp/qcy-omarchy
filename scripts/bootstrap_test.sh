@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Tests for scripts/bootstrap.sh against a local HTTP server and a fake
-# release: wrong checksum is refused, a correct one installs into the plugin
-# directory and writes nothing elsewhere, plus the read-only and build fallbacks.
+# release: wrong checksum is refused (an installed .bin stays intact), a correct
+# one installs into the plugin directory with a single rename and nothing
+# written under the plugin directory before it (the shell reloads the plugin on
+# every write there), upgrades leave no residue, plus the read-only and build
+# fallbacks.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,15 +59,70 @@ p1="$(new_plugin p1)"
 run "${p1}" "http://127.0.0.1:${port}/bad"
 if [ "${rc}" -ne 0 ] && grep -q '^ERROR' "${work}/out" && [ ! -e "${p1}/.bin/qcyctl" ]; then check "wrong checksum refused" ok; else check "wrong checksum refused" no; cat "${work}/out"; fi
 
-# 2. correct checksum: installed inside the plugin dir, nothing outside it
+# A mv wrapper that records every call and, when the destination is the
+# plugin's .bin, snapshots the plugin directory at that moment.
+mkdir -p "${work}/mvbin"
+real_mv="$(command -v mv)"
+cat > "${work}/mvbin/mv" <<ENDMV
+#!/usr/bin/env bash
+for a; do last="\$a"; done
+printf '%s\n' "\$*" >> "\${QCY_TEST_MVLOG}"
+if [ "\${last}" = "\${QCY_TEST_WATCH}/.bin" ]; then
+  find "\${QCY_TEST_WATCH}" -printf '%p %T@ %s\n' | grep -v ' /dev/null' | sort > "\${QCY_TEST_SNAP}"
+fi
+exec "${real_mv}" "\$@"
+ENDMV
+chmod +x "${work}/mvbin/mv"
+tree() { find "$1" -printf '%p %T@ %s\n' | sort; }
+stages() { find "${work}" -maxdepth 1 -name '.qcy-stage.*' | head -n 1; }
+
+# 2. correct checksum: installed inside the plugin dir by one rename, nothing
+# written under the plugin dir before it, nothing outside it, no staging left
 p2="$(new_plugin p2)"
-run "${p2}" "http://127.0.0.1:${port}/good"
+tree "${p2}" > "${work}/before"
+rm -f "${work}/mvlog" "${work}/snap"
+run "${p2}" "http://127.0.0.1:${port}/good" PATH="${work}/mvbin:${PATH}" \
+  QCY_TEST_MVLOG="${work}/mvlog" QCY_TEST_WATCH="${p2}" QCY_TEST_SNAP="${work}/snap"
 if [ "${rc}" -eq 0 ] && [ -x "${p2}/.bin/qcyctl" ] && [ -x "${p2}/.bin/qcyctld" ] \
    && [ "$(cat "${p2}/.bin/.version")" = "${version}" ] && grep -q '^STEP done' "${work}/out" \
    && grep -qx "BIN ${p2}/.bin/qcyctl" "${work}/out"; then
   check "correct checksum installs into the plugin dir" ok; else check "correct checksum installs into the plugin dir" no; cat "${work}/out"; fi
-if [ -z "$(find "${work}/home" -mindepth 1 2>/dev/null)" ] && [ -z "$(find "${p2}/.bin" -mindepth 1 -type d -name '.bootstrap.*' 2>/dev/null)" ]; then
-  check "nothing written outside the plugin dir; no staging left" ok; else check "nothing written outside the plugin dir; no staging left" no; find "${work}/home" "${p2}/.bin"; fi
+if [ -s "${work}/snap" ] && cmp -s "${work}/before" "${work}/snap" \
+   && [ "$(grep -c " ${p2}/.bin\$" "${work}/mvlog")" = 1 ] && [ "$(grep -c "${p2}" "${work}/mvlog")" = 1 ]; then
+  check "nothing under the plugin dir changes before the single rename" ok
+else check "nothing under the plugin dir changes before the single rename" no; diff "${work}/before" "${work}/snap" || true; cat "${work}/mvlog"; fi
+if [ -z "$(find "${work}/home" -mindepth 1 2>/dev/null)" ] && [ -z "$(stages)" ] \
+   && [ "$(ls -A "${p2}/.bin" | LC_ALL=C sort | tr '\n' ' ')" = ".version qcyctl qcyctld " ]; then
+  check "nothing written outside the plugin dir; no staging left" ok; else check "nothing written outside the plugin dir; no staging left" no; find "${work}/home" "${p2}/.bin"; stages; fi
+
+# 2b. failed download/checksum over an installed .bin: untouched, no staging
+before_bin="$(tree "${p2}/.bin")"
+run "${p2}" "http://127.0.0.1:${port}/bad"
+if [ "${rc}" -ne 0 ] && grep -q '^ERROR' "${work}/out" && [ "$(tree "${p2}/.bin")" = "${before_bin}" ] && [ -z "$(stages)" ]; then
+  check "failed checksum leaves the installed .bin intact and no staging" ok
+else check "failed checksum leaves the installed .bin intact and no staging" no; cat "${work}/out"; fi
+
+# 2c. an orphan staging directory from a killed run is cleaned up
+mkdir -p "${work}/.qcy-stage.ORPHAN/bin"; : > "${work}/.qcy-stage.ORPHAN/bin/x"
+run "${p2}" "http://127.0.0.1:${port}/bad"
+if [ -z "$(stages)" ]; then check "orphan staging removed" ok; else check "orphan staging removed" no; stages; fi
+
+# 2d. upgrade: new binaries replace .bin, no leftovers
+cp "${work}/good/${name}" "${work}/good/${name}.keep"; cp "${work}/good/SHA256SUMS" "${work}/good/SHA256SUMS.keep"
+printf 'more' >> "${work}/pkg/qcyctl"
+tar -czf "${work}/good/${name}" -C "${work}/pkg" qcyctl qcyctld
+printf '%s  %s\n' "$(sha256sum "${work}/good/${name}" | awk '{print $1}')" "${name}" > "${work}/good/SHA256SUMS"
+old_sum="$(sha256sum "${p2}/.bin/qcyctl" | awk '{print $1}')"
+run "${p2}" "http://127.0.0.1:${port}/good" PATH="${work}/mvbin:${PATH}" \
+  QCY_TEST_MVLOG="${work}/mvlog2" QCY_TEST_WATCH="${p2}" QCY_TEST_SNAP="${work}/snap2"
+new_sum="$(sha256sum "${p2}/.bin/qcyctl" | awk '{print $1}')"
+if [ "${rc}" -eq 0 ] && [ "${old_sum}" != "${new_sum}" ] && [ -z "$(stages)" ] \
+   && [ "$(ls -A "${p2}/.bin" | LC_ALL=C sort | tr '\n' ' ')" = ".version qcyctl qcyctld " ] \
+   && [ "$(grep -v "${p2}/\.bin" "${work}/snap2" | sed 's/ [^ ]* [^ ]*$//')" = "$(grep -v "${p2}/\.bin" "${work}/snap" | sed 's/ [^ ]* [^ ]*$//')" ]; then
+  check "upgrade replaces .bin without leftovers" ok
+else check "upgrade replaces .bin without leftovers" no; cat "${work}/out"; fi
+cp "${work}/good/${name}.keep" "${work}/good/${name}"; cp "${work}/good/SHA256SUMS.keep" "${work}/good/SHA256SUMS"
+fake_elf "${work}/pkg/qcyctl"
 
 # 3. not an ELF of this machine: refused even with a matching checksum
 printf '#!/bin/sh\necho pwn\n' > "${work}/pkg/qcyctl"
@@ -87,7 +145,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # 5. build fallback: a fake `go` shows where the build cache goes; nothing
-# stays under ~/.cache and the cache is removed with the staging directory
+# stays under ~/.cache or the plugin dir; the cache goes with the staging directory
 mkdir -p "${work}/fakebin" "${work}/src/cmd/qcyctl"
 cat > "${work}/fakebin/go" <<ENDGO
 #!/usr/bin/env bash
@@ -102,10 +160,10 @@ chmod +x "${work}/fakebin/go"
 p5="$(new_plugin p5)"
 run "${p5}" "http://127.0.0.1:${port}/none" QCY_BUILD=1 QCY_SRC_DIR="${work}/src" PATH="${work}/fakebin:${PATH}"
 gc="$(cat "${work}/gocache.path" 2>/dev/null || true)"
-case "${gc}" in "${p5}/.bin/"*) in_plugin=ok ;; *) in_plugin=no ;; esac
-if [ "${rc}" -eq 0 ] && [ -x "${p5}/.bin/qcyctld" ] && [ "${in_plugin}" = ok ] && [ ! -e "${gc}" ] \
+case "${gc}" in "${work}/.qcy-stage."*) in_stage=ok ;; *) in_stage=no ;; esac
+if [ "${rc}" -eq 0 ] && [ -x "${p5}/.bin/qcyctld" ] && [ "${in_stage}" = ok ] && [ ! -e "${gc}" ] \
    && [ -z "$(find "${work}/home" -mindepth 1 2>/dev/null)" ]; then
-  check "build fallback keeps its cache inside the plugin dir and removes it" ok
-else check "build fallback keeps its cache inside the plugin dir and removes it" no; cat "${work}/out"; echo "gocache=${gc}"; fi
+  check "build fallback keeps its cache in the staging dir and removes it" ok
+else check "build fallback keeps its cache in the staging dir and removes it" no; cat "${work}/out"; echo "gocache=${gc}"; fi
 
 [ "${fails}" -eq 0 ] && echo "all passed" || { echo "${fails} failed"; exit 1; }
