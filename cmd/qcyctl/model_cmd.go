@@ -256,11 +256,15 @@ func defaultColor(p models.Product) colorChoice {
 type deviceInfo struct {
 	vendor uint16
 	haveV  bool
+	// color is the colorIndex the earbuds advertised (0..7), known only when
+	// the daemon's scan saw it.
+	color     int
+	haveColor bool
 }
 
-// readDeviceInfo reads the vendorId from the daemon's le-address cache (field
-// 4; any later field is ignored) and falls back to a running daemon's status
-// when the cache has no vendorId. It never starts a daemon or scans.
+// readDeviceInfo reads the vendorId (field 4) and the advertised colorIndex
+// (field 5) from the daemon's le-address cache and falls back to a running
+// daemon's status when the cache has no vendorId. It never starts a daemon or scans.
 func readDeviceInfo() deviceInfo {
 	var d deviceInfo
 	if p := cacheFilePath(); p != "" {
@@ -271,42 +275,34 @@ func readDeviceInfo() deviceInfo {
 					d.vendor, d.haveV = uint16(n), true
 				}
 			}
+			if d.haveV && len(f) > 4 {
+				if n, err := strconv.ParseUint(f[4], 10, 8); err == nil && n <= 7 {
+					d.color, d.haveColor = int(n), true
+				}
+			}
 		}
 	}
-	if d.haveV {
+	if d.haveV && d.haveColor {
 		return d
 	}
 	if st, err := modelDaemonStatus(); err == nil {
 		if m, ok := st["model"].(map[string]interface{}); ok {
-			if v, ok := m["vendorId"].(float64); ok && v >= 0 && v <= 65535 {
+			if v, ok := m["vendorId"].(float64); ok && v >= 0 && v <= 65535 && (!d.haveV || uint16(v) == d.vendor) {
 				d.vendor, d.haveV = uint16(v), true
+				if c, ok := m["colorIndex"].(float64); ok && c >= 0 && c <= 7 {
+					d.color, d.haveColor = int(c), true
+				}
 			}
 		}
 	}
 	return d
 }
 
-func readColorFile() string {
-	d, err := qcyConfigDir()
-	if err != nil {
-		return ""
-	}
-	b, err := os.ReadFile(filepath.Join(d, "color"))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
-}
-
-// resolveColor applies the precedence flag > file > product default. A bad flag
-// is a usage error; a bad file falls through.
-//
-// The colour the earbuds advertise is deliberately not used: the QCY app
-// computes it as (b[3] & 14) >> 1 (bits 1-3 of the manufacturer data), while
-// the Quicky scanner delivers (b[3] & 0x18) >> 1 (bits 3-4), which cannot be
-// turned back into the app's value. If the scanner ever exposes the raw
-// manufacturer bytes, parse (b[3] & 14) >> 1 here and add a "device" source.
-func resolveColor(p models.Product, known bool, flag string) (colorChoice, error) {
+// resolveColor applies the precedence flag > colour the earbuds advertise >
+// product default. A bad flag is a usage error. The advertised colorIndex
+// matches a colour entry by its own index field or, when the entry has none,
+// by its position in the list; no match falls through to the default.
+func resolveColor(p models.Product, known bool, flag string, devColor int, haveDev bool) (colorChoice, error) {
 	if flag != "" {
 		if c, ok := findColor(p, flag); ok {
 			return fromColor(c, "flag"), nil
@@ -324,12 +320,31 @@ func resolveColor(p models.Product, known bool, flag string) (colorChoice, error
 		}
 		return colorChoice{}, fmt.Errorf("--color %q: no such colour (have: %s)", flag, strings.Join(have, ", "))
 	}
-	if f := readColorFile(); f != "" {
-		if c, ok := findColor(p, f); ok {
-			return fromColor(c, "file"), nil
+	if haveDev {
+		if c, ok := colorByIndex(p, devColor); ok {
+			return fromColor(c, "device"), nil
 		}
 	}
 	return defaultColor(p), nil
+}
+
+// colorByIndex finds the colour for an advertised colorIndex: the entry whose
+// index field equals it, else the entry at that position when no entry in the
+// list carries an index field.
+func colorByIndex(p models.Product, idx int) (models.Color, bool) {
+	anyIdx := false
+	for _, c := range p.Colors {
+		if c.Index != nil {
+			anyIdx = true
+			if *c.Index == idx {
+				return c, true
+			}
+		}
+	}
+	if !anyIdx && idx >= 0 && idx < len(p.Colors) {
+		return p.Colors[idx], true
+	}
+	return models.Color{}, false
 }
 
 // ---- command ----
@@ -376,22 +391,30 @@ func cmdModelImage(args []string) error {
 	}
 
 	var vendor uint16
+	var devColor int
+	var haveDevColor bool
 	if haveVendorFlag {
 		n, err := strconv.ParseUint(strings.TrimSpace(vendorFlag), 10, 16)
 		if err != nil {
 			return fmt.Errorf("--vendor %q: not a vendorId (0-65535)", vendorFlag)
 		}
 		vendor = uint16(n)
+		// The advertised colour belongs to the connected unit: use it only
+		// when --vendor names that same product.
+		if dev := readDeviceInfo(); dev.haveV && dev.vendor == vendor {
+			devColor, haveDevColor = dev.color, dev.haveColor
+		}
 	} else {
 		dev := readDeviceInfo()
 		if !dev.haveV {
 			return errors.New("model image: vendorId unknown (no cached device, no running daemon); pass --vendor N")
 		}
 		vendor = dev.vendor
+		devColor, haveDevColor = dev.color, dev.haveColor
 	}
 
 	p, known := productLookup(vendor)
-	choice, err := resolveColor(p, known, colorFlag)
+	choice, err := resolveColor(p, known, colorFlag, devColor, haveDevColor)
 	if err != nil {
 		return err
 	}

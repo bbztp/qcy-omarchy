@@ -276,30 +276,42 @@ func TestImageAtomicNoTmpAfterFailure(t *testing.T) {
 
 func TestImageColorPrecedence(t *testing.T) {
 	_, _ = imgEnv(t, okWebp)
-	// The cached colour field is never used as the colour.
-	writeDeviceCache(t, "AA:BB:CC:DD:EE:FF 0 QCY 100 2\n")
 
-	// product default
+	// no advertised colour known: product default
+	writeDeviceCache(t, "AA:BB:CC:DD:EE:FF 0 QCY 100\n")
 	res, err := runImage(t, "--no-network")
 	if err != nil || res.Color.Source != "default" || res.Color.Name != "Black" || res.VendorID != 100 {
 		t.Fatalf("default: %+v %v", res, err)
 	}
-	// file beats default
-	writeCfg(t, "color", "Titanium Gray\n")
+	// the colour the earbuds advertised beats the default
+	writeDeviceCache(t, "AA:BB:CC:DD:EE:FF 0 QCY 100 1\n")
 	res, err = runImage(t, "--no-network")
-	if err != nil || res.Color.Source != "file" || res.Color.Name != "Titanium Gray" {
-		t.Fatalf("file: %+v %v", res, err)
+	if err != nil || res.Color.Source != "device" || res.Color.Name != "Titanium Gray" {
+		t.Fatalf("device: %+v %v", res, err)
 	}
-	// flag beats file
+	// the flag beats the advertised colour
 	res, err = runImage(t, "--no-network", "--color", "2")
 	if err != nil || res.Color.Source != "flag" || res.Color.Name != "Purple" {
 		t.Fatalf("flag: %+v %v", res, err)
 	}
-	// a bad file falls through to the default
-	writeCfg(t, "color", "nonexistent")
+	// an advertised colour the product does not list falls through to the default
+	writeDeviceCache(t, "AA:BB:CC:DD:EE:FF 0 QCY 100 7\n")
 	res, err = runImage(t, "--no-network")
 	if err != nil || res.Color.Source != "default" {
-		t.Fatalf("bad file: %+v %v", res, err)
+		t.Fatalf("unlisted: %+v %v", res, err)
+	}
+	// the old color file is no longer read
+	writeCfg(t, "color", "Purple\n")
+	writeDeviceCache(t, "AA:BB:CC:DD:EE:FF 0 QCY 100\n")
+	res, err = runImage(t, "--no-network")
+	if err != nil || res.Color.Source != "default" || res.Color.Name != "Black" {
+		t.Fatalf("color file must be ignored: %+v %v", res, err)
+	}
+	// --vendor for another product ignores the connected unit's colour
+	writeDeviceCache(t, "AA:BB:CC:DD:EE:FF 0 QCY 100 1\n")
+	res, err = runImage(t, "--no-network", "--vendor", "100")
+	if err != nil || res.Color.Source != "device" {
+		t.Fatalf("same vendor flag keeps device colour: %+v %v", res, err)
 	}
 	// an unknown colour on the flag is a usage error
 	if _, err = runImage(t, "--color", "Green"); err == nil {
@@ -307,14 +319,43 @@ func TestImageColorPrecedence(t *testing.T) {
 	}
 }
 
-func TestImageDaemonStatusFallback(t *testing.T) {
-	_, _ = imgEnv(t, okWebp)
-	modelDaemonStatus = func() (map[string]interface{}, error) {
-		return map[string]interface{}{"model": map[string]interface{}{"vendorId": float64(100), "colorIndex": float64(2)}}, nil
+func TestResolveColorTable(t *testing.T) {
+	byIdx := models.Product{Colors: []models.Color{
+		{Name: "A", Index: ip(0)}, {Name: "B", Index: ip(3)},
+	}}
+	byPos := models.Product{Colors: []models.Color{{Name: "A"}, {Name: "B"}, {Name: "C"}}}
+	none := models.Product{}
+	cases := []struct {
+		name string
+		p    models.Product
+		dev  int
+		have bool
+		want string // colour name, or "" for the default
+	}{
+		{"index field match", byIdx, 3, true, "B"},
+		{"index field is not a position", byIdx, 1, true, ""},
+		{"position match", byPos, 2, true, "C"},
+		{"position out of range", byPos, 5, true, ""},
+		{"not advertised", byIdx, 3, false, ""},
+		{"no colours", none, 0, true, ""},
 	}
-	res, err := runImage(t, "--no-network")
-	if err != nil || res.VendorID != 100 || res.Color.Source != "default" || res.Color.Name != "Black" {
-		t.Fatalf("%+v %v", res, err)
+	for _, c := range cases {
+		ch, err := resolveColor(c.p, true, "", c.dev, c.have)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if c.want == "" && ch.source != "default" || c.want != "" && (ch.source != "device" || ch.name != c.want) {
+			t.Errorf("%s: %+v", c.name, ch)
+		}
+	}
+	// every shipped product, every advertised index, with and without a flag: no panic
+	for _, p := range models.All() {
+		for idx := -1; idx <= 8; idx++ {
+			if _, err := resolveColor(p, true, "", idx, true); err != nil {
+				t.Errorf("vendor %d idx %d: %v", p.VendorID, idx, err)
+			}
+		}
+		_, _ = resolveColor(p, true, "nope", 0, true)
 	}
 }
 

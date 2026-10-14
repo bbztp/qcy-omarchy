@@ -1092,14 +1092,14 @@ func cmdScan(args []string) error {
 	if err := bluetooth.DefaultAdapter.Enable(); err != nil {
 		return fmt.Errorf("enable adapter: %w", err)
 	}
-	scanner := quicky.NewScanner()
+	adapter := bluetooth.DefaultAdapter
 
 	stop := make(chan struct{})
 	var stopOnce sync.Once
 	requestStop := func() {
 		stopOnce.Do(func() {
 			close(stop)
-			if err := scanner.StopScan(); err != nil {
+			if err := adapter.StopScan(); err != nil {
 				fmt.Fprintf(os.Stderr, "stop scan: %v\n", err)
 			}
 		})
@@ -1118,7 +1118,7 @@ func cmdScan(args []string) error {
 		requestStop()
 	}()
 
-	scanErr := scanner.Scan(func(r quicky.ScanResult) {
+	scanErr := adapter.Scan(func(_ *bluetooth.Adapter, r bluetooth.ScanResult) {
 		printScanResult(r)
 	})
 
@@ -1133,15 +1133,22 @@ func cmdScan(args []string) error {
 	}
 }
 
-func printScanResult(r quicky.ScanResult) {
-	fmt.Printf("device %s rssi=%d name=%q\n", r.Address, r.RSSI, r.Name)
-	if ad := r.Advertisement; ad != nil {
-		fmt.Printf("  vendorID=0x%04x color=%d\n", ad.VendorID, ad.ColorIndex)
+func printScanResult(r bluetooth.ScanResult) {
+	for _, m := range r.ManufacturerData() {
+		vendor, color, ok := qcycore.ParseAdvert(m.CompanyID, m.Data)
+		if !ok {
+			continue
+		}
+		b := m.Data
+		fmt.Printf("device %s rssi=%d name=%q\n", r.Address, r.RSSI, r.LocalName())
+		fmt.Printf("  vendorID=0x%04x color=%d\n", vendor, color)
 		fmt.Printf("  battery left=%d%% charging=%v right=%d%% charging=%v box=%d%% charging=%v\n",
-			ad.LeftBattery, ad.IsLeftCharging, ad.RightBattery, ad.IsRightCharging, ad.BoxBattery, ad.IsBoxCharging)
-	}
-	if p, ok := r.GetProductInfo(); ok {
-		fmt.Printf("  product: %s / %s\n", p.Title, p.SubTitle)
+			b[5]&0x7F, b[5]&0x80 != 0, b[6]&0x7F, b[6]&0x80 != 0, b[7]&0x7F, b[7]&0x80 != 0)
+		probe := quicky.ScanResult{Advertisement: &quicky.AdvertisementInfo{VendorID: vendor}}
+		if p, ok := probe.GetProductInfo(); ok {
+			fmt.Printf("  product: %s / %s\n", p.Title, p.SubTitle)
+		}
+		return
 	}
 }
 

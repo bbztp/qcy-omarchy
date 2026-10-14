@@ -1053,3 +1053,179 @@ func TestLibrarySaveWithBaseKeepsBaseBands(t *testing.T) {
 		t.Fatalf("base band lost: %+v", c.Bands[1])
 	}
 }
+
+// import-device --replace / --backup / --user: the hearing-experience entry is
+// overwritten (or a new user curve saved) from what the earbuds report, only
+// when the active slot is the expected one. The earbuds are never written.
+func TestLibraryImportDeviceReplace(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		state    string
+		wantErr  bool
+		wantBak  int
+		wantHex  string // payload the entry must hold afterwards
+		wantNote string
+	}{
+		{"replace without backup", []string{"--expect-slot", "0", "--replace"}, slot0Flat, false, 0, slot0Flat, ""},
+		{"replace with backup", []string{"--expect-slot", "0", "--replace", "--backup"}, slot0Flat, false, 1, slot0Flat, ""},
+		{"expect-slot diverges", []string{"--expect-slot", "11", "--replace", "--backup"}, slot0Flat, true, 0, realCustom11, ""},
+		{"backup without replace", []string{"--expect-slot", "0", "--backup"}, slot0Flat, true, 0, realCustom11, ""},
+		{"replace without expect-slot", []string{"--replace"}, slot0Flat, true, 0, realCustom11, ""},
+		{"existing id without replace", []string{"--expect-slot", "0"}, slot0Flat, true, 0, realCustom11, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := libEnv(t)
+			useFakeLink(t, hexBytes(t, tc.state))
+			if _, err := qcycore.SeedFromPayload(qcycore.SourceDeviceImport, 11, "Experiência auditiva", realCustom11); err != nil {
+				t.Fatal(err)
+			}
+			err := cmdLibrary(append([]string{"import-device", "Experiência auditiva"}, tc.args...))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			c, lerr := qcycore.LoadCurve("experiencia-auditiva")
+			if lerr != nil || c.Payload != tc.wantHex {
+				t.Fatalf("entry payload = %.20s... (%v), want %.20s...", c.Payload, lerr, tc.wantHex)
+			}
+			baks, _ := filepath.Glob(filepath.Join(data, "qcy-omarchy", "backups", "curve-experiencia-auditiva-*.json"))
+			if len(baks) != tc.wantBak {
+				t.Fatalf("backups = %v, want %d", baks, tc.wantBak)
+			}
+			if tc.wantBak == 1 {
+				var old qcycore.Curve
+				b, _ := os.ReadFile(baks[0])
+				if json.Unmarshal(b, &old) != nil || old.Payload != realCustom11 {
+					t.Fatalf("backup does not hold the old entry: %s", b)
+				}
+			}
+		})
+	}
+}
+
+func TestLibraryImportDeviceSaveAsNewUserCurve(t *testing.T) {
+	libEnv(t)
+	useFakeLink(t, hexBytes(t, slot0Flat))
+	if _, err := qcycore.SeedFromPayload(qcycore.SourceDeviceImport, 11, "Experiência auditiva", realCustom11); err != nil {
+		t.Fatal(err)
+	}
+	name := "Experiência auditiva (fone) 2026-10-14"
+	if err := cmdLibrary([]string{"import-device", name, "--expect-slot", "0", "--user"}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := qcycore.LoadCurve(qcycore.Slug(name))
+	if err != nil || c.Source != qcycore.SourceUser || c.Payload != slot0Flat {
+		t.Fatalf("%+v %v", c, err)
+	}
+	old, err := qcycore.LoadCurve("experiencia-auditiva")
+	if err != nil || old.Payload != realCustom11 {
+		t.Fatalf("old entry touched: %+v %v", old, err)
+	}
+}
+
+func TestLibraryImportDeviceReplaceEarsNeedsBackup(t *testing.T) {
+	data := libEnv(t)
+	useFakeLink(t, hexBytes(t, slot0Flat))
+	c, err := qcycore.CurveFromPayload(qcycore.SourceDeviceImport, 11, "Experiência auditiva", realCustom11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Ears = &qcycore.EarCurves{Left: c.Bands[5:13], Right: c.Bands[5:13]}
+	if err := qcycore.CreateCurve(c); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdLibrary([]string{"import-device", "Experiência auditiva", "--expect-slot", "0", "--replace"}); err == nil {
+		t.Fatal("replace without backup accepted over an entry with ears")
+	}
+	got, _ := qcycore.LoadCurve("experiencia-auditiva")
+	if got.Ears == nil || got.Payload != realCustom11 {
+		t.Fatalf("entry changed: %+v", got)
+	}
+	if err := cmdLibrary([]string{"import-device", "Experiência auditiva", "--expect-slot", "0", "--replace", "--backup"}); err != nil {
+		t.Fatal(err)
+	}
+	baks, _ := filepath.Glob(filepath.Join(data, "qcy-omarchy", "backups", "curve-experiencia-auditiva-*.json"))
+	if len(baks) != 1 {
+		t.Fatalf("backups = %v", baks)
+	}
+}
+
+func TestLibraryMatchesCommand(t *testing.T) {
+	libEnv(t)
+	c, err := qcycore.SeedFromPayload(qcycore.SourceDeviceImport, 11, "Experiência auditiva", realCustom11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bj, _ := json.Marshal(c.Bands)
+	run := func(master string, bands string) string {
+		var e error
+		out := captureStdout(t, func() { e = cmdLibrary([]string{"matches", c.ID, "--master", master, "--bands", bands}) })
+		if e != nil {
+			t.Fatal(e)
+		}
+		return strings.TrimSpace(out)
+	}
+	if got := run(strconv.FormatFloat(c.MasterGain, 'f', 2, 64), string(bj)); !strings.Contains(got, "true") {
+		t.Fatalf("same: %s", got)
+	}
+	if got := run("7", string(bj)); !strings.Contains(got, "false") {
+		t.Fatalf("master differs: %s", got)
+	}
+}
+
+func TestLibraryMatchesAnyUser(t *testing.T) {
+	libEnv(t)
+	// A factory snapshot with the same payload as "Mine" must never be named.
+	if _, err := qcycore.SeedFromPayload(qcycore.SourceFactorySnapshot, 1, "Factory Twin", realCustom11); err != nil {
+		t.Fatal(err)
+	}
+	hearing, err := qcycore.SeedFromPayload(qcycore.SourceDeviceImport, 11, "Experiência auditiva", slot0Flat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine, err := qcycore.SeedFromPayload(qcycore.SourceUser, 255, "Mine", realCustom11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := qcycore.SeedFromPayload(qcycore.SourceUser, 255, "Other", "0b"+realCustom11[2:60]+"00"+realCustom11[62:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(c qcycore.Curve, master float64) map[string]any {
+		bj, _ := json.Marshal(c.Bands)
+		var e error
+		out := captureStdout(t, func() {
+			e = cmdLibrary([]string{"matches", "--any-user", "--master", strconv.FormatFloat(master, 'f', 2, 64), "--bands", string(bj)})
+		})
+		if e != nil {
+			t.Fatal(e)
+		}
+		var m map[string]any
+		if json.Unmarshal([]byte(out), &m) != nil {
+			t.Fatalf("output %q", out)
+		}
+		return m
+	}
+	if m := run(mine, mine.MasterGain); m["match"] != true || m["id"] != "mine" {
+		t.Fatalf("one of several: %v", m)
+	}
+	if m := run(other, other.MasterGain); m["match"] != true || m["id"] != "other" {
+		t.Fatalf("second: %v", m)
+	}
+	if m := run(hearing, hearing.MasterGain); m["match"] != true || m["id"] != "experiencia-auditiva" {
+		t.Fatalf("hearing card in 255: %v", m)
+	}
+	if m := run(mine, mine.MasterGain+3); m["match"] != false {
+		t.Fatalf("master differs: %v", m)
+	}
+	if err := qcycore.DeleteCurve("mine"); err != nil {
+		t.Fatal(err)
+	}
+	if m := run(mine, mine.MasterGain); m["match"] != false {
+		t.Fatalf("only the factory twin left, got %v", m)
+	}
+	if err := cmdLibrary([]string{"matches", "--any-user", "x", "--master", "0", "--bands", "[]"}); err == nil {
+		t.Fatal("--any-user with an id accepted")
+	}
+}

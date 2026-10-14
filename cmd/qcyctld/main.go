@@ -68,6 +68,9 @@ type daemon struct {
 	// the dialer could learn it (scan or cache). It decides the model.
 	vendorID   uint16
 	haveVendor bool
+	// colorIndex is the colour the earbuds advertised (see colorSource).
+	colorIndex uint8
+	haveColor  bool
 
 	// Model detection & routing
 	caps   map[string]bool
@@ -443,7 +446,7 @@ func cacheFilePath() string {
 
 // cacheEntry is one line of the le-address cache:
 //
-//	<addr> <random 0|1> [<name with _ for spaces>|-] [<vendorId decimal>]
+//	<addr> <random 0|1> [<name with _ for spaces>|-] [<vendorId decimal>] [<colorIndex 0-7>]
 //
 // Older files stop after the address, or after the name; both still parse. The
 // vendorId is last because the fast path never scans and so never sees the
@@ -454,6 +457,10 @@ type cacheEntry struct {
 	Name       string
 	VendorID   uint16
 	HaveVendor bool
+	// ColorIndex is the colour the earbuds advertised, kept with the vendorId
+	// it was seen with; it only exists when the vendorId does.
+	ColorIndex uint8
+	HaveColor  bool
 }
 
 func parseCacheEntry(content string) (cacheEntry, bool) {
@@ -471,6 +478,11 @@ func parseCacheEntry(content string) (cacheEntry, bool) {
 	if len(fields) > 3 {
 		if n, err := strconv.ParseUint(fields[3], 10, 16); err == nil {
 			e.VendorID, e.HaveVendor = uint16(n), true
+		}
+	}
+	if e.HaveVendor && len(fields) > 4 {
+		if n, err := strconv.ParseUint(fields[4], 10, 8); err == nil && n <= 7 {
+			e.ColorIndex, e.HaveColor = uint8(n), true
 		}
 	}
 	return e, true
@@ -491,6 +503,9 @@ func formatCacheEntry(e cacheEntry) string {
 	}
 	if e.HaveVendor {
 		line += " " + strconv.FormatUint(uint64(e.VendorID), 10)
+		if e.HaveColor {
+			line += " " + strconv.FormatUint(uint64(e.ColorIndex), 10)
+		}
 	}
 	return line + "\n"
 }
@@ -520,8 +535,9 @@ func loadCachedAddr() (bluetooth.Address, bool) {
 }
 
 // saveCachedAddr stores the address, the advertised name and (when the scan
-// saw it) the vendorId, which is what model detection uses on the fast path.
-func saveCachedAddr(addr bluetooth.Address, name string, vendor uint16, haveVendor bool) {
+// saw it) the vendorId, which is what model detection uses on the fast path,
+// and the advertised colorIndex.
+func saveCachedAddr(addr bluetooth.Address, name string, vendor uint16, haveVendor bool, color uint8, haveColor bool) {
 	p := cacheFilePath()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return
@@ -530,6 +546,7 @@ func saveCachedAddr(addr bluetooth.Address, name string, vendor uint16, haveVend
 	line := formatCacheEntry(cacheEntry{
 		Addr: addr.String(), Random: addr.IsRandom(), Name: name,
 		VendorID: vendor, HaveVendor: haveVendor,
+		ColorIndex: color, HaveColor: haveColor && haveVendor,
 	})
 	if os.WriteFile(p, []byte(line), 0o600) == nil {
 		_ = os.Chmod(p, 0o600)
@@ -540,12 +557,6 @@ func saveCachedAddr(addr bluetooth.Address, name string, vendor uint16, haveVend
 func loadCachedName() string {
 	e, _ := loadCacheEntry()
 	return e.Name
-}
-
-// loadCachedVendor returns the vendorId stored alongside a cached address.
-func loadCachedVendor() (uint16, bool) {
-	e, _ := loadCacheEntry()
-	return e.VendorID, e.HaveVendor
 }
 
 func (d *daemon) detectAndAttachModel() {
@@ -2032,6 +2043,7 @@ func declaresAction(c Capabilities, id string) bool {
 func (d *daemon) modelReport() map[string]interface{} {
 	d.mu.Lock()
 	h, id, vendor, have := d.handler, d.modelID, d.vendorID, d.haveVendor
+	color, haveColor := d.colorIndex, d.haveColor
 	d.mu.Unlock()
 	if h == nil {
 		return nil
@@ -2057,6 +2069,11 @@ func (d *daemon) modelReport() map[string]interface{} {
 		// What the connected model declares; the panel crosses its probe
 		// results with these so an undeclared control is never offered.
 		"actions": actions, "features": features,
+	}
+	if haveColor && have {
+		// The colour the unit advertised; the images follow it (qcyctl model image).
+		m["colorIndex"] = int(color)
+		m["colorSource"] = "device"
 	}
 	if len(c.PromptVolumeSteps) > 0 {
 		m["promptVolumeSteps"] = c.PromptVolumeSteps

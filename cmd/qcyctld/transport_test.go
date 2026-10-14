@@ -217,7 +217,7 @@ func TestSaveCachedAddrPermissions(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(cacheFilePath()), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	saveCachedAddr(bluetooth.Address{}, "x", 0, false)
+	saveCachedAddr(bluetooth.Address{}, "x", 0, false, 0, false)
 	for p, want := range map[string]os.FileMode{filepath.Dir(cacheFilePath()): 0o700, cacheFilePath(): 0o600} {
 		fi, err := os.Stat(p)
 		if err != nil {

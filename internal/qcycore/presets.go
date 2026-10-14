@@ -403,6 +403,21 @@ func LoadCurve(id string) (Curve, error) {
 	return c, nil
 }
 
+// LoadCurveFile reads and validates a curve JSON from any path (a backup file
+// or an exported curve) without storing it in the library. Symlinks are not
+// followed.
+func LoadCurveFile(path string) (Curve, error) {
+	data, err := readCurveFile(path)
+	if err != nil {
+		return Curve{}, fmt.Errorf("curve file: %w", err)
+	}
+	c, err := decodeCurve(data)
+	if err != nil {
+		return Curve{}, fmt.Errorf("curve file %s: %w", path, err)
+	}
+	return c, nil
+}
+
 // ListCurves returns every valid curve, sorted by id, plus one error per file
 // that could not be used. Temp files, subdirectories and symlinks are skipped.
 func ListCurves() ([]Curve, []error) {
@@ -676,10 +691,10 @@ func ExportCurve(id, path string) error {
 	return nil
 }
 
-// SeedFromPayload builds a curve from a raw 0x22 payload (hex) and stores it in
-// the library under Slug(name). source is device-import or factory-snapshot
-// (user is accepted too); slot is the slot it came from, or -1.
-func SeedFromPayload(source string, slot int, name, hexPayload string) (Curve, error) {
+// CurveFromPayload builds (without storing) a curve from a raw 0x22 payload
+// (hex). source is device-import, factory-snapshot or user; slot is the slot it
+// came from, or -1.
+func CurveFromPayload(source string, slot int, name, hexPayload string) (Curve, error) {
 	p, err := hex.DecodeString(strings.TrimSpace(hexPayload))
 	if err != nil {
 		return Curve{}, fmt.Errorf("seed: payload: %w", err)
@@ -691,7 +706,7 @@ func SeedFromPayload(source string, slot int, name, hexPayload string) (Curve, e
 	if err != nil {
 		return Curve{}, fmt.Errorf("seed: %w", err)
 	}
-	c := Curve{
+	return Curve{
 		Version:    CurveVersion,
 		ID:         Slug(name),
 		Name:       strings.TrimSpace(name),
@@ -701,6 +716,16 @@ func SeedFromPayload(source string, slot int, name, hexPayload string) (Curve, e
 		Payload:    snap.Payload,
 		Bands:      snap.Bands,
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
+	}, nil
+}
+
+// SeedFromPayload builds a curve from a raw 0x22 payload (hex) and stores it in
+// the library under Slug(name). source is device-import or factory-snapshot
+// (user is accepted too); slot is the slot it came from, or -1.
+func SeedFromPayload(source string, slot int, name, hexPayload string) (Curve, error) {
+	c, err := CurveFromPayload(source, slot, name, hexPayload)
+	if err != nil {
+		return Curve{}, err
 	}
 	if err := CreateCurve(c); err != nil {
 		return Curve{}, err

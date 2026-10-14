@@ -95,10 +95,10 @@ type hearingEnv struct {
 	now       func() time.Time
 	sleep     func(time.Duration)
 	configDir func() (string, error)
-	// saveCurve stores the active curve in the library under name and returns
-	// its id (the equivalent of `library import-device <name>`).
+	// saveCurve stores the active curve as a curve JSON in the backup
+	// directory and returns its path (the library is not touched).
 	saveCurve func(name string, snap *qcycore.EqSnapshot) (string, error)
-	// slot11 preserves the slot 11 curve as a user entry of the library
+	// slot11 preserves the slot 11 curve as a curve file in the backup directory
 	// (errNoSlot11Copy when there is nothing to preserve).
 	slot11 func(snap *qcycore.EqSnapshot) (slot11Backup, error)
 	// recordCurve stores (replacing atomically, the old version to the trash)
@@ -506,9 +506,9 @@ type hearingBackup struct {
 	Timestamp string                 `json:"timestamp"`
 	Status    map[string]interface{} `json:"status"`
 	Eq        *qcycore.EqSnapshot    `json:"eq"`
-	Library   string                 `json:"libraryId"`
+	CurveFile string                 `json:"curveFile"`
 	Restore   string                 `json:"restore"`
-	// Slot11 is the library entry that preserves slot 11 (the hearing-test
+	// Slot11 is the backup file that preserves slot 11 (the hearing-test
 	// curve the write overwrites) and Slot11Restore the command that reapplies it.
 	Slot11        string `json:"slot11Backup,omitempty"`
 	Slot11Restore string `json:"slot11Restore,omitempty"`
@@ -1027,19 +1027,6 @@ func readbackBands(c *hearingCall) ([]qcycore.EqBand, bool) {
 	return snap.Bands, true
 }
 
-// tailMatches compares eight bands positionally with whole-dB gains (0.1 dB).
-func tailMatches(tail []qcycore.EqBand, gains [hearing.Bands]int) bool {
-	if len(tail) != hearing.Bands {
-		return false
-	}
-	for i, g := range gains {
-		if tail[i].Freq != hearing.Freqs[i] || tail[i].Gain-float64(g) > 0.101 || float64(g)-tail[i].Gain > 0.101 {
-			return false
-		}
-	}
-	return true
-}
-
 // prefixIsZero: the first five bands are the factory baseline's frequencies at
 // gain 0 (what the "zero" experiment wrote).
 func prefixIsZero(bands []qcycore.EqBand) bool {
@@ -1051,56 +1038,36 @@ func prefixIsZero(bands []qcycore.EqBand) bool {
 	return true
 }
 
-// readbackShows checks that the 0x22 readback shows the eight gains, BY
-// POSITION (the 8000 Hz band of the default effect would collide with the test's
-// 8000 Hz band in a lookup by frequency), and returns an experiment note when
-// the layout is one of the unexpected-but-understood ones.
-//
-// baseline "factory" (the default; measured): 13 bands = the 5 of the default
-// effect + the 8 test bands, or a bare 8.
-//
-// baseline "zero" (EXPERIMENT, not verified): 13 bands with the first 5 at
-// gain 0 is the expected outcome; 18 bands (the firmware prefixed the factory
-// baseline again) and 13 bands with a non-zero prefix (it replaced the zeros)
-// are reported as results of the experiment, not as failures; any other band
-// count is not confirmed.
+// readbackShows checks that the 0x22 readback shows the written ear: the master
+// gain and the LAST eight bands, BY POSITION (the 8000 Hz band of the previous
+// effect would collide with the test's 8000 Hz band in a lookup by frequency).
+// The bands in front are whatever the previous effect left (measured: 5 after
+// a factory effect, 6 after Popular in Personalizado), so their number and
+// content are not checked; the rule is qcycore.CurveMatchesDevice, the same the
+// panel uses to recognise the card. It returns an experiment note only for the
+// two layouts the "zero" baseline experiment expects to tell apart.
 func readbackShows(c *hearingCall, gains [hearing.Bands]int, baseline string) (ok bool, note string) {
 	bands, have := readbackBands(c)
-	if !have || !readbackMasterMatches(c) {
+	if !have || c.Readback == nil || c.MasterGain == nil {
 		return false, ""
 	}
-	n := len(bands)
-	if baseline != "zero" {
-		if n != hearing.Bands && n != 5+hearing.Bands {
-			return false, ""
-		}
-		return tailMatches(bands[n-hearing.Bands:], gains), ""
+	left := make([]qcycore.EqBand, hearing.Bands)
+	for i, g := range gains {
+		left[i] = qcycore.EqBand{Index: i, Freq: hearing.Freqs[i], Gain: float64(g)}
 	}
-	switch n {
-	case 5 + hearing.Bands:
-		if !tailMatches(bands[5:], gains) {
-			return false, ""
-		}
-		if prefixIsZero(bands) {
-			return true, ""
-		}
-		return true, "firmware replaced the zero baseline with the factory baseline (13 bands)"
-	case 10 + hearing.Bands:
-		if !tailMatches(bands[10:], gains) || !prefixIsZero(bands[5:]) {
-			return false, ""
-		}
-		return true, "firmware still prefixes the factory baseline (18 bands)"
+	probe := qcycore.Curve{Ears: &qcycore.EarCurves{Left: left, MasterGain: *c.MasterGain}}
+	if !qcycore.CurveMatchesDevice(probe, c.Readback.MasterGain, bands) {
+		return false, ""
 	}
-	return false, ""
-}
-
-// readbackMasterMatches: the readback's master gain is the one written (0.05 dB).
-func readbackMasterMatches(c *hearingCall) bool {
-	if c.Readback == nil || c.MasterGain == nil {
-		return false
+	if baseline == "zero" {
+		switch n := len(bands); {
+		case n == 5+hearing.Bands && !prefixIsZero(bands):
+			return true, "firmware replaced the zero baseline with the factory baseline (13 bands)"
+		case n == 10+hearing.Bands && prefixIsZero(bands[5:]):
+			return true, "firmware still prefixes the factory baseline (18 bands)"
+		}
 	}
-	d := c.Readback.MasterGain - *c.MasterGain
-	return d <= 0.051 && d >= -0.051
+	return true, ""
 }
 
 // writeConfirmed (factory baseline): the device echoed the opcode, or its 0x22
@@ -1432,11 +1399,12 @@ func saveBackupCurve(name string, snap *qcycore.EqSnapshot) (string, error) {
 	if snap == nil {
 		return "", errors.New("no active EQ snapshot")
 	}
-	c, err := qcycore.SeedFromPayload(qcycore.SourceDeviceImport, snap.Slot, name, snap.Payload)
+	c, err := qcycore.CurveFromPayload(qcycore.SourceDeviceImport, snap.Slot, name, snap.Payload)
 	if err != nil {
 		return "", err
 	}
-	return c.ID, nil
+	c.ID = "eq-antes-do-teste"
+	return qcycore.BackupCurve(c, time.Now())
 }
 
 func liveHearingEnv(out io.Writer) (hearingEnv, func()) {

@@ -679,8 +679,23 @@ The protocol carries no model name, so the daemon picks the model in this order
 3. otherwise the advertised name (`n70`), then the firmware string, then
    `generic`.
 
-The vendorId is stored as the last field of `~/.cache/qcyctl/le-address` so
-the fast path (no scan) keeps it. Source of the product data, the embedded
+The vendorId is stored as field 4 of `~/.cache/qcyctl/le-address` so
+the fast path (no scan) keeps it.
+
+### Advertisement: colour
+
+The advertisement carries manufacturer data under company ID `0x521C` (an
+alternative, `0x522C`, is accepted too). For a payload of at least 20 bytes
+(company ID not included), bytes 0-1 are the vendorId (big-endian) and bits 1-3
+of byte 3, `(b[3] & 0x0E) >> 1`, are the colour index (0..7). The index matches
+the `colorIndex` of a `colors[]` entry of the product list; an entry without
+one is matched by its position in the list. Measured: the manufacturer data is
+present while scanning; **inferred**: the bit layout of the colour field (the
+colour-to-image mapping has not been checked against every unit). Once
+connected, BlueZ no longer exposes the manufacturer data, so the daemon records
+the colour during the scan and stores it as field 5 of the `le-address` cache
+(only alongside the vendorId it was seen with). The status `model` object then
+carries `colorIndex` and `colorSource: "device"`. Source of the product data, the embedded
 snapshot and its limits: `WEB_API.md`.
 
 ## Supporting more than one model
@@ -718,8 +733,9 @@ Commands: `qcyctl hearing run [--device-mode] [--apply --yes [--accept-floor]]
 `qcyctl hearing apply <result.json> --yes [--accept-floor] [--device-mode]`
 writes the stored result of an earlier run without redoing the test. Both use
 the same path: the full status and the raw active 0x22 payload are saved first
-(`~/.config/qcy-omarchy/backups/hearing-before-<timestamp>.json` plus a library
-entry, restored with `qcyctl library apply <id> --yes`); then the left and right
+(`~/.config/qcy-omarchy/backups/hearing-before-<timestamp>.json` plus a curve
+file `curve-eq-antes-do-teste-<UTC>.json` in `~/.local/share/qcy-omarchy/backups/`,
+never a library entry; restored with `qcyctl library apply --file <that file> --yes`); then the left and right
 frames are sent with `confirm:true`, each answer and the 0x22 readback are
 printed, the test mode (if it was switched on) is switched off, and the result
 is declared "applied" only when the device echoed the opcode or its readback
@@ -804,13 +820,14 @@ read from the device) keeps the slot 255 path. If the library cannot be updated
 after the earbuds were written, a warning says so and nothing is undone.
 
 Slot 11 is what the hearing-test frames overwrite, and the earbuds report only
-the ACTIVE slot, so before writing the tool preserves it as a user entry of the
-library, "Hearing experience (backup YYYY-MM-DD HH:MM)" (id
-`slot11-backup-<timestamp>`): read directly when slot 11 is the active slot,
+the ACTIVE slot, so before writing the tool preserves it as a curve file in the
+backup directory (`~/.local/share/qcy-omarchy/backups/curve-slot11-backup-<UTC>.json`,
+full curve including `ears`, named "Hearing experience (backup YYYY-MM-DD HH:MM)";
+the library gets no card): read directly when slot 11 is the active slot,
 otherwise a clone of the last known copy (`experiencia-auditiva`, else the most
 recent entry with slot 11) with a note stating when that copy was read. With no
 copy and no active slot 11 the write is refused unless `--no-slot11-backup` is
-given. Restore with `qcyctl library apply <id> --yes`.
+given. Restore with `qcyctl library apply --file <backup file> --yes`.
 
 **Measured on a MeloBuds N70 (first real write of 0x46/0x47 index 11).** The
 earbuds sent NO echo for 0x46 or 0x47 (`ack=false` for both). Afterwards the
@@ -819,9 +836,14 @@ earbuds sent NO echo for 0x46 or 0x47 (`ack=false` for both). Afterwards the
 (50/200/900/2800/8000 Hz, Q 60/60/70/120/350, which the firmware prefixes) and
 positions 5-12 are the 8 test bands (63..8000 Hz, Q 70, type 2) with the gains
 of the LEFT ear. The right ear, written last, does not appear: the 0x22 reports
-one ear only. Consequences for the tool:
+one ear only. The prefix is not always those 5 default bands: it is whatever the
+previous effect left behind (measured: 6 bands, 200/900/2800/8500/7000/15000 Hz,
+after `library apply experiencia-auditiva` with Popular active in slot 255, 14
+bands in all). Anything that recognises a hearing card in a readback (the
+panel's `library matches`) therefore compares only the LAST 8 bands with
+`ears.left` and ignores the prefix. Consequences for the tool:
 
-- the readback is compared **by position** (the last 8 bands; 13 or a bare 8 are
+- the readback is compared **by position** (the last 8 bands; any prefix length is
   accepted), never by frequency: the default effect's 8000 Hz band collides
   with the test's 8000 Hz band;
 - the left ear is confirmed by that readback (master within 0.05 dB, bands
@@ -842,12 +864,12 @@ factory`, the behaviour above) sends N = 13 bands per ear: the 5 factory bands
 the 8 test bands, so `paramLen = 7*13+3 = 0x5E` and `bodyLen = paramLen+2`
 (the vendor app takes n = the band count of the item).
 The master gain comes from the 8 test gains alone. The positional readback
-check then accepts: (a) 13 bands, first 5 at gain 0, last 8 the test bands;
+check then accepts (as for the factory baseline: the last 8 bands are the ear's and the master matches, whatever the prefix length) and only tells apart: (a) 13 bands, first 5 at gain 0, last 8 the test bands;
 (b) 18 bands (the firmware prefixed the factory baseline again), reported as
 "firmware still prefixes the factory baseline (18 bands)" and counted as a
 RESULT OF THE EXPERIMENT (exit 0, with a warning); (c) 13 bands with a non-zero
 prefix, reported as "firmware replaced the zero baseline with the factory
-baseline (13 bands)", also a result; any other band count is NOT CONFIRMED.
+baseline (13 bands)", also a result; any other prefix length is confirmed without a note, and a readback whose last 8 bands are not the ear's is NOT CONFIRMED.
 The `experiencia-auditiva` card stores only the 8 test bands in `ears` plus
 `ears.baseline: "zero"`; re-applying the card (`library apply`) honours it
 (zero: 13 bands per ear; absent or factory: 8). The daemon's `hearingWrite`

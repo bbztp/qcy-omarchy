@@ -6,10 +6,22 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-14
+
 ### Added
 
+- `qcyctl library apply --file <curve.json>` applies a curve file (such as a restore point) without adding it to the library.
+- The bar widget stays visible while the setup is running or has failed (tooltip shows the error), and hides again once ready and the earbuds are away.
 - `qcyctl library import-device --expect-slot N` saves nothing unless slot N is the one active on the earbuds.
-- The Sound tab shows a "Hearing experience" placeholder (with a shortcut to the test) when the model declares the hearing test and the library has no entry for it yet; when the earbuds report that effect active and the entry is missing, the panel imports it once per session (read-only, never writes to the earbuds).
+- The Sound tab always shows the "Hearing experience" card when the model declares the hearing test; with no saved curve it has a "How to get it" button (use the phone app curve and refresh, or run the hearing test here); when the earbuds report that effect active and the entry is missing, the panel imports it once per session (read-only, never writes to the earbuds).
+- When the earbuds report slot 11 active but its bands or master gain differ (hearing-test cards compare the last 8 reported bands with the left ear, ignoring the prefix the previous effect leaves; `qcyctl library matches <id> --master dB --bands json` exposes the rule) from the saved hearing card (test redone on the phone), the card is no longer marked as playing, the chart shows the earbuds' curve, and a notice offers to overwrite the saved card (optionally backing it up first) or save the curve as a new custom one. The notice is not repeated for the same payload in a session.
+- `qcyctl library import-device` gains `--replace` (overwrite the existing entry, requires `--expect-slot`; an entry with per-ear curves also requires `--backup`), `--backup` (with `--replace`: copy the old entry to the backups directory first) and `--user` (store as a custom curve). Still read-only on the earbuds.
+- With Personalizado (slot 255) active, the earbuds' curve is compared with all your own curves (`qcyctl library matches --any-user`): the matching card is marked; when none matches, a notice offers to save it as a new custom curve (`import-device --expect-slot 255 --user`). Not raised while the panel is writing the EQ or composing on a base.
+
+### Changed
+
+- The restore points of `library apply` (hearing-test card), `hearing apply` and `hearing run --apply` (the active EQ and slot 11 before the write) are now `curve-*.json` files in `~/.local/share/qcy-omarchy/backups/` instead of library entries, so they no longer fill the Sound tab with cards. The slot 11 backup requirement (and `--no-slot11-backup`) is unchanged.
+- Device images follow the colour the earbuds advertise (`--color` still wins, then the product default). The daemon records the colour during its scan and reports it as `model.colorIndex` / `model.colorSource`; the scan reads the raw advertisement itself. The `~/.config/qcy-omarchy/color` file is no longer read.
 
 ### Fixed
 
@@ -61,6 +73,7 @@ First release.
 - Automatic setup: the plugin downloads the matching `qcyctl` and `qcyctld` release, verifies its SHA-256, and installs it inside the plugin's own `.bin` directory, so removing the plugin removes the programs (falls back to building from source with Go); the daemon starts on demand, exits by itself when its executable is removed, and can optionally run as a systemd user service.
 - Features follow each model's own panel: nothing is blocked because a model was not tested on hardware (the panel only says so). Prompt volume steps, wear sensitivity items, noise modes and equalizer geometry come from the model; features whose encoding is not understood are listed under "Not available on this model".
 
+[0.1.4]: https://github.com/bbztp/qcy-omarchy/releases/tag/v0.1.4
 [0.1.3]: https://github.com/bbztp/qcy-omarchy/releases/tag/v0.1.3
 [0.1.2]: https://github.com/bbztp/qcy-omarchy/releases/tag/v0.1.2
 [0.1.1]: https://github.com/bbztp/qcy-omarchy/releases/tag/v0.1.1

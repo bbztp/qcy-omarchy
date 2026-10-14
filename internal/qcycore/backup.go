@@ -2,6 +2,7 @@ package qcycore
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -189,4 +190,41 @@ func importLegacyBackups(dir string) {
 	if ok {
 		_ = writeNoReplace(marker, []byte("legacy cache backups copied; originals left in place\n"))
 	}
+}
+
+// BackupCurve copies a library entry, as JSON, into the backup directory as
+// curve-<id>-<UTC timestamp>.json (never replacing a file) and returns the
+// path. It is how a library entry is kept before it is overwritten.
+func BackupCurve(c Curve, now time.Time) (string, error) {
+	if !curveIDRe.MatchString(c.ID) {
+		return "", fmt.Errorf("backup curve: invalid id %q", c.ID)
+	}
+	dir, err := BackupDir()
+	if err != nil {
+		return "", err
+	}
+	if err := EnsureBackupDir(dir); err != nil {
+		return "", err
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	data = append(data, '\n')
+	ts := now.UTC().Format("20060102T150405.000000Z")
+	for n := 0; n < 100; n++ {
+		name := fmt.Sprintf("curve-%s-%s.json", c.ID, ts)
+		if n > 0 {
+			name = fmt.Sprintf("curve-%s-%s-%d.json", c.ID, ts, n)
+		}
+		p := filepath.Join(dir, name)
+		err := writeNoReplace(p, data)
+		if err == nil {
+			return p, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return "", fmt.Errorf("backup curve: %w", err)
+		}
+	}
+	return "", errors.New("backup curve: could not find a free file name")
 }

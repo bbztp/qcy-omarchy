@@ -24,7 +24,9 @@ qcyctl i18n list|bundle|template|set   # languages, offline (see README, Languag
 qcyctl model image            # device pictures, downloaded on demand (see Device images below)
 qcyctl library seed           # the 8 factory effects (embedded) + Hearing experience, offline, idempotent
 qcyctl library list [--all]   # saved EQ curves (offline): factory in the app's order, Hearing experience, then yours; --all also shows older seeds
-qcyctl library apply <id> --yes [--slot 255|0]   # write a saved curve to slot 255 (default: the app's "Custom" buffer, the only safe target while a factory effect 6/11 is active) or 0
+qcyctl library import-device <name> --expect-slot 11 [--replace [--backup]] [--user]   # save the active EQ read from the earbuds (never writes to them); --replace overwrites the entry of that name (needs --expect-slot), --backup copies the old entry to ~/.local/share/qcy-omarchy/backups/curve-<id>-<UTC>.json first, --user stores it as your own curve; an entry with per-ear curves (hearing-test result) can only be replaced with --backup
+qcyctl library matches <id>|--any-user --master -10 --bands '[...]'   # offline: does the EQ the earbuds report (status eq.masterGain, eq.bands) match the entry? prints {"match":bool}; --any-user tries all your own curves and adds "id"; hearing-test entries match when the last 8 reported bands are the left ear (the prefix before them is ignored)
+qcyctl library apply <id>|--file <curve.json> --yes [--slot 255|0]   # --file applies a curve JSON (for example a restore point `curve-*.json` from ~/.local/share/qcy-omarchy/backups/) without adding it to the library; write a saved curve to slot 255 (default: the app's "Custom" buffer, the only safe target while a factory effect 6/11 is active) or 0
 qcyctl library compose --base predefinido --gains 0,0,3,0,0,-2,0,0,0,4.5 --yes   # your bars on top of a factory effect, in the app's layout, into slot 255
 qcyctl library compose --base none --gains 1,0,0,0,0,0,0,0,0,0 --dry-run --json  # only print the payload and the resulting bands
 ```
@@ -67,6 +69,10 @@ payload of the currently **active** slot, as read from the earbuds, is saved to
 
 - This is not a backup of whatever the slot you overwrite held before: a slot's
   contents cannot be read while it is inactive.
+- `hearing run --apply` / `hearing apply` / `library apply` of a hearing-test card
+  save the restore points (the active EQ and slot 11) as `curve-*.json` files in
+  the backup directory, not as library entries; the commands they print
+  (`qcyctl library apply --file <file> --yes`) restore them.
 - `library apply` / `library compose` into slot 255 (the app's "Custom") back up
   only the active payload. If slot 255 is not the active one, its previous
   content is replaced with no copy (the phone app does the same when you pick a
@@ -153,10 +159,13 @@ are limited to 2 MiB and checked to be WebP/PNG before they are saved.
 
 They are kept in `~/.cache/qcy-omarchy/images/<vendorId>/<colour>/`
 (`$XDG_CACHE_HOME` is honoured) and are never fetched twice; `--refresh`
-downloads them again. The colour comes from `--color`, or from the file
-`~/.config/qcy-omarchy/color` (a colour name or index, e.g. `Purple` or `2`),
-otherwise it is the product's default colour; the colour the earbuds advertise
-is not used because the scanner does not report it reliably.
+downloads them again. The colour is, in order: `--color` (a colour name or
+index, e.g. `Purple` or `2`); the colour the earbuds themselves advertise (the
+daemon records it when it scans, since a connected unit stops advertising, so it
+is known after the first scan-based connection and reported as `colorIndex` /
+`colorSource: "device"` in the status `model` object); the product's default
+colour. An advertised colour the product list does not contain falls back to the
+default. The old `~/.config/qcy-omarchy/color` file is no longer read.
 
 ```sh
 qcyctl model image [--vendor N] [--color <name|index>] [--refresh] [--no-network] [--json]

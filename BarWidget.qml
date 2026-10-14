@@ -22,8 +22,10 @@ Panel {
   // Own the single IpcHandler the target permits so refresh() can be routed.
   manageIpc: false
   // Only exist while a matching device is connected; the bar collapses an
-  // invisible slot to zero, so nothing shows when the earbuds are away.
-  visible: Qcy.connected
+  // invisible slot to zero, so nothing shows when the earbuds are away. While
+  // the setup is preparing (or failed) it stays visible so the user can see why
+  // nothing works; the quick "checking" step and a data removal show nothing.
+  visible: !Qcy._removing && (Qcy.connected || Qcy.setupState === "preparing" || Qcy.setupState === "error")
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color accent: Color.accent
@@ -232,6 +234,7 @@ Panel {
     ctx.lineJoin = "round"
     ctx.stroke()
   }
+  property bool hearingHelpOpen: false
   property bool saveOpen: false
   // The user effect whose small menu is open, and the one asked to be deleted.
   property string menuId: ""
@@ -310,24 +313,31 @@ Panel {
     }
     // Slot 11 is the hearing-test experience by definition: the card of that
     // name is the one in use, never a backup copy that happens to share bands.
-    if (slot === 11) {
+    // Unless the earbuds' slot 11 no longer matches that card: then what plays
+    // is not the saved curve and the card is not marked (hearingDiverged).
+    var skip = root.hearingDiverged ? "experiencia-auditiva" : ""
+    // Personalizado (255): once the library has been compared with the earbuds'
+    // curve, the answer decides (the one that matches, or none); until then the
+    // bands decide below.
+    if (slot === 255 && root._m255Known) return root._m255Id
+    if (slot === 11 && skip === "") {
       for (i = 0; i < l.length; i++) {
         if (l[i].id === "experiencia-auditiva" && !root.hiddenEntry(l[i])) return l[i].id
       }
     }
     if (sig !== "") {
       for (i = 0; i < l.length; i++) {
-        if (!root.hiddenEntry(l[i]) && root.entrySig(l[i]) === sig) return l[i].id
+        if (!root.hiddenEntry(l[i]) && l[i].id !== skip && root.entrySig(l[i]) === sig) return l[i].id
       }
     }
     if (slot >= 0 && slot !== 255) {
       for (i = 0; i < l.length; i++) {
-        if (!root.hiddenEntry(l[i]) && l[i].source !== "user" && Number(l[i].slot) === slot) return l[i].id
+        if (!root.hiddenEntry(l[i]) && l[i].id !== skip && l[i].source !== "user" && Number(l[i].slot) === slot) return l[i].id
       }
       var eff = rep && rep.eq && rep.eq.effect ? String(rep.eq.effect) : ""
       if (eff !== "") {
         for (i = 0; i < l.length; i++) {
-          if (!root.hiddenEntry(l[i]) && l[i].name === eff) return l[i].id
+          if (!root.hiddenEntry(l[i]) && l[i].id !== skip && l[i].name === eff) return l[i].id
         }
       }
     }
@@ -698,6 +708,9 @@ Panel {
     // forget. Falls back to the model name until the first battery read lands.
     function barTooltip() {
       var name = root.modelName
+      if (Qcy.setupState === "error")
+        return Qcy.setupMessage !== "" ? Qcy.setupMessage : Qcy.tr("Preparing QCY…")
+      if (!Qcy.ready) return Qcy.tr("Preparing QCY…")
       if (!Qcy.connected) return Qcy.tr("{name} — disconnected", { name: name })
       if (!batt) return Qcy.tr("{name} — reading battery…", { name: name })
       var parts = [Qcy.tr("L {n}%", { n: batt.left }), Qcy.tr("R {n}%", { n: batt.right })]
@@ -845,7 +858,7 @@ Panel {
 
   // Each updater runs on its own: a throw in one must not skip the rest.
   function updateAll() {
-    var steps = [updateEqBands, updateEqPreset, updateMasterGain, updateTouchRows, syncBase]
+    var steps = [updateEqBands, updateEqPreset, updateMasterGain, updateTouchRows, syncBase, requestMatch]
     for (var i = 0; i < steps.length; i++) {
       try { steps[i]() } catch (e) { console.warn("qcy: update step failed:", e) }
     }
@@ -932,6 +945,160 @@ Panel {
     case "error": return Qcy.tr("Error")
     default: return Qcy.tr("Starting…")
     }
+  }
+
+  // ---- hearing experience: the earbuds' slot 11 against the saved card ----
+  // What plays is always the earbuds' curve. When slot 11 is active and the
+  // saved card differs from it (the test was redone on the phone), the card is
+  // not marked and the user chooses what to do with the curve in use.
+  readonly property var hearingEntry: {
+    var l = Qcy.library
+    for (var i = 0; i < l.length; i++) if (l[i].id === "experiencia-auditiva") return l[i]
+    return null
+  }
+
+  // The comparison (qcycore.CurveMatchesDevice, asked through `library
+  // matches`) knows the hearing-test layout: the earbuds report the left ear
+  // behind a prefix left by the previous effect, the saved card holds both ears. The answer is
+  // kept per (earbuds payload, saved entry) pair.
+  property string _matchKey: ""
+  property string _matchResult: ""     // "same" | "diff" | "" (not known)
+  property bool hearingSettling: false // a test/apply just ended: readback not stable yet
+  readonly property bool hearingBusy: Qcy.hearingRunning || Qcy.hearingApplyState === "running" || root.hearingSettling
+
+  function matchWantKey() {
+    var b = rep && rep.eq ? rep.eq.bands : null
+    if (root.activeSlot !== 11 || root.hearingEntry === null || !b || b.length === 0) return ""
+    return Number(rep.eq.masterGain || 0).toFixed(2) + "|" + JSON.stringify(b) + "#" + JSON.stringify(root.hearingEntry)
+  }
+
+  function requestMatch(force) {
+    root.requestMatch255(force)
+    var key = root.hearingBusy ? "" : root.matchWantKey()
+    if (key === "") { root._matchKey = ""; root._matchResult = ""; return }
+    if (key === root._matchKey && !force) return
+    root._matchKey = key
+    root._matchResult = ""
+    Qcy.libraryMatches(root.hearingEntry.id, rep.eq.masterGain || 0, rep.eq.bands, function (ok, match) {
+      if (root._matchKey !== key) return
+      root._matchResult = ok ? (match ? "same" : "diff") : ""
+    })
+  }
+
+  Timer {
+    id: settleTimer
+    interval: 8000
+    repeat: false
+    onTriggered: { root.hearingSettling = false; root.requestMatch(true) }
+  }
+  Connections {
+    target: Qcy
+    function onHearingRunningChanged() { root.hearingSettling = true; settleTimer.restart(); root.requestMatch(false) }
+    function onHearingApplyStateChanged() { root.hearingSettling = true; settleTimer.restart(); root.requestMatch(false) }
+    function onLibraryChanged() { root.requestMatch(false) }
+    function onWriteBusyChanged() { root.eqSettling = true; eqSettleTimer.restart(); root.requestMatch255(false) }
+    function onLibraryOpChanged() { root.eqSettling = true; eqSettleTimer.restart(); root.requestMatch255(false) }
+  }
+
+  // ---- Personalizado (255): which of the user's own curves is in use ----
+  property string _m255Key: ""
+  property string _m255Result: ""      // "same" | "diff" | ""
+  property string _m255Id: ""
+  property bool eqSettling: false      // the panel just wrote the EQ: readback not stable yet
+  readonly property bool _m255Known: root._m255Result !== "" && root._m255Key === root.m255WantKey()
+
+  function m255WantKey() {
+    var b = rep && rep.eq ? rep.eq.bands : null
+    if (root.activeSlot !== 255 || root.baseId !== "" || !Qcy.libraryLoaded || !b || b.length === 0) return ""
+    var users = Qcy.library.filter(function (e) { return (e.source === "user" || e.id === "experiencia-auditiva") && !root.hiddenEntry(e) })
+    return Number(rep.eq.masterGain || 0).toFixed(2) + "|" + JSON.stringify(b) + "#" + JSON.stringify(users)
+  }
+
+  function requestMatch255(force) {
+    var key = (root.eqSettling || Qcy.writeBusy || Qcy.libraryOp.phase === "running") ? "" : root.m255WantKey()
+    if (key === "") { root._m255Key = ""; root._m255Result = ""; root._m255Id = ""; return }
+    if (key === root._m255Key && !force) return
+    root._m255Key = key
+    root._m255Result = ""
+    root._m255Id = ""
+    Qcy.libraryMatchesAnyUser(rep.eq.masterGain || 0, rep.eq.bands, function (ok, id) {
+      if (root._m255Key !== key) return
+      root._m255Result = ok ? (id !== "" ? "same" : "diff") : ""
+      root._m255Id = id
+    })
+  }
+
+  Timer {
+    id: eqSettleTimer
+    interval: 8000
+    repeat: false
+    onTriggered: { root.eqSettling = false; root.requestMatch255(true) }
+  }
+
+  // The earbuds' Personalizado curve is not any curve saved here.
+  readonly property bool customUnsaved: root._m255Result === "diff" && root._m255Key === root.m255WantKey()
+    && root.m255WantKey() !== "" && !root.eqSettling
+
+  readonly property bool hearingDiverged: {
+    if (root.activeSlot !== 11 || root.hearingEntry === null || root.hearingBusy) return false
+    return root._matchResult === "diff" && root._matchKey === root.matchWantKey()
+  }
+
+  // Identifies the payload the earbuds report, so a dismissed notice stays
+  // dismissed for it and comes back if it changes.
+  readonly property string divergeSig: {
+    var b = rep && rep.eq ? rep.eq.bands : null
+    if (!(root.hearingDiverged || root.customUnsaved) || !b) return ""
+    return root.activeSlot + "|" + Number(rep.eq.masterGain || 0).toFixed(2) + "|" + b.map(function (x) {
+      return x.freq + "/" + Number(x.gain).toFixed(2) + "/" + x.q + "/" + x.type
+    }).join(",")
+  }
+  property string divergeDismissedSig: ""
+  property string divergeStep: ""      // "" | "backup" (asking about the backup) | "ears" (entry with per-ear curves: backup is mandatory)
+  property string divergeNote: ""
+  readonly property bool hearingEntryHasEars: !!root.hearingEntry && !!root.hearingEntry.ears
+  Timer { id: divergeNoteTimer; interval: 6000; onTriggered: root.divergeNote = "" }
+  property bool divergeBusy: false
+  property string divergeError: ""
+  onDivergeSigChanged: { root.divergeStep = ""; root.divergeError = "" }
+
+  function divergeOverwrite(backup) {
+    if (root.divergeBusy) return
+    root.divergeBusy = true
+    root.divergeError = ""
+    Qcy.libraryImportDevice("Experiência auditiva", "replace", backup, function (ok, msg) {
+      root.divergeBusy = false
+      if (ok) {
+        root.divergeStep = ""
+        root.divergeNote = Qcy.tr("Local curve overwritten.")
+        divergeNoteTimer.restart()
+      } else root.divergeError = msg
+    })
+  }
+
+  // A new user curve with the earbuds' payload; the saved card is untouched.
+  // On a name clash (second save on the same day) a number is appended.
+  function divergeSaveNew(attempt, slot) {
+    if (root.divergeBusy) return
+    var n = attempt || 1
+    var sl = slot === undefined ? 11 : slot
+    var name = (sl === 255 ? Qcy.tr("Custom (earbuds)") : Qcy.tr("Hearing experience (earbuds)")) + " " + Qt.formatDate(new Date(), "yyyy-MM-dd")
+    if (n > 1) name += " " + n
+    root.divergeBusy = true
+    root.divergeError = ""
+    var sig = root.divergeSig
+    Qcy.libraryImportDevice(name, "new", false, function (ok, msg, clash) {
+      root.divergeBusy = false
+      if (ok) {
+        // Done: close the notice for this payload so it cannot be saved twice.
+        root.divergeDismissedSig = sig
+        root.divergeNote = Qcy.tr("Saved as a new curve.")
+        divergeNoteTimer.restart()
+        return
+      }
+      if (n < 9 && clash) root.divergeSaveNew(n + 1, sl)
+      else root.divergeError = msg
+    }, sl)
   }
 
   // The model declares the hearing test but the library has no entry for it
@@ -2032,7 +2199,8 @@ Panel {
                 }
               }
 
-              // Placeholder for the hearing experience until it exists.
+              // The hearing experience card while there is no saved curve: a
+              // button explains how to get one.
               Card {
                 width: parent.width
                 visible: root.hearingEntryMissing
@@ -2040,22 +2208,183 @@ Panel {
 
                 Text {
                   width: parent.width
-                  text: Qcy.tr("Not created yet — run the hearing test to create it")
-                  color: root.muted
+                  text: Qcy.tr("Hearing experience")
+                  color: root.foreground
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                  elide: Text.ElideRight
+                }
+                Row {
+                  Chip {
+                    label: Qcy.tr("How to get it")
+                    active: root.hearingHelpOpen
+                    onClicked: root.hearingHelpOpen = !root.hearingHelpOpen
+                  }
+                }
+                Column {
+                  width: parent.width
+                  spacing: Style.space(8)
+                  visible: root.hearingHelpOpen
+
+                  Text {
+                    width: parent.width
+                    text: Qcy.tr("1. If you already have a hearing-test curve in the phone app, turn it on there, close the app and sync again here (Refresh): the plugin reads it and saves it.")
+                    color: root.foreground
+                    font.family: root.textFamily
+                    font.pixelSize: Style.font.bodySmall
+                    wrapMode: Text.WordWrap
+                  }
+                  Text {
+                    width: parent.width
+                    text: Qcy.tr("2. If you do not have one, create it on the computer with the hearing test.")
+                    color: root.foreground
+                    font.family: root.textFamily
+                    font.pixelSize: Style.font.bodySmall
+                    wrapMode: Text.WordWrap
+                  }
+                  Row {
+                    Chip {
+                      label: Qcy.tr("Go to the hearing test")
+                      onClicked: Qt.callLater(function () {
+                        scroller.contentY = Math.max(0, Math.min(
+                          scroller.contentHeight - scroller.height,
+                          hearingCard.mapToItem(scroller.contentItem, 0, 0).y))
+                      })
+                    }
+                  }
+                }
+              }
+
+              // The earbuds' slot 11 differs from the saved hearing card.
+              Card {
+                width: parent.width
+                visible: root.hearingDiverged && root.divergeSig !== root.divergeDismissedSig
+                active: false
+
+                Text {
+                  width: parent.width
+                  text: root.divergeStep === "ears"
+                    ? Qcy.tr("The new entry will not have the per-ear curves of the hearing test. The local curve is backed up first.")
+                    : root.divergeStep === "backup"
+                    ? Qcy.tr("Keep a backup of the local curve first?")
+                    : Qcy.tr("The curve in use on the earbuds is different from the one saved here. Overwrite the local one or save it as a new custom curve?")
+                  color: root.foreground
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.bodySmall
+                  wrapMode: Text.WordWrap
+                }
+                Row {
+                  spacing: Style.space(8)
+                  visible: root.divergeStep === ""
+                  Chip {
+                    label: Qcy.tr("Overwrite the local one")
+                    enabled: !root.divergeBusy
+                    opacity: enabled ? 1.0 : 0.5
+                    onClicked: root.divergeStep = root.hearingEntryHasEars ? "ears" : "backup"
+                  }
+                  Chip {
+                    label: Qcy.tr("Save as a new curve")
+                    enabled: !root.divergeBusy
+                    opacity: enabled ? 1.0 : 0.5
+                    onClicked: root.divergeSaveNew(1)
+                  }
+                  Chip {
+                    label: Qcy.tr("Close")
+                    onClicked: root.divergeDismissedSig = root.divergeSig
+                  }
+                }
+                Row {
+                  spacing: Style.space(8)
+                  visible: root.divergeStep === "ears"
+                  Chip {
+                    label: Qcy.tr("Overwrite")
+                    enabled: !root.divergeBusy
+                    opacity: enabled ? 1.0 : 0.5
+                    onClicked: root.divergeOverwrite(true)
+                  }
+                  Chip {
+                    label: Qcy.tr("Cancel")
+                    onClicked: root.divergeStep = ""
+                  }
+                }
+                Row {
+                  spacing: Style.space(8)
+                  visible: root.divergeStep === "backup"
+                  Chip {
+                    label: Qcy.tr("Yes")
+                    enabled: !root.divergeBusy
+                    opacity: enabled ? 1.0 : 0.5
+                    onClicked: root.divergeOverwrite(true)
+                  }
+                  Chip {
+                    label: Qcy.tr("No")
+                    enabled: !root.divergeBusy
+                    opacity: enabled ? 1.0 : 0.5
+                    onClicked: root.divergeOverwrite(false)
+                  }
+                  Chip {
+                    label: Qcy.tr("Cancel")
+                    onClicked: root.divergeStep = ""
+                  }
+                }
+                Text {
+                  width: parent.width
+                  visible: root.divergeError !== ""
+                  text: root.divergeError
+                  color: Color.urgent
                   font.family: root.textFamily
                   font.pixelSize: Style.font.caption
                   wrapMode: Text.WordWrap
                 }
+              }
+
+              // Personalizado on the earbuds is none of the curves saved here.
+              Card {
+                width: parent.width
+                visible: root.customUnsaved && root.divergeSig !== root.divergeDismissedSig
+                active: false
+
+                Text {
+                  width: parent.width
+                  text: Qcy.tr("The curve in use on the earbuds is not saved here. Save it as a new custom curve?")
+                  color: root.foreground
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.bodySmall
+                  wrapMode: Text.WordWrap
+                }
                 Row {
+                  spacing: Style.space(8)
                   Chip {
-                    label: Qcy.tr("Go to the hearing test")
-                    onClicked: Qt.callLater(function () {
-                      scroller.contentY = Math.max(0, Math.min(
-                        scroller.contentHeight - scroller.height,
-                        hearingCard.mapToItem(scroller.contentItem, 0, 0).y))
-                    })
+                    label: Qcy.tr("Save")
+                    enabled: !root.divergeBusy
+                    opacity: enabled ? 1.0 : 0.5
+                    onClicked: root.divergeSaveNew(1, 255)
+                  }
+                  Chip {
+                    label: Qcy.tr("Close")
+                    onClicked: root.divergeDismissedSig = root.divergeSig
                   }
                 }
+                Text {
+                  width: parent.width
+                  visible: root.divergeError !== ""
+                  text: root.divergeError
+                  color: Color.urgent
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+              }
+
+              Text {
+                width: parent.width
+                visible: root.divergeNote !== ""
+                text: root.divergeNote
+                color: root.foreground
+                font.family: root.textFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WordWrap
               }
 
               // Result of the last click on a card (or deletion), one line.

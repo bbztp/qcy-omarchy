@@ -496,7 +496,7 @@ func newRig(t *testing.T, keys keySource) *rig {
 			if rg.slot11Err != nil {
 				return slot11Backup{}, rg.slot11Err
 			}
-			return slot11Backup{ID: "experiencia-auditiva-backup-2026-10-13-12-00", Name: "Experiência auditiva (backup 2026-10-13 12:00)", Live: snap != nil && snap.Slot == 11}, nil
+			return slot11Backup{Path: "/b/experiencia-auditiva-backup-2026-10-13-12-00.json", Name: "Experiência auditiva (backup 2026-10-13 12:00)", Live: snap != nil && snap.Slot == 11}, nil
 		},
 		saveCurve: func(name string, snap *qcycore.EqSnapshot) (string, error) {
 			if rg.saveErr != nil {
@@ -504,7 +504,7 @@ func newRig(t *testing.T, keys keySource) *rig {
 			}
 			rg.order = append(rg.order, "save")
 			rg.saved = append(rg.saved, name)
-			return "backup-antes-do-teste-auditivo-" + strings.ReplaceAll(strings.ReplaceAll(name[len(name)-15:], " ", ""), "-", ""), nil
+			return "/b/backup-antes-do-teste-auditivo-" + strings.ReplaceAll(strings.ReplaceAll(name[len(name)-15:], " ", ""), "-", "") + ".json", nil
 		},
 	}
 	return rg
@@ -599,10 +599,10 @@ func TestHearingRunApplyBacksUpThenWritesBothEarsThenReadsBack(t *testing.T) {
 		t.Fatalf("backup: %v %s", err, b)
 	}
 	out := r.out.String()
-	if !strings.Contains(out, "qcyctl library apply backup-antes-do-teste-auditivo-") || len(r.saved) != 1 {
+	if !strings.Contains(out, "qcyctl library apply --file /b/backup-antes-do-teste-auditivo-") || len(r.saved) != 1 {
 		t.Fatal(out)
 	}
-	if !strings.Contains(string(b), `"payload": "0b50fb"`) || !strings.Contains(string(b), `"libraryId"`) {
+	if !strings.Contains(string(b), `"payload": "0b50fb"`) || !strings.Contains(string(b), `"curveFile"`) {
 		t.Fatalf("backup lacks the raw payload / library id: %s", b)
 	}
 	if !strings.Contains(out, `slot 11 "Experiência auditiva"`) {
@@ -1053,7 +1053,7 @@ func TestHearingRunModeOffFailurePrintsRestoreCommand(t *testing.T) {
 	}
 	out := r.out.String()
 	i := strings.Index(out, "could not switch the test mode off")
-	if i < 0 || !strings.Contains(out[i:], "qcyctl library apply backup-antes-do-teste-auditivo-") {
+	if i < 0 || !strings.Contains(out[i:], "qcyctl library apply --file /b/backup-antes-do-teste-auditivo-") {
 		t.Fatal(out)
 	}
 }
@@ -1071,7 +1071,7 @@ func TestHearingRunUnconfirmedWriteIsNotSuccess(t *testing.T) {
 			err := hearingRunLive(r.env, o)
 			out := r.out.String()
 			if err == nil || !strings.Contains(err.Error(), "NOT CONFIRMED") || !strings.Contains(out, "NOT CONFIRMED") ||
-				!strings.Contains(out, "qcyctl library apply backup-antes-do-teste-auditivo-") {
+				!strings.Contains(out, "qcyctl library apply --file /b/backup-antes-do-teste-auditivo-") {
 				t.Fatalf("%v\n%s", err, out)
 			}
 			r.assertRestored(t)
@@ -1119,7 +1119,7 @@ func TestHearingRunPartialWriteReportsMixedState(t *testing.T) {
 	o.apply, o.yes = true, true
 	err := hearingRunLive(r.env, o)
 	out := r.out.String()
-	if err == nil || !strings.Contains(out, "MIXED STATE") || !strings.Contains(out, "qcyctl library apply backup-antes-do-teste-auditivo-") {
+	if err == nil || !strings.Contains(out, "MIXED STATE") || !strings.Contains(out, "qcyctl library apply --file /b/backup-antes-do-teste-auditivo-") {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	r.assertRestored(t)

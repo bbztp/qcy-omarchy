@@ -1536,6 +1536,52 @@ Singleton {
       })
   }
 
+  // Saves what the earbuds report as slot 11 (read only, nothing is written to
+  // them; `--expect-slot 11` saves nothing if the active slot moved). mode
+  // "replace" overwrites the hearing-experience entry (backup: copy the old one
+  // to the backups first); mode "new" stores a user curve called `name`.
+  function libraryImportDevice(name, mode, backup, done, slot) {
+    var args = ["library", "import-device", name, "--expect-slot", String(slot === undefined ? 11 : slot), "--json"]
+    if (mode === "replace") {
+      args.push("--replace")
+      if (backup) args.push("--backup")
+    } else {
+      args.push("--user")
+    }
+    runOffline(args, function (code, out, err) {
+      if (code === 0) {
+        root.libraryReload()
+        if (done) done(true, "")
+        return
+      }
+      var clash = /already exists/i.test(err)
+      var msg = clash
+        ? tr("An effect with that name already exists. Choose another name.")
+        : (root._lastLine(err) || tr("The command failed (code {code})", { code: code }))
+      if (done) done(false, msg, clash)
+    })
+  }
+
+  // Does the EQ the earbuds report match this library entry? The rule lives in
+  // the CLI (`library matches`); done(ok, match).
+  function libraryMatches(id, master, bands, done) {
+    runOffline(["library", "matches", id, "--master", Number(master).toFixed(2), "--bands", JSON.stringify(bands)],
+      function (code, out, err) {
+        var j = root._parseJson(out)
+        if (done) done(code === 0 && !!j, !!(j && j.match))
+      })
+  }
+
+  // Which of the user's own curves is the EQ the earbuds report? done(ok, id)
+  // with id "" when none is.
+  function libraryMatchesAnyUser(master, bands, done) {
+    runOffline(["library", "matches", "--any-user", "--master", Number(master).toFixed(2), "--bands", JSON.stringify(bands)],
+      function (code, out, err) {
+        var j = root._parseJson(out)
+        if (done) done(code === 0 && !!j, j && j.match && j.id ? String(j.id) : "")
+      })
+  }
+
   // Moves a user curve to the library's .trash (recoverable by hand).
   function libraryDelete(id) {
     if (id === "experiencia-auditiva") _hearingImportTried = true

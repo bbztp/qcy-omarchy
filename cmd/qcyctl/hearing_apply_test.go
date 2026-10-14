@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -73,7 +74,7 @@ func TestHearingApplyBackupBeforeAnySendThenWritesBothEars(t *testing.T) {
 		t.Fatalf("events %s", ev)
 	}
 	out := r.out.String()
-	if !strings.Contains(out, "applied") || !strings.Contains(out, "qcyctl library apply backup-antes-do-teste-auditivo-") || len(r.saved) != 1 {
+	if !strings.Contains(out, "applied") || !strings.Contains(out, "qcyctl library apply --file /b/backup-antes-do-teste-auditivo-") || len(r.saved) != 1 {
 		t.Fatal(out)
 	}
 	if r.ex.count("pactl") != 0 || r.ex.count("playerctl") != 0 || r.pl.startedCount() != 0 {
@@ -287,7 +288,7 @@ func TestHearingApplyPartialFailureIsMixedStateWithRestore(t *testing.T) {
 	r.link.failWriteOn = 2
 	err := hearingApplyFile(r.env, resultFile(t, nil), hearingApplyOpts{yes: true, deviceMode: true})
 	out := r.out.String()
-	if err == nil || !strings.Contains(out, "MIXED STATE") || !strings.Contains(out, "qcyctl library apply backup-antes-do-teste-auditivo-") {
+	if err == nil || !strings.Contains(out, "MIXED STATE") || !strings.Contains(out, "qcyctl library apply --file /b/backup-antes-do-teste-auditivo-") {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if ev := r.link.list(); ev != "mode:on,write:left,write:right,mode:off" {
@@ -387,7 +388,7 @@ func TestHearingApplySlot11BackupPrecedesTheOtherBackupAndAnyFrame(t *testing.T)
 		t.Fatalf("order %v", r.order)
 	}
 	out := r.out.String()
-	if !strings.Contains(out, "qcyctl library apply experiencia-auditiva-backup-2026-10-13-12-00 --yes") || !strings.Contains(out, "slot 11 backup") {
+	if !strings.Contains(out, "qcyctl library apply --file /b/experiencia-auditiva-backup-2026-10-13-12-00.json --yes") || !strings.Contains(out, "slot 11 backup") {
 		t.Fatal(out)
 	}
 	b, _ := os.ReadFile(filepath.Join(r.cfg, "backups", "hearing-before-20261013-120000.json"))
@@ -461,7 +462,7 @@ func TestSlot11BackupFromTheActiveSlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := qcycore.LoadCurve(b.ID)
+	c, err := qcycore.LoadCurveFile(b.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,10 +473,10 @@ func TestSlot11BackupFromTheActiveSlot(t *testing.T) {
 	if ok, why := c.Applyable(); !ok {
 		t.Fatal(why)
 	}
-	// Same second again: still a distinct entry.
+	// Same second again: still a distinct file.
 	b2, err := hearingSlot11Backup(&qcycore.EqSnapshot{Slot: 11, Payload: slot11Payload}, now)
-	if err != nil || b2.ID == b.ID {
-		t.Fatalf("%v %s %s", err, b.ID, b2.ID)
+	if err != nil || b2.Path == b.Path {
+		t.Fatalf("%v %s %s", err, b.Path, b2.Path)
 	}
 }
 
@@ -490,7 +491,7 @@ func TestSlot11BackupClonesTheLastKnownCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := qcycore.LoadCurve(b.ID)
+	c, err := qcycore.LoadCurveFile(b.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -521,7 +522,7 @@ func TestSlot11BackupPrefersTheOldestDeviceReadAndSkipsOwnBackups(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, _ := qcycore.LoadCurve(b.ID)
+	c, _ := qcycore.LoadCurveFile(b.Path)
 	if !strings.Contains(c.Note, "2026-09-01T10:00:00Z") || !strings.Contains(c.Note, "(entrada velho)") ||
 		!strings.Contains(c.Note, "antes de gravar um novo resultado") {
 		t.Fatalf("note: %q", c.Note)
@@ -671,7 +672,7 @@ func TestHearingApplyLibraryFailureAfterTheWriteWarnsWithoutUndoing(t *testing.T
 	}
 	out := r.out.String()
 	if !strings.Contains(out, "WARNING: the earbuds were written, but the library entry") || !strings.Contains(out, "NOT undone") ||
-		!strings.Contains(out, "qcyctl library apply backup-antes-do-teste-auditivo-") {
+		!strings.Contains(out, "qcyctl library apply --file /b/backup-antes-do-teste-auditivo-") {
 		t.Fatal(out)
 	}
 	if ev := r.link.list(); ev != "mode:on,write:left,write:right,mode:off" {
@@ -849,25 +850,20 @@ func TestSlot11BackupCloneIsThePreviousVersionThenTheCardIsReplaced(t *testing.T
 	if err := hearingApplyFile(r.env, p, hearingApplyOpts{yes: true, acceptFloor: true}); err != nil {
 		t.Fatal(err)
 	}
-	clones, _ := filepath.Glob(filepath.Join(os.Getenv("XDG_DATA_HOME"), "*", "*", "slot11-backup-*.json"))
-	if len(clones) == 0 {
-		filepath.WalkDir(os.Getenv("XDG_DATA_HOME"), func(p string, d os.DirEntry, e error) error {
-			if e == nil && strings.HasPrefix(d.Name(), "slot11-backup-") {
-				clones = append(clones, p)
-			}
-			return nil
-		})
-	}
+	clones, _ := filepath.Glob(filepath.Join(os.Getenv("XDG_DATA_HOME"), "qcy-omarchy", "backups", "curve-slot11-backup-*.json"))
 	if len(clones) != 1 {
 		t.Fatalf("clones: %v", clones)
 	}
-	id := strings.TrimSuffix(filepath.Base(clones[0]), ".json")
-	clone, err := qcycore.LoadCurve(id)
+	clone, err := qcycore.LoadCurveFile(clones[0])
 	if err != nil || clone.Ears == nil || clone.Source != qcycore.SourceUser || !strings.Contains(clone.Note, "experiencia-auditiva") {
 		t.Fatalf("%v %+v", err, clone)
 	}
 	if clone.Payload != prev.Payload {
 		t.Fatal("the clone is not the previous version")
+	}
+	// the library gets no backup card
+	if all, _ := qcycore.ListCurves(); len(all) != 1 || all[0].ID != "experiencia-auditiva" {
+		t.Fatalf("library polluted: %+v", all)
 	}
 	cur, _ := qcycore.LoadCurve("experiencia-auditiva")
 	if cur.Payload == prev.Payload || cur.Ears == nil || !strings.Contains(cur.Note, "Resultado do teste auditivo") {
@@ -1035,6 +1031,7 @@ func TestBaselineZeroFirmwareStillPrefixesIsAResultNotAFailure(t *testing.T) {
 	}
 }
 
+// Only 7 test bands in the readback: the last 8 are not the ear's.
 func TestBaselineZeroAnyOtherBandCountIsNotConfirmed(t *testing.T) {
 	r := newRig(t, nil)
 	r.link.zeroModel = "odd"
@@ -1064,14 +1061,13 @@ func TestReadbackShowsBaselineLayouts(t *testing.T) {
 		t.Fatalf("18 bands: %v %q", ok, note)
 	}
 	if ok, _ := readbackShows(mk("odd", -10), g, "zero"); ok {
-		t.Fatal("12 bands accepted")
+		t.Fatal("7 test bands accepted")
 	}
 	if ok, _ := readbackShows(mk("", -9), g, "zero"); ok {
 		t.Fatal("a divergent master accepted")
 	}
-	// under the factory baseline 18 bands are NOT a layout we know
-	if ok, _ := readbackShows(mk("prefix18", -10), g, "factory"); ok {
-		t.Fatal("18 bands accepted for the factory baseline")
+	if ok, _ := readbackShows(mk("prefix18", -10), g, "factory"); !ok {
+		t.Fatal("any prefix length is confirmed under the factory baseline too")
 	}
 	bad := g
 	bad[0] = 3
@@ -1152,5 +1148,115 @@ func TestHearingApplyFileBaselineZeroNeedsTheExplicitFlag(t *testing.T) {
 	r = newRig(t, nil)
 	if err := hearingApplyFile(r.env, resultFile(t, nil), hearingApplyOpts{yes: true}); err != nil || r.link.baselines[0] != "factory" {
 		t.Fatalf("%v %v", err, r.link.baselines)
+	}
+}
+
+// Measured: `library apply experiencia-auditiva` with Popular in slot 255
+// before it. The readback is 14 bands (a 6-band prefix left by that effect)
+// followed by the ear's 8, master -10.
+func TestReadbackShowsMeasured14BandReadback(t *testing.T) {
+	pairs := [][2]int{{200, -9}, {900, -1}, {2800, 2}, {8500, -7}, {7000, -1}, {15000, -2},
+		{63, 3}, {125, -2}, {250, -4}, {500, -2}, {1000, 1}, {2000, -1}, {4000, -1}, {8000, 1}}
+	specs := make([]qcycore.BandSpec, len(pairs))
+	for i, p := range pairs {
+		specs[i] = qcycore.BandSpec{Index: i, Freq: p[0], Gain: float64(p[1]), Q: 70, Type: 2}
+	}
+	slot, mc := 11, -1000
+	payload, err := qcycore.ApplyEq(make([]byte, qcycore.EqLen), qcycore.EqOp{Slot: &slot, MasterCenti: &mc, Bands: specs, AllowProtected: true, AllowFullLength: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mg := -10.0
+	c := &hearingCall{MasterGain: &mg}
+	c.Readback = &struct {
+		Slot       int     `json:"slot"`
+		Effect     string  `json:"effect,omitempty"`
+		MasterGain float64 `json:"masterGain"`
+		Payload    string  `json:"payload"`
+	}{Slot: 11, MasterGain: -10, Payload: hex.EncodeToString(payload)}
+	g := [hearing.Bands]int{3, -2, -4, -2, 1, -1, -1, 1}
+	for _, bl := range []string{"factory", "zero"} {
+		if ok, _ := writeConfirmedB(c, g, bl); !ok {
+			t.Fatalf("%s: the measured readback must be confirmed", bl)
+		}
+	}
+	g[6] = -2
+	if ok, _ := writeConfirmedB(c, g, "factory"); ok {
+		t.Fatal("a swapped gain was confirmed")
+	}
+}
+
+// ---------- restore points live in the backup directory, not in the library ----------
+
+func TestApplyOfAnEarsEntryCreatesBackupFilesAndNoLibraryEntries(t *testing.T) {
+	libEnv(t)
+	card := earsCard(t, nil)
+	if err := qcycore.CreateCurve(card); err != nil {
+		t.Fatal(err)
+	}
+	var r *rig
+	for i := 0; i < 2; i++ {
+		r = newRig(t, nil)
+		now := r.env.now()
+		r.env.slot11 = func(*qcycore.EqSnapshot) (slot11Backup, error) {
+			return hearingSlot11Backup(&qcycore.EqSnapshot{Slot: 11, Payload: slot11Payload}, now)
+		}
+		r.env.saveCurve = saveBackupCurve
+		r.link.snapPayload = slot0Flat
+		if err := hearingApplyEars(r.env, card, false, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if all, _ := qcycore.ListCurves(); len(all) != 1 {
+		t.Fatalf("the library gained entries: %+v", all)
+	}
+	dir, _ := qcycore.BackupDir()
+	for _, g := range []string{"curve-slot11-backup-*.json", "curve-eq-antes-do-teste-*.json"} {
+		m, _ := filepath.Glob(filepath.Join(dir, g))
+		if len(m) != 2 {
+			t.Fatalf("%s: %v", g, m)
+		}
+	}
+	// the printed restore command works from the file: the curve loads and
+	// carries the full content
+	m, _ := filepath.Glob(filepath.Join(dir, "curve-slot11-backup-*.json"))
+	c, err := qcycore.LoadCurveFile(m[0])
+	if err != nil || c.Payload != slot11Payload {
+		t.Fatalf("%v %+v", err, c)
+	}
+	if !strings.Contains(r.out.String(), "qcyctl library apply --file "+dir) {
+		t.Fatal(r.out.String())
+	}
+}
+
+func TestLibraryApplyFromABackupFile(t *testing.T) {
+	libEnv(t)
+	l, opened := useFakeLink(t, hexBytes(t, slot0Flat))
+	c, err := qcycore.CurveFromPayload(qcycore.SourceDeviceImport, 6, "Antes", realCustom11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ID = "eq-antes-do-teste"
+	p, err := qcycore.BackupCurve(c, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdLibrary([]string{"apply", "--file", p}); err == nil {
+		t.Fatal("--yes is required")
+	}
+	if err := cmdLibrary([]string{"apply", "--file", p, "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	if *opened != 1 || len(l.writes) != 1 {
+		t.Fatalf("opened %d writes %d", *opened, len(l.writes))
+	}
+	if all, _ := qcycore.ListCurves(); len(all) != 0 {
+		t.Fatalf("a restore must not create library entries: %+v", all)
+	}
+	if err := cmdLibrary([]string{"apply", "--file", p + ".nope", "--yes"}); err == nil {
+		t.Fatal("missing file accepted")
+	}
+	if got := restoreFileCmd("/x/a b/it's.json"); got != "qcyctl library apply --file '/x/a b/it'\\''s.json' --yes" {
+		t.Fatal(got)
 	}
 }

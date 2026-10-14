@@ -27,9 +27,10 @@ import (
 // active one) and the library holds no earlier copy of it.
 var errNoSlot11Copy = errors.New("no copy of the current slot 11 is available: it is not the active slot (the earbuds cannot read an inactive slot) and the library has no earlier copy; pass --no-slot11-backup to write anyway (the hearing-test curve in slot 11 is overwritten for good)")
 
-// slot11Backup is the library entry that preserves the slot 11 curve.
+// slot11Backup is the backup file that preserves the slot 11 curve (a curve
+// JSON in the backup directory, never a library entry).
 type slot11Backup struct {
-	ID   string
+	Path string // curve JSON in the backup directory
 	Name string
 	Note string
 	Live bool // read from the active slot 11 now; false = clone of the last known copy
@@ -47,8 +48,9 @@ func (e *slot11LibraryError) Error() string {
 	return "no usable copy of slot 11 was found and these library entries could not be read, so one may exist among them: " + strings.Join(e.Failed, "; ")
 }
 
-// slot11BackupPrefix marks the entries this tool creates: they are never the
-// source of a later backup (after an apply, slot 11 holds the test result).
+// slot11BackupPrefix marks the library entries older builds created (this
+// build writes backup files instead): they are never the source of a later
+// backup (after an apply, slot 11 holds the test result).
 const slot11BackupPrefix = "slot11-backup-"
 
 // slot11BackupName is the visible name of the backup card.
@@ -56,39 +58,30 @@ func slot11BackupName(now time.Time) string {
 	return "Experiência auditiva (backup " + now.Format("2006-01-02 15:04") + ")"
 }
 
-// hearingSlot11Backup saves what slot 11 holds as a USER entry of the library
-// ("source":"user" is what the plugin shows as a customized card, with the
-// edit/delete menu):
+// slot11BackupID is the id the backup file carries (the file is named
+// curve-<id>-<UTC timestamp>.json in the backup directory).
+const slot11BackupID = "slot11-backup"
+
+// hearingSlot11Backup saves what slot 11 holds as a curve JSON in the backup
+// directory (the library is not touched, so no card appears in the Sound tab):
 //
 //	a) slot 11 is the active slot: the raw active payload is saved;
 //	b) otherwise the last known copy (id experiencia-auditiva, else the most
 //	   recent entry with slot 11) is cloned, with a note saying so;
 //	c) no copy at all: errNoSlot11Copy.
 func hearingSlot11Backup(snap *qcycore.EqSnapshot, now time.Time) (slot11Backup, error) {
-	// The id carries the time with seconds (Slug truncates long names, so the
-	// readable name cannot be the id); a clash within one second gets a suffix.
 	create := func(build func(name string) (qcycore.Curve, error)) (slot11Backup, error) {
 		name := slot11BackupName(now)
-		base := "slot11-backup-" + now.Format("20060102-150405")
-		for n := 0; n < 5; n++ {
-			c, err := build(name)
-			if err != nil {
-				return slot11Backup{}, err
-			}
-			c.ID = base
-			if n > 0 {
-				c.ID = fmt.Sprintf("%s-%d", base, n+1)
-			}
-			err = qcycore.CreateCurve(c)
-			if errors.Is(err, os.ErrExist) {
-				continue
-			}
-			if err != nil {
-				return slot11Backup{}, err
-			}
-			return slot11Backup{ID: c.ID, Name: c.Name, Note: c.Note}, nil
+		c, err := build(name)
+		if err != nil {
+			return slot11Backup{}, err
 		}
-		return slot11Backup{}, errors.New("the backup entry already exists")
+		c.ID = slot11BackupID
+		p, err := qcycore.BackupCurve(c, now)
+		if err != nil {
+			return slot11Backup{}, err
+		}
+		return slot11Backup{Path: p, Name: c.Name, Note: c.Note}, nil
 	}
 	stamp := now.UTC().Format(time.RFC3339)
 
@@ -176,18 +169,27 @@ func hearingSlot11Backup(snap *qcycore.EqSnapshot, now time.Time) (slot11Backup,
 // hearingBackupInfo is where the pre-write state went.
 type hearingBackupInfo struct {
 	Path, Restore                 string // JSON file; command that restores the active curve
-	Slot11, Slot11Name, Slot11Cmd string // library entry preserving slot 11 ("" when waived)
+	Slot11, Slot11Name, Slot11Cmd string // backup file preserving slot 11 ("" when waived)
 	Slot11Live                    bool
 	// Warnings are printed by the caller's goroutine (printBackup), never from
 	// the backup goroutine.
 	Warnings []string
 }
 
+// restoreFileCmd is the command that re-applies a curve backup file.
+func restoreFileCmd(path string) string {
+	if strings.ContainsAny(path, " \t'\"$`\\") {
+		path = "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
+	}
+	return "qcyctl library apply --file " + path + " --yes"
+}
+
 // hearingTakeBackup reads the full status and the raw active EQ, preserves
-// slot 11 as a library entry (the write overwrites it), stores the active
-// curve in the library (the restore point) and writes the JSON backup. Any
-// failure is returned and means nothing may be written. Everything here
-// happens BEFORE the first frame or audible effect of the caller.
+// slot 11 as a curve file in the backup directory (the write overwrites it),
+// stores the active curve there too (the restore point) and writes the JSON
+// backup. The library is never touched. Any failure is returned and means
+// nothing may be written. Everything here happens BEFORE the first frame or
+// audible effect of the caller.
 func hearingTakeBackup(env hearingEnv, link hearingLink, noSlot11 bool) (info hearingBackupInfo, err error) {
 	st, err := link.status()
 	if err != nil {
@@ -205,8 +207,8 @@ func hearingTakeBackup(env hearingEnv, link hearingLink, noSlot11 bool) (info he
 	b, err := env.slot11(snap)
 	switch {
 	case err == nil:
-		info.Slot11, info.Slot11Name, info.Slot11Live = b.ID, b.Name, b.Live
-		info.Slot11Cmd = "qcyctl library apply " + b.ID + " --yes"
+		info.Slot11, info.Slot11Name, info.Slot11Live = b.Path, b.Name, b.Live
+		info.Slot11Cmd = restoreFileCmd(b.Path)
 		info.Warnings = append(info.Warnings, b.Warnings...)
 	case errors.Is(err, errNoSlot11Copy) && noSlot11:
 		info.Warnings = append(info.Warnings, fmt.Sprintf("--no-slot11-backup: slot 11 (your hearing-test curve) will be overwritten and cannot be restored from this tool: %v", err))
@@ -214,17 +216,17 @@ func hearingTakeBackup(env hearingEnv, link hearingLink, noSlot11 bool) (info he
 		return info, fmt.Errorf("slot 11 backup: %w", err)
 	}
 	stamp := env.now().Format("20060102-150405")
-	libID, err := env.saveCurve("EQ antes do teste "+stamp, snap)
+	curveFile, err := env.saveCurve("EQ antes do teste "+stamp, snap)
 	if err != nil {
-		return info, fmt.Errorf("library entry failed: %w", err)
+		return info, fmt.Errorf("curve backup failed: %w", err)
 	}
 	dir := filepath.Join(cfg, "backups")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return info, err
 	}
 	info.Path = filepath.Join(dir, "hearing-before-"+stamp+".json")
-	info.Restore = "qcyctl library apply " + libID + " --yes"
-	if err := writeJSONFile(info.Path, hearingBackup{Timestamp: stamp, Status: st, Eq: snap, Library: libID, Restore: info.Restore,
+	info.Restore = restoreFileCmd(curveFile)
+	if err := writeJSONFile(info.Path, hearingBackup{Timestamp: stamp, Status: st, Eq: snap, CurveFile: curveFile, Restore: info.Restore,
 		Slot11: info.Slot11, Slot11Restore: info.Slot11Cmd}); err != nil {
 		return info, err
 	}

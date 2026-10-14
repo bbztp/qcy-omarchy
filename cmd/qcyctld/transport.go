@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	quicky "github.com/hui1601/Quicky/lib"
+	"github.com/bbztp/qcy-omarchy/internal/qcycore"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -52,12 +52,100 @@ type bleDialer struct {
 	vmu        sync.Mutex
 	vendor     uint16
 	haveVendor bool
+	// color is the colorIndex the earbuds advertised (from the scan, or from
+	// the cache on the fast path: a connected unit stops advertising).
+	color     uint8
+	haveColor bool
+	// colorTries / lastColorTry bound the short scans that look for the colour
+	// when the cache has a vendorId but no colour (per daemon lifetime).
+	colorTries   int
+	lastColorTry time.Time
+}
+
+const (
+	colorProbeTimeout  = 3 * time.Second
+	colorProbeMaxTries = 3
+	colorProbeInterval = 10 * time.Minute
+)
+
+// advertScan looks for the advertisement of addr for up to timeout and returns
+// its vendorId and colorIndex. It is a variable so tests can fake it.
+var advertScan = func(adapter *bluetooth.Adapter, addr bluetooth.Address, timeout time.Duration) (uint16, uint8, bool) {
+	type res struct {
+		v uint16
+		c uint8
+	}
+	ch := make(chan res, 1)
+	go func() {
+		_ = adapter.Scan(func(_ *bluetooth.Adapter, r bluetooth.ScanResult) {
+			if r.Address.String() != addr.String() {
+				return
+			}
+			for _, m := range r.ManufacturerData() {
+				if v, c, ok := qcycore.ParseAdvert(m.CompanyID, m.Data); ok {
+					select {
+					case ch <- res{v, c}:
+					default:
+					}
+					return
+				}
+			}
+		})
+	}()
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	var out res
+	found := false
+	select {
+	case out = <-ch:
+		found = true
+	case <-t.C:
+	}
+	_ = adapter.StopScan()
+	return out.v, out.c, found
+}
+
+// probeColor makes one short scan for the colour when the cache knows the
+// vendorId but not the colour (an entry written before the colour was kept).
+// It is bounded: at most colorProbeMaxTries per daemon lifetime, one per
+// colorProbeInterval. A unit held by another client does not advertise, so a
+// miss simply falls back to the plain fast path.
+func (b *bleDialer) probeColor(adapter *bluetooth.Adapter, addr bluetooth.Address, ce cacheEntry) (uint8, bool) {
+	if !ce.HaveVendor || ce.HaveColor {
+		return ce.ColorIndex, ce.HaveColor
+	}
+	b.vmu.Lock()
+	if b.colorTries >= colorProbeMaxTries || (!b.lastColorTry.IsZero() && time.Since(b.lastColorTry) < colorProbeInterval) {
+		b.vmu.Unlock()
+		return 0, false
+	}
+	b.colorTries++
+	b.lastColorTry = time.Now()
+	b.vmu.Unlock()
+	v, c, ok := advertScan(adapter, addr, colorProbeTimeout)
+	if !ok || v != ce.VendorID {
+		return 0, false
+	}
+	return c, true
 }
 
 func (b *bleDialer) setVendor(v uint16, ok bool) {
 	b.vmu.Lock()
 	b.vendor, b.haveVendor = v, ok
 	b.vmu.Unlock()
+}
+
+func (b *bleDialer) setColor(c uint8, ok bool) {
+	b.vmu.Lock()
+	b.color, b.haveColor = c, ok
+	b.vmu.Unlock()
+}
+
+// ColorIndex implements colorSource.
+func (b *bleDialer) ColorIndex() (uint8, bool) {
+	b.vmu.Lock()
+	defer b.vmu.Unlock()
+	return b.color, b.haveColor
 }
 
 // VendorID implements vendorSource.
@@ -74,6 +162,12 @@ type vendorSource interface {
 	VendorID() (uint16, bool)
 }
 
+// colorSource is the optional dialer capability that reports the advertised
+// colorIndex of the unit it connected to.
+type colorSource interface {
+	ColorIndex() (uint8, bool)
+}
+
 // hardwareAllowed is the structural guard against tests reaching the real
 // earbuds: TestMain sets it to false and the real dialer refuses first.
 var hardwareAllowed = true
@@ -85,6 +179,7 @@ func (b *bleDialer) Dial(onNotify func([]byte)) (session, string, error) {
 		return nil, "", errHardwareDisabled
 	}
 	b.setVendor(0, false)
+	b.setColor(0, false)
 	adapter := bluetooth.DefaultAdapter
 	if err := adapter.Enable(); err != nil {
 		return nil, "", fmt.Errorf("enable adapter: %w", err)
@@ -96,13 +191,16 @@ func (b *bleDialer) Dial(onNotify func([]byte)) (session, string, error) {
 	// burn the whole scan window.
 	if addr, ok := loadCachedAddr(); ok {
 		name := loadCachedName()
-		vendor, haveVendor := loadCachedVendor()
+		ce, _ := loadCacheEntry()
+		vendor, haveVendor := ce.VendorID, ce.HaveVendor
+		color, haveColor := b.probeColor(adapter, addr, ce)
 		dev, err := b.dialLE(adapter, addr, 3*time.Second)
 		if err == nil {
 			s, serr := setupSession(dev, onNotify)
 			if serr == nil {
-				saveCachedAddr(addr, name, vendor, haveVendor)
+				saveCachedAddr(addr, name, vendor, haveVendor, color, haveColor)
 				b.setVendor(vendor, haveVendor)
+				b.setColor(color, haveColor)
 				return s, name, nil
 			}
 			_ = dev.Disconnect()
@@ -114,30 +212,37 @@ func (b *bleDialer) Dial(onNotify func([]byte)) (session, string, error) {
 	}
 
 	// Scan path
-	scanner := quicky.NewScanner()
+	// The scan reads the raw manufacturer data (one scan, no second client):
+	// the vendorId and the colorIndex are both in it, and a connected unit
+	// stops advertising, so this is the only moment they are visible.
 	addrCh := make(chan bluetooth.Address, 1)
 	nameCh := make(chan string, 1)
 	scanErrCh := make(chan error, 1)
-	// vendorId per advertising address: the manufacturer data is what
-	// identifies the model, and the scan is the only place it is visible.
 	var vmu sync.Mutex
 	vendors := map[string]uint16{}
+	colors := map[string]uint8{}
 	go func() {
-		scanErrCh <- scanner.Scan(func(r quicky.ScanResult) {
-			if r.Advertisement != nil {
+		scanErrCh <- adapter.Scan(func(_ *bluetooth.Adapter, r bluetooth.ScanResult) {
+			for _, m := range r.ManufacturerData() {
+				v, c, ok := qcycore.ParseAdvert(m.CompanyID, m.Data)
+				if !ok {
+					continue
+				}
 				vmu.Lock()
-				vendors[r.Address.String()] = r.Advertisement.VendorID
+				vendors[r.Address.String()] = v
+				colors[r.Address.String()] = c
 				vmu.Unlock()
-			}
-			select {
-			case addrCh <- r.Address:
-			default:
-			}
-			if r.Name != "" {
 				select {
-				case nameCh <- r.Name:
+				case addrCh <- r.Address:
 				default:
 				}
+				if n := r.LocalName(); n != "" {
+					select {
+					case nameCh <- n:
+					default:
+					}
+				}
+				return
 			}
 		})
 	}()
@@ -154,7 +259,7 @@ func (b *bleDialer) Dial(onNotify func([]byte)) (session, string, error) {
 	case <-timer.C:
 	}
 	if !found {
-		_ = scanner.StopScan()
+		_ = adapter.StopScan()
 		return nil, "", errNotFound
 	}
 
@@ -173,7 +278,7 @@ func (b *bleDialer) Dial(onNotify func([]byte)) (session, string, error) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	_ = scanner.StopScan()
+	_ = adapter.StopScan()
 	if err != nil {
 		return nil, "", fmt.Errorf("connect LE %s: %w", addr, err)
 	}
@@ -190,9 +295,12 @@ func (b *bleDialer) Dial(onNotify func([]byte)) (session, string, error) {
 	}
 	vmu.Lock()
 	vendor, haveVendor := vendors[addr.String()]
+	color, haveColor := colors[addr.String()]
 	vmu.Unlock()
-	saveCachedAddr(addr, name, vendor, haveVendor)
+	haveColor = haveColor && haveVendor
+	saveCachedAddr(addr, name, vendor, haveVendor, color, haveColor)
 	b.setVendor(vendor, haveVendor)
+	b.setColor(color, haveColor)
 	return s, name, nil
 }
 

@@ -260,6 +260,9 @@ func (d *daemon) connect() error {
 			if vs, ok := d.dialer.(vendorSource); ok {
 				d.vendorID, d.haveVendor = vs.VendorID()
 			}
+			if cs, ok := d.dialer.(colorSource); ok {
+				d.colorIndex, d.haveColor = cs.ColorIndex()
+			}
 			d.mu.Unlock()
 			d.detectAndAttachModel()
 			return nil

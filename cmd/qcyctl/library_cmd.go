@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bbztp/qcy-omarchy/internal/qcycore"
 )
@@ -29,8 +30,9 @@ const libraryUsage = `usage: qcyctl library <subcommand>
   library export <id> <file>
   library import <file>
   library seed [--json]
-  library import-device <name> [seconds] [--expect-slot N]   (reads the active EQ from the earbuds; --expect-slot saves nothing unless that slot is the active one)
-  library apply <id> --yes [--full-length] [--slot 0|255] [--json] [seconds]   (writes the curve to slot 255 by default = the phone app's "Personalizado" buffer, the only target allowed while slot 6 or 11 is active, and the only one that takes bands at positions 10-19 without --full-length; --slot 0 is the old test slot)
+  library import-device <name> [seconds] [--expect-slot N] [--user] [--replace [--backup]]   (reads the active EQ from the earbuds, never writes to them; --expect-slot saves nothing unless that slot is the active one; --user saves it as one of your own curves; --replace overwrites the existing entry of that name, needs --expect-slot, and --backup first copies the old entry to the backup directory)
+  library matches (<id> | --any-user) --master dB --bands <json>      (offline: does the EQ the earbuds report (status eq.masterGain, eq.bands) match this entry, or one of your own curves? prints {"match":bool[,"id":...]})
+  library apply <id>|--file <curve.json> --yes [--full-length] [--slot 0|255] [--json] [seconds]   (writes the curve to slot 255 by default = the phone app's "Personalizado" buffer, the only target allowed while slot 6 or 11 is active, and the only one that takes bands at positions 10-19 without --full-length; --slot 0 is the old test slot; --file applies a curve JSON such as a restore point from the backup directory without adding it to the library)
   library compose --base <id|none> --gains g1,...,g10 [--master dB] (--yes | --dry-run) [--json] [seconds]   (the phone app's layout in slot 255: your non-zero bars, then the base effect's bands)`
 
 // libraryRunner opens the link to the earbuds (daemon first, direct otherwise).
@@ -70,6 +72,8 @@ func cmdLibrary(args []string) error {
 		return cmdLibrarySeed(rest)
 	case "import-device":
 		return cmdLibraryImportDevice(rest)
+	case "matches":
+		return cmdLibraryMatches(rest)
 	case "apply":
 		return cmdLibraryApply(rest)
 	case "compose":
@@ -581,10 +585,14 @@ func cmdLibrarySeed(args []string) error {
 // ---------- import-device / apply ----------
 
 func cmdLibraryImportDevice(args []string) error {
-	const usage = "usage: qcyctl library import-device <name> [seconds]"
-	a, err := parseLibArgs(args, []string{"--json"}, []string{"--expect-slot"})
+	const usage = "usage: qcyctl library import-device <name> [seconds] [--expect-slot N] [--user] [--replace [--backup]] [--json]"
+	a, err := parseLibArgs(args, []string{"--json", "--user", "--replace", "--backup"}, []string{"--expect-slot"})
 	if err != nil || len(a.pos) < 1 || len(a.pos) > 2 {
 		return errors.New(usage)
+	}
+	replace, backup := a.bools["--replace"], a.bools["--backup"]
+	if backup && !replace {
+		return errors.New("library import-device: --backup only goes with --replace\n" + usage)
 	}
 	expect := -1
 	if v, ok := a.vals["--expect-slot"]; ok {
@@ -594,11 +602,25 @@ func cmdLibraryImportDevice(args []string) error {
 		}
 		expect = n
 	}
+	if replace && expect < 0 {
+		return errors.New("library import-device: --replace needs --expect-slot, so nothing is overwritten when the active slot moved")
+	}
 	name := a.pos[0]
-	// Validate the name (and refuse a taken id) before connecting.
+	source := qcycore.SourceDeviceImport
+	if a.bools["--user"] {
+		source = qcycore.SourceUser
+	}
+	// Validate the name (and refuse a taken id, or a missing one to replace)
+	// before connecting.
 	id := qcycore.Slug(name)
-	if _, err := qcycore.LoadCurve(id); err == nil {
+	existing, loadErr := qcycore.LoadCurve(id)
+	switch {
+	case !replace && loadErr == nil:
 		return fmt.Errorf("curve %q already exists; pick another name", id)
+	case replace && loadErr != nil:
+		return fmt.Errorf("library import-device --replace: %w", loadErr)
+	case replace && existing.Ears != nil && !backup:
+		return fmt.Errorf("library import-device --replace: %q has per-ear curves (hearing-test result) that the new entry will not have; pass --backup to keep a copy first", id)
 	}
 	seconds, err := parseSeconds(a.pos[1:], 30)
 	if err != nil {
@@ -612,8 +634,30 @@ func cmdLibraryImportDevice(args []string) error {
 		if expect >= 0 && snap.Slot != expect {
 			return fmt.Errorf("library import-device: the active slot is %d, not %d; nothing saved", snap.Slot, expect)
 		}
-		c, err := qcycore.SeedFromPayload(qcycore.SourceDeviceImport, snap.Slot, name, snap.Payload)
+		c, err := qcycore.CurveFromPayload(source, snap.Slot, name, snap.Payload)
 		if err != nil {
+			return err
+		}
+		if replace {
+			// Re-read: the entry is what gets copied, so it must be the one
+			// about to be overwritten.
+			old, err := qcycore.LoadCurve(c.ID)
+			if err != nil {
+				return fmt.Errorf("library import-device --replace: %w", err)
+			}
+			if backup {
+				p, err := qcycore.BackupCurve(old, time.Now())
+				if err != nil {
+					return fmt.Errorf("library import-device: backup failed, nothing replaced: %w", err)
+				}
+				if !a.bools["--json"] {
+					fmt.Printf("backed up %s to %s\n", old.ID, p)
+				}
+			}
+			if _, err := qcycore.UpsertCurve(c); err != nil {
+				return err
+			}
+		} else if err := qcycore.CreateCurve(c); err != nil {
 			return err
 		}
 		if a.bools["--json"] {
@@ -622,6 +666,51 @@ func cmdLibraryImportDevice(args []string) error {
 		fmt.Printf("imported %s from slot %d (%q)\n", c.ID, c.Slot, c.Name)
 		return nil
 	})
+}
+
+// cmdLibraryMatches is offline: it compares an entry with the EQ the earbuds
+// reported (qcycore.CurveMatchesDevice), so the panel does not duplicate the
+// rule. With --any-user it tries every curve of the user and the hearing-test
+// card (not the factory effects nor the editor's working copy) and names the first that
+// matches, in library order.
+func cmdLibraryMatches(args []string) error {
+	const usage = "usage: qcyctl library matches (<id> | --any-user) --master dB --bands <json>"
+	a, err := parseLibArgs(args, []string{"--any-user"}, []string{"--master", "--bands"})
+	anyUser := a.bools["--any-user"]
+	if err != nil || (anyUser && len(a.pos) != 0) || (!anyUser && len(a.pos) != 1) {
+		return errors.New(usage)
+	}
+	master, err := strconv.ParseFloat(a.vals["--master"], 64)
+	if err != nil {
+		return fmt.Errorf("library matches: --master: %w", err)
+	}
+	var bands []qcycore.EqBand
+	if err := json.Unmarshal([]byte(a.vals["--bands"]), &bands); err != nil {
+		return fmt.Errorf("library matches: --bands: %w", err)
+	}
+	if !anyUser {
+		c, err := qcycore.LoadCurve(a.pos[0])
+		if err != nil {
+			return err
+		}
+		return printJSON(map[string]bool{"match": qcycore.CurveMatchesDevice(c, master, bands)})
+	}
+	curves, _ := qcycore.ListCurves()
+	sortCurves(curves)
+	for _, c := range curves {
+		hearing := c.ID == qcycore.HearingTestCurveID()
+		if (c.Source != qcycore.SourceUser && !hearing) || c.ID == "rascunho" {
+			continue
+		}
+		// In Personalizado the earbuds report the entry's own bands (a card
+		// applied there is written whole), not the left-ear layout of slot 11.
+		plain := c
+		plain.Ears = nil
+		if qcycore.CurveMatchesDevice(plain, master, bands) {
+			return printJSON(map[string]any{"match": true, "id": c.ID})
+		}
+	}
+	return printJSON(map[string]any{"match": false})
 }
 
 // libraryApplyOp builds the EqOp that writes c to slot (0 or the app's custom
@@ -717,9 +806,15 @@ func libraryWrite(verb, subject string, out libraryApplyOut, op qcycore.EqOp, se
 }
 
 func cmdLibraryApply(args []string) error {
-	const usage = "usage: qcyctl library apply <id> --yes [--full-length] [--slot 0|255] [--json] [seconds]"
-	a, err := parseLibArgs(args, []string{"--yes", "--full-length", "--json"}, []string{"--slot"})
-	if err != nil || len(a.pos) < 1 || len(a.pos) > 2 {
+	const usage = "usage: qcyctl library apply <id> | --file <curve.json> --yes [--full-length] [--slot 0|255] [--json] [seconds]"
+	a, err := parseLibArgs(args, []string{"--yes", "--full-length", "--json"}, []string{"--slot", "--file"})
+	if err != nil {
+		return errors.New(usage)
+	}
+	file, fromFile := a.vals["--file"]
+	// --file replaces <id>: the curve comes from a backup file (or an exported
+	// curve) and is not stored in the library.
+	if fromFile && len(a.pos) > 1 || !fromFile && (len(a.pos) < 1 || len(a.pos) > 2) {
 		return errors.New(usage)
 	}
 	if !a.bools["--yes"] {
@@ -733,11 +828,20 @@ func cmdLibraryApply(args []string) error {
 		}
 		slot = n
 	}
-	seconds, err := parseSeconds(a.pos[1:], 30)
+	rest := a.pos
+	if !fromFile {
+		rest = a.pos[1:]
+	}
+	seconds, err := parseSeconds(rest, 30)
 	if err != nil {
 		return err
 	}
-	c, err := qcycore.LoadCurve(a.pos[0])
+	var c qcycore.Curve
+	if fromFile {
+		c, err = qcycore.LoadCurveFile(file)
+	} else {
+		c, err = qcycore.LoadCurve(a.pos[0])
+	}
 	if err != nil {
 		return err
 	}

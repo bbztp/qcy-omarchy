@@ -22,6 +22,11 @@ func TestParseCacheEntry(t *testing.T) {
 			cacheEntry{Addr: "AA:BB:CC:DD:EE:FF", Random: true, Name: "QCY MeloBuds N70", VendorID: 23872, HaveVendor: true}, true},
 		{"vendor without name", "AA:BB:CC:DD:EE:FF 0 - 19786\n",
 			cacheEntry{Addr: "AA:BB:CC:DD:EE:FF", VendorID: 19786, HaveVendor: true}, true},
+		{"vendor and colour", "AA:BB:CC:DD:EE:FF 0 QCY 23872 5\n",
+			cacheEntry{Addr: "AA:BB:CC:DD:EE:FF", Name: "QCY", VendorID: 23872, HaveVendor: true, ColorIndex: 5, HaveColor: true}, true},
+		{"colour out of range ignored", "AA:BB:CC:DD:EE:FF 0 QCY 23872 8\n",
+			cacheEntry{Addr: "AA:BB:CC:DD:EE:FF", Name: "QCY", VendorID: 23872, HaveVendor: true}, true},
+		{"colour without vendor ignored", "AA:BB:CC:DD:EE:FF 0 QCY x 3\n", cacheEntry{Addr: "AA:BB:CC:DD:EE:FF", Name: "QCY"}, true},
 		{"junk vendor ignored", "AA:BB:CC:DD:EE:FF 0 x notanumber\n", cacheEntry{Addr: "AA:BB:CC:DD:EE:FF", Name: "x"}, true},
 		{"empty", "  \n", cacheEntry{}, false},
 	}
@@ -42,6 +47,8 @@ func TestFormatCacheEntryRoundTrip(t *testing.T) {
 		old,
 		{Addr: "AA:BB:CC:DD:EE:FF", Name: "QCY MeloBuds N70", VendorID: 23872, HaveVendor: true},
 		{Addr: "AA:BB:CC:DD:EE:FF", VendorID: 19786, HaveVendor: true},
+		{Addr: "AA:BB:CC:DD:EE:FF", Name: "QCY", VendorID: 19786, HaveVendor: true, ColorIndex: 0, HaveColor: true},
+		{Addr: "AA:BB:CC:DD:EE:FF", VendorID: 19786, HaveVendor: true, ColorIndex: 7, HaveColor: true},
 	} {
 		back, ok := parseCacheEntry(formatCacheEntry(e))
 		if !ok || back != e {
