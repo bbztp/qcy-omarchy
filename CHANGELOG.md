@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Features follow each model's own panel: nothing is blocked because a model was not tested on hardware (the panel only says so). Prompt volume steps, wear sensitivity items, noise modes and equalizer geometry come from the model; features whose encoding is not understood are listed under "Not available on this model".
+- `qcyctl prompt-vol` and `wear-sensitivity` validate against the model's own values; `qcyctl anc --raw` writes the three ANC bytes a model's panel lists.
+
 ## [0.1.0] - 2026-10-13
 
 First release.

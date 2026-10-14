@@ -60,7 +60,7 @@ func eqVendorDaemon(t *testing.T, vendor uint16, state []byte, onWrite func(*eqS
 
 func TestEQWriteOnAnUntestedDeclaredModelBacksUpAndConfirms(t *testing.T) {
 	plain := mustHexBytes(t, realClassico6)
-	plain[0] = 8 // an unprotected active slot with a blank tail
+	plain[0] = 3 // a declared, unprotected active slot with a blank tail
 	d, sess, bdir := eqVendorDaemon(t, 23880, plain, applyWrite(false))
 	res, err := eqApplyReq(d, map[string]interface{}{"masterGain": float64(-300)})
 	if err != nil {
@@ -422,4 +422,159 @@ func TestCapabilityDerivationOverAllVendorIDs(t *testing.T) {
 	}
 	t.Logf("models %d: eq %d, keys %d, ancModes %d, promptVolume %d, wearSensitivity %d, fit %d",
 		n, withEQ, withKeys, withANC, withPrompt, withWear, withFit)
+}
+
+// Vendor 16737 writes the prompt volume with a different frame and its panel
+// lists no beep block: no prompt volume is offered.
+func TestNoPromptVolumeWithoutABeepPanel(t *testing.T) {
+	p, ok := models.Lookup(16737)
+	if !ok || p.Panel == nil {
+		t.Skip("vendor 16737 not in the embedded list")
+	}
+	if p.Panel.Beep != nil {
+		t.Fatal("vendor 16737 declares a beep panel now: its one-byte frame needs a decision")
+	}
+	d := deriveFromPanel(16737, p)
+	for _, f := range d.features {
+		if f == FeaturePromptVolume {
+			t.Fatal("promptVolume offered without a beep panel")
+		}
+	}
+}
+
+func eqRange(t *testing.T, vendor uint16) (lo, hi float64) {
+	t.Helper()
+	c := GetHandler("qcy-" + strconv.Itoa(int(vendor))).Capabilities()
+	if c.EQ == nil {
+		t.Fatalf("%d: no eq", vendor)
+	}
+	return c.EQ.MinDb, c.EQ.MaxDb
+}
+
+// Panel models are held to the panel's own gain range and band frequencies;
+// the N70 keeps +-12 dB.
+func TestEQPanelLimitsAreEnforcedForPanelModels(t *testing.T) {
+	plain := mustHexBytes(t, realClassico6)
+	plain[0] = 1
+	for _, c := range []struct {
+		vendor uint16
+		lim    float64
+	}{{16754, 6}, {19786, 8}} {
+		lo, hi := eqRange(t, c.vendor)
+		if lo != -c.lim || hi != c.lim {
+			t.Fatalf("%d range %v..%v", c.vendor, lo, hi)
+		}
+		d, sess, _ := eqVendorDaemon(t, c.vendor, plain, applyWrite(false))
+		over := (c.lim + 1) * 100
+		for name, args := range map[string]map[string]interface{}{
+			"master over": {"masterGain": over},
+			"gains over":  {"gains": []interface{}{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, over}},
+			"band over":   {"bands": []interface{}{bandArgs(0, 1000, c.lim+1, 100, 2)}},
+			"band freq":   {"bands": []interface{}{bandArgs(0, 1234, 0, 100, 2)}},
+		} {
+			if _, err := eqApplyReq(d, args); err == nil {
+				t.Errorf("%d %s accepted", c.vendor, name)
+			}
+		}
+		if sess.writeCount() != 0 {
+			t.Fatalf("%d: a refused write reached the device", c.vendor)
+		}
+		if _, err := eqApplyReq(d, map[string]interface{}{"masterGain": c.lim * 100, "bands": []interface{}{bandArgs(0, 1000, -c.lim, 100, 2)}}); err != nil {
+			t.Fatalf("%d in range: %v", c.vendor, err)
+		}
+	}
+	// The N70 still accepts +-12.
+	d, _, _ := eqTestDaemon(t, plain, applyWrite(false))
+	if _, err := eqApplyReq(d, map[string]interface{}{"masterGain": 1100.0}); err != nil {
+		t.Fatalf("n70 +11 dB: %v", err)
+	}
+}
+
+func TestEQActiveSlotMustBeDeclaredForPanelModels(t *testing.T) {
+	odd := mustHexBytes(t, realClassico6)
+	odd[0] = 77
+	d, sess, bdir := eqVendorDaemon(t, 19786, odd, applyWrite(false))
+	_, err := eqApplyReq(d, map[string]interface{}{"masterGain": 0.0})
+	if err == nil || !strings.Contains(err.Error(), "active effect") {
+		t.Fatalf("err = %v", err)
+	}
+	if sess.writeCount() != 0 || backupCount(t, bdir) != 0 {
+		t.Fatal("wrote")
+	}
+	// The N70 patches whatever is active, as before.
+	d2, sess2, _ := eqTestDaemon(t, odd, applyWrite(false))
+	if _, err := eqApplyReq(d2, map[string]interface{}{"masterGain": 0.0}); err != nil || sess2.writeCount() != 1 {
+		t.Fatalf("n70: %v", err)
+	}
+}
+
+func TestPanelProtectedSlotsAreAtLeastTheDefaults(t *testing.T) {
+	// 19786 declares no slot 11 but a write there is refused as undeclared; with
+	// slot 255 active the default {6,11} still applies to explicit targets.
+	plain := mustHexBytes(t, realClassico6)
+	plain[0] = 255
+	d, _, _ := eqVendorDaemon(t, 23880, plain, applyWrite(false))
+	for _, s := range []float64{6, 11} {
+		if _, err := eqApplyReq(d, map[string]interface{}{"slot": s}); responseCode(err) != "protected_slot" {
+			t.Errorf("slot %v: %v", s, err)
+		}
+	}
+}
+
+func TestPanelDerivationToleratesSparsePanels(t *testing.T) {
+	i := func(n int) *int { return &n }
+	freqs := []float64{31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000}
+	p := models.Product{Title: "x", Panel: &models.Panel{
+		EQ:   &models.EQ{Bands: 10, Freq: freqs, MinDb: 8, MaxDb: 8},
+		Beep: &models.Beep{Items: []models.BeepItem{{Value: 4}}}, // no CmdID
+		Wear: &models.Wear{Sensitivity: &models.Sensitivity{}},   // no CmdID, no items
+	}}
+	c := snapshotCapabilities(1, p)
+	if c.EQ == nil || len(c.EQ.Slots) != 0 || c.EQ.ProtectedSlots == nil {
+		t.Fatalf("empty sysEq: %+v", c.EQ)
+	}
+	if hasFeatureIn(c, FeaturePromptVolume) || declaresAction(c, "promptVolume") || declaresAction(c, "wearSensitivity") {
+		t.Errorf("declared without parameters: %v", c.Features)
+	}
+	if !hasNote(c, "promptVolume:") {
+		t.Errorf("notes %v", c.Notes)
+	}
+	// An individuation without an id adds no slot; one with an id is protected.
+	p.Panel.EQ.Individuation = &models.Effect{}
+	if c := snapshotCapabilities(1, p); c.EQ == nil || len(c.EQ.ProtectedSlots) != 0 {
+		t.Errorf("individuation without id: %+v", c.EQ)
+	}
+	p.Panel.EQ.Individuation = &models.Effect{ID: i(11)}
+	if c := snapshotCapabilities(1, p); !containsInt(c.EQ.Slots, 11) || !containsInt(c.EQ.ProtectedSlots, 11) {
+		t.Errorf("individuation with id: %+v", c.EQ)
+	}
+}
+
+func hasFeatureIn(c Capabilities, f FeatureFlag) bool { return hasFeature(c, f) }
+
+// The generic function path never reaches the opcodes of specialised controls,
+// even if a panel declared a toggle on them.
+func TestFnSetCannotReachSpecialisedOpcodes(t *testing.T) {
+	saved := fnFunctionsFor
+	defer func() { fnFunctionsFor = saved }()
+	fnFunctionsFor = func(uint16) []models.Function {
+		var out []models.Function
+		for _, v := range []int{0x22, 0x17, 0x1D} {
+			op := v
+			h := fmt.Sprintf("FF03%02X0101", op)
+			o := fmt.Sprintf("FF03%02X0100", op)
+			out = append(out, models.Function{CmdID: &op, Name: "x", ToggleBlock: &models.Toggle{On: []string{h}, Off: []string{o}}})
+		}
+		return out
+	}
+	d, s := fnDaemon(t, 19786, nil)
+	before := len(s.packets)
+	for _, id := range []float64{0x22, 0x17, 0x1D} {
+		if _, err := d.handleRequest(fnReq(map[string]interface{}{"cmdId": id, "on": true, "confirm": true})); err == nil {
+			t.Errorf("cmdId %v accepted", id)
+		}
+	}
+	if len(s.packets) != before {
+		t.Fatal("a frame reached the link")
+	}
 }

@@ -55,8 +55,8 @@ Panel {
   readonly property var togglesReport: rep && rep.toggles ? rep.toggles : ({})
 
 
-  // Detailed noise scenes (Ajustes). The three headline modes on the Status
-  // tab are noiseButtons below.
+  // Fixed ANC list, used only when the model reports no `ancModes`. The panel
+  // layout (ancLayout below) replaces it for any model that declares its own.
   readonly property var ancModes: [
     { key: "adaptive", label: Qcy.tr("Adaptive") },
     { key: "indoor", label: Qcy.tr("Indoor") },
@@ -68,11 +68,62 @@ Panel {
   // Headline modes: glyphs are Material Design Icons code points (headphones,
   // ear-hearing, volume-high). "Cancellation" is the adaptive scene; the
   // finer scenes are in Ajustes.
-  readonly property var noiseButtons: [
+  readonly property var fixedNoiseButtons: [
     { key: "adaptive", label: Qcy.tr("Cancellation"), glyph: 0xF02CB },
     { key: "transparency", label: Qcy.tr("Transparency"), glyph: 0xF07E6 },
     { key: "off", label: Qcy.tr("Normal"), glyph: 0xF057E }
   ]
+
+  // ANC as the model's panel declares it (model.ancModes: groups with scenes,
+  // each with its packed (mode<<16)|(scene<<8)|level range and write params).
+  // A value that one of the named CLI modes covers keeps that name (and its
+  // translated label); any other is written with `anc --raw`.
+  readonly property var ancNamedTuples: ({
+    off: [2, 0, 0], adaptive: [1, 5, 0], indoor: [1, 1, 2], commuting: [1, 2, 2],
+    noisy: [1, 3, 2], antiwind: [1, 4, 0], transparency: [3, 1, 4]
+  })
+  function ancKeyFor(start, end, params) {
+    for (var k in ancNamedTuples) {
+      var t = ancNamedTuples[k]
+      var v = t[0] * 65536 + t[1] * 256 + t[2]
+      if (v >= start && v <= end) return k
+    }
+    return "raw:" + (params || []).join(",")
+  }
+  function ancLabelFor(key, name, headline) {
+    var head = { adaptive: Qcy.tr("Cancellation"), transparency: Qcy.tr("Transparency"), off: Qcy.tr("Normal") }
+    var scene = { adaptive: Qcy.tr("Adaptive"), indoor: Qcy.tr("Indoor"), commuting: Qcy.tr("Commuting"),
+                  noisy: Qcy.tr("Noisy"), antiwind: Qcy.tr("Anti-wind") }
+    var m = headline ? head : scene
+    return m[key] !== undefined ? m[key] : String(name || "")
+  }
+  readonly property var ancLayout: {
+    var ms = unitModel ? unitModel.ancModes : null
+    if (!ms || ms.length === 0) return null
+    var groups = [], scenes = []
+    for (var i = 0; i < ms.length; i++) {
+      var g = ms[i]
+      var items = g.items || []
+      var ik = []
+      var its = []
+      for (var j = 0; j < items.length; j++) {
+        var k = ancKeyFor(items[j].start, items[j].end, items[j].params)
+        ik.push(k)
+        its.push({ key: k, label: ancLabelFor(k, items[j].name, false), start: items[j].start, end: items[j].end })
+      }
+      if (scenes.length === 0 && its.length > 1) scenes = its
+      var gk = ancKeyFor(g.default, g.default, g.params)
+      var glyph = gk === "transparency" ? 0xF07E6 : (gk === "off" ? 0xF057E : 0xF02CB)
+      groups.push({ key: gk, label: ancLabelFor(gk, g.name, true), glyph: glyph, itemKeys: ik })
+    }
+    return { groups: groups, scenes: scenes }
+  }
+  readonly property var noiseButtons: ancLayout ? ancLayout.groups : fixedNoiseButtons
+  readonly property var ancSceneChips: ancLayout ? ancLayout.scenes : ancModes
+
+  // The packed value the earbuds report (-1 when unknown).
+  readonly property int ancPackedNow: (noise && noise.modeRaw !== undefined && noise.modeRaw !== null)
+    ? noise.modeRaw * 65536 + noise.sceneRaw * 256 + noise.value : -1
   readonly property var _cancelScenes: ["adaptive", "indoor", "commuting", "noisy", "antiwind"]
 
   // LDAC is not in this list: it restarts the earbuds, so it has its own row
@@ -176,8 +227,18 @@ Panel {
 
   // ---- equalizer state ----
   // Ten bars at the standard 10-band layout (the same table `library save` writes).
-  readonly property var editorFreqs: [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
-  readonly property real editorMaxDb: 12
+  readonly property var editorFreqs: {
+    var f = unitModel && unitModel.eq ? unitModel.eq.freqs : null
+    return (f && f.length === 10) ? f : [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
+  }
+  // Bar range: the model's own (model.eq.minDb/maxDb; the N70 reports its
+  // tested +-12); +-12 when the model reports none.
+  readonly property real editorMaxDb: {
+    var e = unitModel ? unitModel.eq : null
+    if (!e) return 12
+    var m = Math.max(Math.abs(Number(e.minDb) || 0), Math.abs(Number(e.maxDb) || 0))
+    return m > 0 ? Math.min(m, 12) : 12
+  }
   property var editGains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   property real editMaster: 0
   // The overall gain is only sent once the user has touched it, so an untouched
@@ -197,6 +258,14 @@ Panel {
   readonly property bool canApplyLibrary: Qcy.connected && !!rep
 
   function ancGroup() {
+    if (ancLayout) {
+      var k = currentAncKey()
+      for (var i = 0; i < ancLayout.groups.length; i++) {
+        var g = ancLayout.groups[i]
+        if (g.key === k || g.itemKeys.indexOf(k) !== -1) return g.key
+      }
+      return ""
+    }
     var s = currentAnc()
     if (s === "transparency") return "transparency"
     if (s === "off") return "off"
@@ -623,6 +692,25 @@ Panel {
     return noise ? noise.scene : ""
   }
 
+  // Key of the scene (or group) the earbuds are in, by the model's own ranges.
+  function currentAncKey() {
+    if (optimistic["anc"] !== undefined) return optimistic["anc"]
+    if (!ancLayout || ancPackedNow < 0) return currentAnc()
+    var ms = unitModel.ancModes
+    for (var i = 0; i < ms.length; i++) {
+      var items = ms[i].items || []
+      for (var j = 0; j < items.length; j++) {
+        if (ancPackedNow >= items[j].start && ancPackedNow <= items[j].end)
+          return ancKeyFor(items[j].start, items[j].end, items[j].params)
+      }
+    }
+    for (var m = 0; m < ms.length; m++) {
+      if (ancPackedNow >= ms[m].start && ancPackedNow <= ms[m].end)
+        return ancKeyFor(ms[m].default, ms[m].default, ms[m].params)
+    }
+    return ""
+  }
+
   function toggleState(key) {
     if (optimistic[key] !== undefined) return optimistic[key]
     if (key === "spatial") return !!(rep && rep.spatial && rep.spatial.enabled === true)
@@ -695,9 +783,9 @@ Panel {
     return root._eqPreset
   }
 
-  // Master gain, in dB (float, as the daemon reports it), +-12 dB.
-  readonly property real masterGainMin: -12
-  readonly property real masterGainMax: 12
+  // Master gain, in dB (float, as the daemon reports it), within the bar range.
+  readonly property real masterGainMin: -editorMaxDb
+  readonly property real masterGainMax: editorMaxDb
   property real _masterGainDb: 0
   property string _masterGainSig: ""
 
@@ -732,10 +820,15 @@ Panel {
   // never empty just because capabilities are missing.
   readonly property var caps: (rep && rep.capabilities) ? rep.capabilities : null
 
-  // The daemon's detection of the connected model (rep.model). Unverified
-  // models get only what their product declares, and no EQ.
+  // The daemon's detection of the connected model (rep.model): what its panel
+  // declares (features, actions, eq, keyActions, notes). Nothing here depends
+  // on a model id or on whether the model was tested.
   readonly property var unitModel: (rep && rep.model) ? rep.model : null
-  readonly property bool unverifiedModel: !!(unitModel && unitModel.verified === false)
+  readonly property var modelFeatures: (unitModel && unitModel.features) ? unitModel.features : []
+  readonly property bool eqDeclared: !unitModel || modelFeatures.indexOf("eq") !== -1
+  readonly property bool hearingDeclared: !unitModel || modelFeatures.indexOf("hearingTest") !== -1
+  readonly property var modelNotes: (unitModel && unitModel.notes) ? unitModel.notes : []
+  readonly property bool modelNotTested: !!(unitModel && unitModel.tested === false)
 
   // Probe name -> declared action id / feature flag, for the cross below.
   readonly property var declaredAs: ({
@@ -744,20 +837,22 @@ Panel {
     autoOff: "autoOff", balance: "balance", promptVol: "promptVolume"
   })
 
+  // A control is offered when the model declares it. Without a model report
+  // (older daemon) the probe alone decides.
   function declared(feature) {
-    if (!unverifiedModel || !unitModel.actions) return true
-    if (feature === "find") return (unitModel.features || []).indexOf("find") !== -1
+    if (!unitModel || !unitModel.actions) return true
+    if (feature === "find") return modelFeatures.indexOf("find") !== -1
+    if (feature === "spatial") return modelFeatures.indexOf("spatial") !== -1
+    if (feature === "keys") return modelFeatures.indexOf("keysRemap") !== -1
     var id = declaredAs[feature]
-    if (id === undefined) return false   // spatial, fit, keys: never declared
+    if (id === undefined) return false
     return unitModel.actions.indexOf(id) !== -1
   }
 
   function has(feature) {
     // The fit test never answers a probe; the daemon declares it per model.
-    if (feature === "fit") {
-      return !!(unitModel && unitModel.features && unitModel.features.indexOf("fit") !== -1)
-    }
-    if (unverifiedModel && !declared(feature)) return false
+    if (feature === "fit") return modelFeatures.indexOf("fit") !== -1
+    if (!declared(feature)) return false
     if (caps) return caps[feature] === true
     if (feature === "spatial") return !!(rep && rep.spatial)
     if (feature === "keys") return !!(rep && rep.keys)
@@ -930,6 +1025,10 @@ Panel {
     var next = Object.assign({}, optimistic)
     next["anc"] = key
     optimistic = next
+    if (String(key).indexOf("raw:") === 0) {
+      Qcy.set("ANC", ["anc", "--raw"].concat(String(key).slice(4).split(",")))
+      return
+    }
     Qcy.set("ANC " + key, ["anc", key])
   }
 
@@ -944,7 +1043,7 @@ Panel {
   }
 
   readonly property bool ancStrengthApplies: {
-    var s = currentAnc()
+    var s = currentAncKey()
     return s === "indoor" || s === "commuting" || s === "noisy" || s === "transparency"
   }
 
@@ -960,7 +1059,7 @@ Panel {
     optimistic = next
     // The scene has to be re-sent with the new strength; the earbuds treat the
     // third ANC parameter as part of the same command.
-    Qcy.set("ANC intensity", ["anc", currentAnc(), "--level", String(value)])
+    Qcy.set("ANC intensity", ["anc", currentAncKey(), "--level", String(value)])
   }
 
   // ---- sliders -------------------------------------------------------------
@@ -1118,9 +1217,10 @@ Panel {
     return opts
   }
 
-  // Writes are for verified models that declare the music-key actions; one
-  // write at a time.
-  readonly property bool touchCanEdit: !!(unitModel && unitModel.verified === true && unitModel.keyActions)
+  // Writes are for models that declare the music-key actions; one write at a
+  // time.
+  readonly property bool touchCanEdit: !!(unitModel && unitModel.keyActions
+    && modelFeatures.indexOf("keysRemap") !== -1)
     && root.touchState !== "running"
 
   // Sends the music keys as one table (the leading run of 0x01..0x0a pairs, the
@@ -1174,20 +1274,33 @@ Panel {
     return root.touchRowModel
   }
 
-  // Prompt volume accepts only these four levels (the reported max is not one).
-  readonly property var promptVolChoices: [
-    { label: Qcy.tr("Quieter"), value: 4 },
-    { label: Qcy.tr("Medium volume"), value: 6 },
-    { label: Qcy.tr("Louder"), value: 8 },
-    { label: Qcy.tr("Maximum"), value: 10 }
-  ]
+  // Prompt volume takes the model's own steps (model.promptVolumeSteps); the
+  // N70's four levels when the model reports none.
+  readonly property var promptVolChoices: {
+    var st = unitModel && unitModel.promptVolumeSteps && unitModel.promptVolumeSteps.length > 0
+      ? unitModel.promptVolumeSteps : [4, 6, 8, 10]
+    var names = [Qcy.tr("Quieter"), Qcy.tr("Medium volume"), Qcy.tr("Louder"), Qcy.tr("Maximum")]
+    var out = []
+    for (var i = 0; i < st.length; i++) {
+      out.push({ label: st.length === 4 ? names[i] : String(st[i]), value: st[i] })
+    }
+    return out
+  }
 
-  // Wear-sensor sensitivity; only meaningful while wear detection is on.
-  readonly property var wearSensChoices: [
-    { label: Qcy.tr("Medium"), value: 1 },
-    { label: Qcy.tr("Normal"), value: 2 },
-    { label: Qcy.tr("High"), value: 3 }
-  ]
+  // Wear-sensor sensitivity (model.wearSensitivityItems; the N70's three when
+  // absent); only meaningful while wear detection is on.
+  readonly property var wearSensChoices: {
+    var it = unitModel && unitModel.wearSensitivityItems && unitModel.wearSensitivityItems.length > 0
+      ? unitModel.wearSensitivityItems : null
+    if (!it) return [
+      { label: Qcy.tr("Medium"), value: 1 },
+      { label: Qcy.tr("Normal"), value: 2 },
+      { label: Qcy.tr("High"), value: 3 }
+    ]
+    var out = []
+    for (var i = 0; i < it.length; i++) out.push({ label: Qcy.tr(String(it[i].name)), value: it[i].value })
+    return out
+  }
   readonly property bool wearSensVisible: !!(rep && rep.wear && rep.wear.enabled === true)
     && rep.wearSensitivity !== undefined && rep.wearSensitivity !== null
 
@@ -1744,7 +1857,7 @@ Panel {
                     label: modelData.label
                     glyph: String.fromCodePoint(modelData.glyph)
                     active: root.ancGroup() === modelData.key
-                    btnWidth: (noiseRow.width - Style.space(2) * 2) / 3
+                    btnWidth: (noiseRow.width - Style.space(2) * (root.noiseButtons.length - 1)) / Math.max(1, root.noiseButtons.length)
                     onClicked: {
                       if (root.ancGroup() !== modelData.key) root.setAnc(modelData.key)
                     }
@@ -1794,9 +1907,9 @@ Panel {
             }
 
             Text {
-              visible: root.unverifiedModel
+              visible: !root.eqDeclared
               width: parent.width
-              text: Qcy.tr("Equalizer is only available on the MeloBuds N70.")
+              text: Qcy.tr("Equalizer is not available on this model.")
               color: root.muted
               font.family: root.textFamily
               font.pixelSize: Style.font.caption
@@ -1805,7 +1918,7 @@ Panel {
 
             // ---- Effects: click one to apply it ----
             Column {
-              visible: !root.unverifiedModel
+              visible: root.eqDeclared
               width: parent.width
               spacing: Style.space(8)
 
@@ -1881,7 +1994,7 @@ Panel {
 
             // ---- Equalizer: applies when a bar is released ----
             Column {
-              visible: !root.unverifiedModel
+              visible: root.eqDeclared
               width: parent.width
               spacing: Style.space(8)
 
@@ -2012,7 +2125,7 @@ Panel {
             Card {
               id: hearingCard
               width: parent.width
-              visible: !root.unverifiedModel
+              visible: root.hearingDeclared
 
               SectionHeader {
                 text: Qcy.tr("Hearing experience").toUpperCase()
@@ -2432,7 +2545,7 @@ Panel {
             Column {
               width: parent.width
               spacing: Style.space(8)
-              visible: root.has("anc")
+              visible: root.has("anc") && root.ancSceneChips.length > 0
 
               SectionHeader {
                 text: Qcy.tr("Cancellation scenes").toUpperCase()
@@ -2443,11 +2556,11 @@ Panel {
                 spacing: Style.space(8)
 
                 Repeater {
-                  model: root.ancModes
+                  model: root.ancSceneChips
                   Chip {
                     required property var modelData
                     label: modelData.label
-                    active: root.currentAnc() === modelData.key
+                    active: root.currentAncKey() === modelData.key
                     onClicked: root.setAnc(modelData.key)
                   }
                 }
@@ -2922,13 +3035,35 @@ Panel {
                   ? root.rep.firmware.left : "—"
               }
               Text {
-                visible: Qcy.modelUnverified
-                text: Qcy.tr("Unverified model — only the common controls were tested on another device.")
+                visible: root.modelNotTested
+                text: Qcy.tr("Not tested on this model yet.")
                 color: root.muted
                 font.family: root.textFamily
                 font.pixelSize: Style.font.caption
                 wrapMode: Text.WordWrap
                 width: parent.width
+              }
+              Text {
+                visible: root.modelNotes.length > 0
+                text: Qcy.tr("Not available on this model")
+                color: root.muted
+                font.family: root.textFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                wrapMode: Text.WordWrap
+                width: parent.width
+              }
+              Repeater {
+                model: root.modelNotes
+                Text {
+                  required property var modelData
+                  text: String(modelData)
+                  color: root.muted
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                  width: parent.width
+                }
               }
             }
 

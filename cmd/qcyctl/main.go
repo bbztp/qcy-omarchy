@@ -266,7 +266,7 @@ func statusFromDaemon(raw map[string]interface{}) *statusReport {
 			}
 		}
 	}
-	if v := intOf(raw["wearSensitivity"]); v >= 1 && v <= 3 {
+	if v := intOf(raw["wearSensitivity"]); v >= 1 && v <= 255 {
 		rep.WearSensitivity = &v
 	}
 	if p := bytesOf(raw["spatial"]); len(p) >= 1 {
@@ -647,20 +647,20 @@ func (w *daemonClientWrapper) setActionExpect(action string, params, expect []by
 func opcodeFor(action string) (byte, error) {
 	// 0x11 (fit) starts/stops the ear-tip fit check, verified on the test device
 	// (an N70, 2026-10-13); find maps to the indicator blink, see the daemon.
-	// ldac (0x23) restarts the earbuds and is writable on verified models
-	// only. Direct mode cannot tell the model, so it leaves the write to the
-	// daemon, which can.
+	// ldac (0x23) restarts the earbuds and is written only on a model whose
+	// panel declares it. Direct mode cannot read the panel, so it leaves the
+	// write to the daemon, which can.
 	if action == "ldac" {
-		return 0, errors.New("ldac needs the daemon (qcyctld): it is only written on a verified model, and direct mode cannot check the model")
+		return 0, errors.New("ldac needs the daemon (qcyctld): it is only written on a model whose panel declares it, and direct mode cannot read the panel")
 	}
 	// 0x22 is only ever written through eqApply, which reads, patches and backs
 	// the payload up first. A raw write here would bypass all of that.
 	if action == "eq" {
 		return 0, errors.New("eq cannot be written as a raw action: use `qcyctl eq set` or `qcyctl master-gain`, which back up the slot first")
 	}
-	// promptVol (0x1D): frame FF 04 1D 02 <v> 00 (two data bytes, v in
-	// 4/6/8/10), verified on the test device (N70), 2026-10-13. A one-byte write was
-	// ignored. See PROTOCOL.md, "Prompt volume".
+	// promptVol (0x1D): frame FF 04 1D 02 <v> 00 (two data bytes, v one of the
+	// values the model's panel lists; measured on the N70: a one-byte write was
+	// ignored). See PROTOCOL.md, "Prompt volume".
 	if action == "promptVol" && !promptVolWritable {
 		return 0, errors.New("prompt-vol is read-only on this device: promptVolWritable is false")
 	}
@@ -754,9 +754,9 @@ func (w *daemonClientWrapper) wearSet(state byte) ([]byte, error) {
 	return got, nil
 }
 
-// errOffByteZeroDirect: byte 0 is only written on a verified model, which
+// errOffByteZeroDirect: byte 0 is only written on a model whose panel declares it, which
 // direct mode cannot tell (same rule as ldac in opcodeFor).
-var errOffByteZeroDirect = errors.New("--off-byte 0 needs the daemon (qcyctld): it is only written on a verified model, and direct mode cannot check the model")
+var errOffByteZeroDirect = errors.New("--off-byte 0 needs the daemon (qcyctld): it is only written on a model whose panel declares it, and direct mode cannot read the panel")
 
 func (w *daemonClientWrapper) wearOffByte(b byte) ([]byte, error) {
 	if b == 0 {
@@ -926,14 +926,15 @@ func usage() {
   qcyctl battery [--json] [seconds]
   qcyctl noise [seconds]
   qcyctl anc <off|adaptive|indoor|commuting|noisy|antiwind|transparency> [seconds]  (anc = adaptive)
+  qcyctl anc --raw <mode> <scene> <level> [seconds]   (the three bytes a model's panel lists)
   qcyctl <game|sleep|multipoint|wind> <on|off> [seconds]
-  qcyctl ldac <on|off> --yes [seconds]   (restarts the earbuds; verified models only; not yet verified on hardware)
-  qcyctl wind off --off-byte <0|2> --yes [seconds]   (DIAGNOSTIC: which byte means "off"; default 0 on verified models, 2 otherwise)
+  qcyctl ldac <on|off> --yes [seconds]   (restarts the earbuds; only where the model's panel declares it; not yet tested on hardware)
+  qcyctl wind off --off-byte <0|2> --yes [seconds]   (DIAGNOSTIC: which byte means "off"; default 0 where the panel declares it, 2 otherwise)
   qcyctl wear <on|off> [seconds]
-  qcyctl wear off --off-byte <0|2> --yes [seconds]   (DIAGNOSTIC: byte 0 of 0x2C; default 0 on verified models, 2 otherwise)
+  qcyctl wear off --off-byte <0|2> --yes [seconds]   (DIAGNOSTIC: byte 0 of 0x2C; default 0 where the panel declares it, 2 otherwise)
   qcyctl find [--sink NAME] [--start-volume 100%] [--tone-level -3] [--max-volume 100%] [--timeout 60] [--yes] [--events]
       plays a beeping tone on the earbuds' audio sink, raising the volume gently (no BLE command)
-  qcyctl prompt-vol <4|6|8|10|low|medium|high|max> [seconds]
+  qcyctl prompt-vol <value|low|medium|high|max> [seconds]   (numbers: the model's own steps)
   qcyctl wear-sensitivity <medium|normal|high|1|2|3> [seconds]
   qcyctl fit <start|stop|begin> [--json] [seconds]   (start waits for the result; frames verified on the test device)
   qcyctl auto-off <minutes|never> [seconds]
@@ -1566,7 +1567,8 @@ type statusReport struct {
 	AutoOff   *autoOffReport  `json:"autoOff,omitempty"`
 	Wear      *wearReport     `json:"wear,omitempty"`
 	Balance   *int            `json:"balance,omitempty"`
-	// WearSensitivity is 1 medium, 2 normal, 3 high; absent when unanswered.
+	// WearSensitivity is the model's own item value (the N70: 1 medium, 2 normal,
+	// 3 high); absent when unanswered.
 	WearSensitivity *int           `json:"wearSensitivity,omitempty"`
 	EQ              *eqReport      `json:"eq,omitempty"`
 	Keys            *keysReport    `json:"keys,omitempty"`
@@ -1964,6 +1966,9 @@ func cmdAnc(args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: qcyctl anc <off|adaptive|indoor|commuting|noisy|antiwind|transparency> [--level 0-2] [seconds]")
 	}
+	if args[0] == "--raw" {
+		return cmdAncRaw(args[1:])
+	}
 	modeName := args[0]
 	params, ok := ancModes[modeName]
 	if !ok {
@@ -2007,6 +2012,33 @@ func cmdAnc(args []string) error {
 			return err
 		}
 		fmt.Printf("anc=%s level=%d sent\n", modeName, level)
+		return nil
+	})
+}
+
+// cmdAncRaw writes the three ANC bytes as given: the panel of a model whose
+// values differ from the named modes above lists its own (status model.ancModes).
+func cmdAncRaw(args []string) error {
+	if len(args) < 3 {
+		return errors.New("usage: qcyctl anc --raw <mode> <scene> <level> [seconds]")
+	}
+	var p [3]byte
+	for i := 0; i < 3; i++ {
+		n, err := strconv.Atoi(args[i])
+		if err != nil || n < 0 || n > 255 {
+			return fmt.Errorf("anc --raw: invalid byte %q (0-255)", args[i])
+		}
+		p[i] = byte(n)
+	}
+	scanSeconds, err := parseSeconds(args[3:], 30)
+	if err != nil {
+		return err
+	}
+	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		if err := dc.setAction("anc", p[:]); err != nil {
+			return err
+		}
+		fmt.Printf("anc raw=%d,%d,%d sent\n", p[0], p[1], p[2])
 		return nil
 	})
 }
@@ -2203,39 +2235,102 @@ func cmdWear(args []string) error {
 // read-only behaviour of prompt-vol. The 2-byte frame is verified on the test device (N70, 2026-10-13).
 const promptVolWritable = true
 
-// promptVolSteps are the values the vendor server lists for verified models, with the
-// app's labels (Quieter / Medium / Louder / Maximum).
-var promptVolSteps = []struct {
-	Value byte
-	Names []string
-}{
-	{4, []string{"low"}}, {6, []string{"medium"}}, {8, []string{"high"}}, {10, []string{"max"}},
+// defaultPromptVolSteps are the steps used when the daemon status does not
+// report the model's own list.
+var defaultPromptVolSteps = []int{4, 6, 8, 10}
+
+// stepsFromStatus reads model.promptVolumeSteps from a status reply.
+func stepsFromStatus(st map[string]interface{}) []int {
+	m, _ := st["model"].(map[string]interface{})
+	arr, _ := m["promptVolumeSteps"].([]interface{})
+	var out []int
+	for _, e := range arr {
+		if f, ok := e.(float64); ok && f >= 1 && f <= 255 {
+			out = append(out, int(f))
+		}
+	}
+	return out
 }
 
-func parsePromptVol(s string) (byte, error) {
-	for _, st := range promptVolSteps {
-		if strconv.Itoa(int(st.Value)) == s {
-			return st.Value, nil
+// wearItemsFromStatus reads model.wearSensitivityItems from a status reply.
+func wearItemsFromStatus(st map[string]interface{}) []wearItem {
+	m, _ := st["model"].(map[string]interface{})
+	arr, _ := m["wearSensitivityItems"].([]interface{})
+	var out []wearItem
+	for _, e := range arr {
+		o, ok := e.(map[string]interface{})
+		if !ok {
+			continue
 		}
-		for _, n := range st.Names {
-			if strings.EqualFold(n, s) {
-				return st.Value, nil
+		name, _ := o["name"].(string)
+		if v := intOf(o["value"]); v >= 1 && v <= 255 {
+			out = append(out, wearItem{Name: name, Value: byte(v)})
+		}
+	}
+	return out
+}
+
+// parsePromptVol accepts one of the model's steps (a number) or a word mapped
+// onto them: low is the first step, max the last, medium and high sit a third
+// and two thirds of the way.
+func parsePromptVol(s string, steps []int) (byte, error) {
+	if len(steps) == 0 {
+		steps = defaultPromptVolSteps
+	}
+	last := len(steps) - 1
+	words := map[string]int{
+		"low": 0, "medium": (last + 1) / 3, "high": (2*last + 1) / 3, "max": last,
+	}
+	if i, ok := words[strings.ToLower(s)]; ok {
+		return byte(steps[i]), nil
+	}
+	if n, err := strconv.Atoi(s); err == nil {
+		for _, v := range steps {
+			if v == n {
+				return byte(v), nil
 			}
 		}
 	}
-	return 0, fmt.Errorf("prompt-vol: invalid value %q (4|6|8|10 or low|medium|high|max)", s)
+	list := make([]string, len(steps))
+	for i, v := range steps {
+		list[i] = strconv.Itoa(v)
+	}
+	return 0, fmt.Errorf("prompt-vol: invalid value %q (%s or low|medium|high|max)", s, strings.Join(list, "|"))
 }
 
-func parseWearSensitivity(s string) (byte, error) {
-	switch strings.ToLower(s) {
-	case "1", "medium":
-		return 1, nil
-	case "2", "normal":
-		return 2, nil
-	case "3", "high":
-		return 3, nil
+// wearItem is one wear-sensitivity choice a model's panel declares.
+type wearItem struct {
+	Name  string
+	Value byte
+}
+
+// defaultWearItems is used when the status does not report the model's own.
+var defaultWearItems = []wearItem{{"medium", 1}, {"normal", 2}, {"high", 3}}
+
+// parseWearSensitivity accepts one of the model's item values or names.
+func parseWearSensitivity(s string, items []wearItem) (byte, error) {
+	if len(items) == 0 {
+		items = defaultWearItems
 	}
-	return 0, fmt.Errorf("wear-sensitivity: invalid value %q (medium|normal|high or 1|2|3)", s)
+	n, numErr := strconv.Atoi(s)
+	for _, it := range items {
+		if numErr == nil && int(it.Value) == n {
+			return it.Value, nil
+		}
+		if it.Name != "" && strings.EqualFold(it.Name, s) {
+			return it.Value, nil
+		}
+	}
+	opts := make([]string, 0, 2*len(items))
+	for _, it := range items {
+		if it.Name != "" {
+			opts = append(opts, it.Name)
+		}
+	}
+	for _, it := range items {
+		opts = append(opts, strconv.Itoa(int(it.Value)))
+	}
+	return 0, fmt.Errorf("wear-sensitivity: invalid value %q (%s)", s, strings.Join(opts, "|"))
 }
 
 // Fit test frames (FF 05 11 03 01 01 01 / FF 05 11 03 00 00 00), verified on
@@ -2348,17 +2443,21 @@ func printFitResult(w io.Writer, r fitResult, jsonOut bool) error {
 
 func cmdWearSensitivity(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: qcyctl wear-sensitivity <medium|normal|high|1|2|3> [seconds]")
-	}
-	v, err := parseWearSensitivity(args[0])
-	if err != nil {
-		return err
+		return errors.New("usage: qcyctl wear-sensitivity <name|value> [seconds]   (the model's own items)")
 	}
 	scanSeconds, err := parseSeconds(args[1:], 30)
 	if err != nil {
 		return err
 	}
 	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		var items []wearItem
+		if st, serr := dc.status(); serr == nil {
+			items = wearItemsFromStatus(st)
+		}
+		v, err := parseWearSensitivity(args[0], items)
+		if err != nil {
+			return err
+		}
 		got, err := dc.setActionExpect("wearSensitivity", []byte{v}, []byte{v})
 		if err != nil {
 			return err
@@ -2393,20 +2492,24 @@ func cmdSpatial(args []string) error {
 
 func cmdPromptVol(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: qcyctl prompt-vol <4|6|8|10|low|medium|high|max> [seconds]")
+		return errors.New("usage: qcyctl prompt-vol <value|low|medium|high|max> [seconds]   (numbers: the model's own steps)")
 	}
 	if !promptVolWritable {
 		return errors.New("prompt-vol is read-only on this device: promptVolWritable is false")
-	}
-	v, err := parsePromptVol(args[0])
-	if err != nil {
-		return err
 	}
 	scanSeconds, err := parseSeconds(args[1:], 30)
 	if err != nil {
 		return err
 	}
 	return runViaDaemon(scanSeconds, func(dc daemonAPI) error {
+		var steps []int
+		if st, serr := dc.status(); serr == nil {
+			steps = stepsFromStatus(st)
+		}
+		v, err := parsePromptVol(args[0], steps)
+		if err != nil {
+			return err
+		}
 		// Two parameter bytes, the second 0, as the vendor app writes it.
 		got, err := dc.setActionExpect("promptVol", []byte{v, 0}, []byte{v})
 		if err != nil {

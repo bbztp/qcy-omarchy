@@ -41,9 +41,9 @@ import (
 // hearingLink is the daemon side: only the daemon speaks the hearing commands.
 type hearingLink interface {
 	status() (map[string]interface{}, error)
-	// capabilities is answered from the daemon's cache (no BLE sweep): it
-	// reports whether the connected model is a verified one.
-	capabilities() (verified bool, err error)
+	// hearingDeclared is answered from the daemon's cache (no BLE sweep): it
+	// reports whether the connected model declares the hearing test.
+	hearingDeclared() (declared bool, err error)
 	// hearingMode sends 0x45 (with confirm:true).
 	hearingMode(on bool) (*hearingCall, error)
 	// baseline "" or "factory": the 8 test bands; "zero": EXPERIMENT, the 5
@@ -667,12 +667,12 @@ func hearingRunCore(env hearingEnv, o hearingRunOpts, emit func(string, map[stri
 	// closed connection. Registered here, it runs after everything registered
 	// later (tone, mode off, volume).
 	undo = append(undo, func() { _ = link.Close() })
-	verified, err := link.capabilities()
+	declared, err := link.hearingDeclared()
 	if err != nil {
 		return fmt.Errorf("capabilities: %w", err)
 	}
-	if !verified {
-		return errors.New("hearing run is only for a verified model (this earbud is not)")
+	if !declared {
+		return errors.New("hearing run: this model does not declare the hearing test")
 	}
 	// The backup (full status + raw active EQ + library entry) is slow (BLE)
 	// and only needed with --apply --yes: it runs while the audio settles and
@@ -1193,7 +1193,7 @@ func (l *liveHearingLink) status() (map[string]interface{}, error) {
 	return l.dc.status()
 }
 
-func (l *liveHearingLink) capabilities() (bool, error) {
+func (l *liveHearingLink) hearingDeclared() (bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	data, err := l.dc.request("capabilities", nil)
@@ -1204,7 +1204,7 @@ func (l *liveHearingLink) capabilities() (bool, error) {
 	if !ok {
 		return false, errors.New("daemon returned a non-object capabilities reply")
 	}
-	v, _ := m["verified"].(bool)
+	v, _ := m["hearingTest"].(bool)
 	return v, nil
 }
 

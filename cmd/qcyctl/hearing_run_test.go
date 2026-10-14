@@ -173,7 +173,7 @@ func (l *fakeLink) status() (map[string]interface{}, error) {
 	l.mu.Unlock()
 	return map[string]interface{}{"model": map[string]interface{}{"verified": l.verified}, "eq": map[string]interface{}{"slot": 6}}, nil
 }
-func (l *fakeLink) capabilities() (bool, error) {
+func (l *fakeLink) hearingDeclared() (bool, error) {
 	if err := l.useClosed(); err != nil {
 		return false, err
 	}
@@ -728,11 +728,11 @@ func TestHearingRunNoSinkTouchesNothing(t *testing.T) {
 	}
 }
 
-func TestHearingRunUnverifiedModelRefused(t *testing.T) {
+func TestHearingRunUndeclaredModelRefused(t *testing.T) {
 	r := newRig(t, cycleKeys())
 	r.link.verified = false
 	err := hearingRunLive(r.env, opts())
-	if err == nil || !strings.Contains(err.Error(), "verified model") {
+	if err == nil || !strings.Contains(err.Error(), "does not declare the hearing test") {
 		t.Fatalf("%v", err)
 	}
 	r.untouched(t)

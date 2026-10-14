@@ -257,11 +257,11 @@ func TestHearingApplyRejectsInvalidFiles(t *testing.T) {
 	}
 }
 
-func TestHearingApplyUnverifiedModelRefused(t *testing.T) {
+func TestHearingApplyUndeclaredModelRefused(t *testing.T) {
 	r := newRig(t, nil)
 	r.link.verified = false
 	err := hearingApplyFile(r.env, resultFile(t, nil), hearingApplyOpts{yes: true, deviceMode: true})
-	if err == nil || !strings.Contains(err.Error(), "verified") || r.link.list() != "" || len(r.saved) != 0 {
+	if err == nil || !strings.Contains(err.Error(), "does not declare") || r.link.list() != "" || len(r.saved) != 0 {
 		t.Fatalf("%v %s", err, r.link.list())
 	}
 }
@@ -712,7 +712,7 @@ func TestLibraryApplyEarsCardSendsHearingFramesOnly(t *testing.T) {
 	}
 }
 
-func TestLibraryApplyEarsCardRefusesFractionsAndUnverified(t *testing.T) {
+func TestLibraryApplyEarsCardRefusesFractionsAndUndeclared(t *testing.T) {
 	r := newRig(t, nil)
 	c := earsCard(t, func(c *qcycore.Curve) { c.Ears.Left[2].Gain = 1.5 })
 	if err := hearingApplyEars(r.env, c, false, false); err == nil || r.link.list() != "" || len(r.saved) != 0 {

@@ -161,8 +161,8 @@ func TestOffByteDiagnosticWritesRequestedByte(t *testing.T) {
 	}
 }
 
-// The CLI asks for "off" (2); the daemon turns it into 0x00 on a verified
-// model and keeps 0x02 elsewhere.
+// The CLI asks for "off" (2); the daemon turns it into 0x00 where the panel says
+// so and keeps 0x02 elsewhere.
 func TestPlainWearOffAsksDaemonForOff(t *testing.T) {
 	f := &fakeToggleAPI{wearReply: []byte{2, 5, 6}}
 	useFakeToggle(t, f)

@@ -580,6 +580,11 @@ func (d *daemon) fnSet(args map[string]interface{}) (*fnResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Whatever the panel declares, the opcodes of the specialised controls
+	// (EQ 0x22, ANC 0x17, prompt volume 0x1D, ...) are never reached here.
+	if fnSpecialOpcodes[byte(id)] {
+		return nil, fmt.Errorf("fnSet: function %d is driven by a specialised control, not by the generic path", id)
+	}
 	var f genericFn
 	found := false
 	for _, g := range d.genericFns() {

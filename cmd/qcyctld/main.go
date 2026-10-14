@@ -171,6 +171,7 @@ const (
 	FeatureBatteryCase  FeatureFlag = "batteryCase"  // Case battery level
 	FeatureKeysRemap    FeatureFlag = "keysRemap"    // Touch key remapping
 	FeatureFit          FeatureFlag = "fit"          // Ear-tip fit test (panel type 110, cmd 17)
+	FeatureSpatial      FeatureFlag = "spatial"      // Spatial audio toggle (0x2D), probe-driven; only the N70 handler declares it
 	FeatureEQ           FeatureFlag = "eq"           // EQ curve + master gain (read/write via eqApply, backed up)
 )
 
@@ -215,10 +216,10 @@ type Capabilities struct {
 	Notes []string `json:"notes,omitempty"`
 
 	// Wire details derived from the panel, never serialised.
-	WearOffZero bool `json:"-"` // wear off is written as 0x00 (the panel's "Close" is 0)
-	WindOffZero bool `json:"-"` // wind-noise off is written as 0x00 (the panel's off frame)
-	HearingTest bool `json:"-"` // the hearing-test frames (0x45-0x47) are driven for this model
-	StrictEQ    bool `json:"-"` // explicit EQ slots are limited to EQ.Slots and EQ.ProtectedSlots applies
+	WearOffZero bool `json:"-"`           // wear off is written as 0x00 (the panel's "Close" is 0)
+	WindOffZero bool `json:"-"`           // wind-noise off is written as 0x00 (the panel's off frame)
+	HearingTest bool `json:"hearingTest"` // the hearing-test frames (0x45-0x47) are driven for this model; also reported as the "hearingTest" feature
+	StrictEQ    bool `json:"-"`           // explicit EQ slots are limited to EQ.Slots and EQ.ProtectedSlots applies
 }
 
 // ModelHandler defines the interface each model implements.
@@ -325,6 +326,14 @@ type meloBudsN70Handler struct{}
 
 func (meloBudsN70Handler) Capabilities() Capabilities {
 	pp := n70PanelParams()
+	// The N70's panel lists +-8 dB; the range tested on this model is +-12,
+	// which is what the bars use.
+	var n70EQ *EQSpec
+	if pp.eq != nil {
+		c := *pp.eq
+		c.MinDb, c.MaxDb = -12, 12
+		n70EQ = &c
+	}
 	return Capabilities{
 		ModelID:     "melobuds-n70",
 		DisplayName: "QCY MeloBuds N70",
@@ -333,7 +342,7 @@ func (meloBudsN70Handler) Capabilities() Capabilities {
 			FeatureLDAC, FeatureMultipoint, FeatureWindNoise,
 			FeatureWearDetect, FeatureAutoOff, FeatureBalance,
 			FeaturePromptVolume, FeatureFind, FeatureBatteryCase,
-			FeatureEQ, FeatureKeysRemap, FeatureFit,
+			FeatureEQ, FeatureKeysRemap, FeatureFit, FeatureSpatial,
 		},
 		Actions: []ActionSpec{
 			{
@@ -365,7 +374,7 @@ func (meloBudsN70Handler) Capabilities() Capabilities {
 		PromptVolumeSteps:    []int{4, 6, 8, 10},
 		WearSensitivityItems: []NamedValue{{"Medium", 1}, {"Normal", 2}, {"High", 3}},
 		ANCModes:             pp.ancModes,
-		EQ:                   pp.eq,
+		EQ:                   n70EQ,
 		WearOffZero:          true,
 		WindOffZero:          true,
 		HearingTest:          true,
@@ -1065,7 +1074,7 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 	// status.
 	if snap := d.capabilitiesSnapshot(); snap["wearSensitivity"] {
 		if h := d.knownHandler(); h != nil && writableDeclared(h.Capabilities(), "wearSensitivity") {
-			if p, err := d.query(protocol.OpWearSensitivity, 800*time.Millisecond); err == nil && len(p) >= 1 && p[0] >= 1 {
+			if p, err := d.query(protocol.OpWearSensitivity, 800*time.Millisecond); err == nil && len(p) >= 1 && wearItemListed(h.Capabilities(), int(p[0])) {
 				rep["wearSensitivity"] = int(p[0])
 			}
 		}
@@ -1638,13 +1647,25 @@ var eqConfirmTimeout = 4 * time.Second
 // between our read and our write.
 func (d *daemon) eqApply(op qcycore.EqOp) (*qcycore.EqResult, error) {
 	// A model recognised from its panel writes only into the slots the panel
-	// declares (and the custom slot 255), with the panel's protected slots.
-	// The N70 keeps the package defaults.
+	// declares (and the custom slot 255), within the panel's gain range and
+	// on the panel's band frequencies. Its protected slots are the package
+	// defaults plus the panel's own. The N70 keeps the package defaults and
+	// the +-12 dB rules.
+	var strict *Capabilities
 	if h := d.knownHandler(); h != nil {
 		if c := h.Capabilities(); c.StrictEQ && c.EQ != nil {
-			op.ProtectedSlots = c.EQ.ProtectedSlots
+			strict = &c
+			op.ProtectedSlots = append([]int(nil), qcycore.ProtectedSlots...)
+			for _, ps := range c.EQ.ProtectedSlots {
+				if !containsInt(op.ProtectedSlots, ps) {
+					op.ProtectedSlots = append(op.ProtectedSlots, ps)
+				}
+			}
 			if op.Slot != nil && *op.Slot != qcycore.SlotCustomApp && !containsInt(c.EQ.Slots, *op.Slot) {
 				return nil, fmt.Errorf("eq: slot %d is not one of the slots %s declares (%v) nor %d", *op.Slot, c.DisplayName, c.EQ.Slots, qcycore.SlotCustomApp)
+			}
+			if err := checkEQLimits(c, op); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -1656,6 +1677,11 @@ func (d *daemon) eqApply(op qcycore.EqOp) (*qcycore.EqResult, error) {
 	cur, err := d.queryLocked(qcycore.EqOpcode, 3*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("eq: read current payload: %w", err)
+	}
+	if strict != nil && len(cur) > 0 && op.Slot == nil {
+		if a := int(cur[0]); a != qcycore.SlotCustomApp && !containsInt(strict.EQ.Slots, a) {
+			return nil, fmt.Errorf("eq: the active effect (slot %d) is not one %s's panel declares (%v); refusing to patch it", a, strict.DisplayName, strict.EQ.Slots)
+		}
 	}
 	next, err := qcycore.ApplyEq(cur, op)
 	if err != nil {
@@ -1815,6 +1841,54 @@ func sanePromptVolume(p []byte) bool {
 	return max > 0 && max <= 255 && int(p[0]) <= max
 }
 
+// checkEQLimits enforces a panel model's own ranges on a write: band and
+// master gains within [minDb, maxDb] and band frequencies among the panel's.
+func checkEQLimits(c Capabilities, op qcycore.EqOp) error {
+	lo, hi := int(math.Round(c.EQ.MinDb*100)), int(math.Round(c.EQ.MaxDb*100))
+	gain := func(centi int, what string) error {
+		if centi < lo || centi > hi {
+			return fmt.Errorf("eq: %s %.2f dB is outside the %.0f..%.0f dB range %s declares", what, float64(centi)/100, c.EQ.MinDb, c.EQ.MaxDb, c.DisplayName)
+		}
+		return nil
+	}
+	if op.MasterCenti != nil {
+		if err := gain(*op.MasterCenti, "master gain"); err != nil {
+			return err
+		}
+	}
+	if op.Gains != nil {
+		for i, g := range op.Gains {
+			if err := gain(g, fmt.Sprintf("band %d gain", i+1)); err != nil {
+				return err
+			}
+		}
+	}
+	for _, b := range op.Bands {
+		if err := gain(int(math.Round(b.Gain*100)), fmt.Sprintf("band %d gain", b.Index)); err != nil {
+			return err
+		}
+		ok := false
+		for _, f := range c.EQ.Freqs {
+			if int(math.Round(f)) == b.Freq {
+				ok = true
+			}
+		}
+		if !ok {
+			return fmt.Errorf("eq: band %d frequency %d Hz is not one of the frequencies %s declares (%v)", b.Index, b.Freq, c.DisplayName, c.EQ.Freqs)
+		}
+	}
+	return nil
+}
+
+func wearItemListed(c Capabilities, v int) bool {
+	for _, it := range c.WearSensitivityItems {
+		if it.Value == v {
+			return true
+		}
+	}
+	return false
+}
+
 func containsInt(l []int, v int) bool {
 	for _, x := range l {
 		if x == v {
@@ -1909,9 +1983,12 @@ func (d *daemon) modelReport() map[string]interface{} {
 	for _, a := range c.Actions {
 		actions = append(actions, a.ID)
 	}
-	features := make([]string, 0, len(c.Features))
+	features := make([]string, 0, len(c.Features)+1)
 	for _, f := range c.Features {
 		features = append(features, string(f))
+	}
+	if c.HearingTest {
+		features = append(features, "hearingTest")
 	}
 	m := map[string]interface{}{
 		"modelId": id, "displayName": c.DisplayName,

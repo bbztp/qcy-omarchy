@@ -18,7 +18,7 @@ Battery, noise control, equalizer and settings for QCY earbuds, from the Omarchy
 A bar widget for the [Omarchy](https://omarchy.org) shell. It talks to the earbuds
 directly over Bluetooth Low Energy, with no phone and no vendor app. It is
 developed against the **MeloBuds N70 / HT18** and written to the vendor's
-low-energy GATT protocol. Only the N70 is verified on hardware.
+low-energy GATT protocol. Every model follows what its own panel declares; only the N70 is tested on hardware.
 
 ## What it does
 
@@ -95,8 +95,10 @@ The full state is read on connect and when the panel opens (the panel shows
 | **Sound** | The effect library (click a card to apply it) and the 10-bar equalizer. Drag a bar and release to apply, double-click to zero it. **Start from scratch** drops the base effect so the bars are the whole curve; **Save as…** stores what you see in the curve library. Bars are written on top of the effect as a curve in slot 255. |
 | **Settings** | Noise scenes, toggles, balance, auto power-off, prompt volume, sensor sensitivity, fit test, touch controls, device info, language, daemon. |
 
-On a model that is not a verified N70, the Sound tab only says that the
-equalizer is unavailable, and Settings offers only what the product declares.
+On any other model the panel offers what that model's panel declares (equalizer
+bands and range, touch keys, prompt volume steps, noise modes, ...). Features
+whose encoding is not understood yet are listed in Settings > Device under
+"Not available on this model".
 
 ## Supported models
 
@@ -105,8 +107,8 @@ advertisement, not by the Bluetooth name.
 
 | vendorId | Model | Profile |
 | --- | --- | --- |
-| 23872, 23877 | MeloBuds N70 | **Verified**: everything above, including EQ and touch keys. |
-| any other id in the embedded QCY product list | `qcy-<vendorId>` | Conservative: only the common controls the product declares (noise control, balance, find, auto power-off, wear detection, game/sleep/LDAC/multipoint/wind toggles). EQ, touch keys, fit test, prompt volume and sensor sensitivity are blocked; the panel says "Unverified model". |
+| 23872, 23877 | MeloBuds N70 | **Tested on hardware**: everything above, including EQ and touch keys. |
+| any other id in the embedded QCY product list | `qcy-<vendorId>` | Everything the product's panel declares and this tool understands (noise control, EQ, touch keys, fit test, prompt volume, sensor sensitivity, toggles, ...). Not tested on hardware: the panel says "Not tested on this model yet". |
 | unknown | name, then firmware string, then `generic` | |
 
 Where the product data comes from and how the profile is derived:
@@ -153,8 +155,10 @@ off at login. Other environment variables: [docs/CLI.md](docs/CLI.md#environment
   level but never sets the "charging" flag for it, so the case does not show a
   charging state. The widget already draws one (charge tone, pulse, bolt) and uses
   it whenever a model or firmware reports the flag.
-- **Unverified models** get a conservative profile (see
-  [Supported models](#supported-models)).
+- **Models other than the N70 are not tested on hardware.** They get what their
+  panel declares; a feature whose encoding is not understood is absent and listed
+  in the panel under "Not available on this model" (see
+  [Supported models](#supported-models)). The hearing test is driven for the N70 only.
 
 ## Troubleshooting
 

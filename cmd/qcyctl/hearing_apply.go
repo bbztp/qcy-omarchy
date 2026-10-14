@@ -460,7 +460,7 @@ func earsGains(e *qcycore.EarCurves) (l, r [hearing.Bands]int, err error) {
 // hearingApplyEars applies a library entry that carries per-ear curves the way
 // the phone app re-applies its hearing-test result: 0x46 and 0x47 index 11,
 // nothing in 0x22 and no slot 255. Backup (slot 11 and the active EQ) comes
-// first, the model must be verified, and the library entry is left alone.
+// first, the model must declare the hearing test, and the library entry is left alone.
 func hearingApplyEars(env hearingEnv, c qcycore.Curve, jsonOut bool, noSlot11 bool) error {
 	l, r, err := earsGains(c.Ears)
 	if err != nil {
@@ -706,12 +706,12 @@ func hearingWriteGains(env hearingEnv, l, r [hearing.Bands]int, o hearingApplyOp
 	}
 	// Closed last, by the chain: the mode-off frame needs the open link.
 	undo = append(undo, func() { _ = link.Close() })
-	verified, err := link.capabilities()
+	declared, err := link.hearingDeclared()
 	if err != nil {
 		return info, nil, fmt.Errorf("capabilities: %w", err)
 	}
-	if !verified {
-		return info, nil, errors.New("hearing apply is only for a verified model (this earbud is not)")
+	if !declared {
+		return info, nil, errors.New("hearing apply: this model does not declare the hearing test")
 	}
 	fmt.Fprintln(out, "reading the earbuds' state for the backup…")
 	info, err = hearingTakeBackup(env, link, o.noSlot11Backup)

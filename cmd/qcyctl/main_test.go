@@ -260,27 +260,47 @@ func TestDirectEqApplyUnconfirmedReportsWrittenAndBackup(t *testing.T) {
 func TestParsePromptVol(t *testing.T) {
 	ok := map[string]byte{"4": 4, "6": 6, "8": 8, "10": 10, "low": 4, "Medium": 6, "high": 8, "max": 10}
 	for in, want := range ok {
-		if got, err := parsePromptVol(in); err != nil || got != want {
+		if got, err := parsePromptVol(in, nil); err != nil || got != want {
 			t.Errorf("%q: %d %v", in, got, err)
 		}
 	}
 	for _, in := range []string{"0", "5", "15", "loud", ""} {
-		if _, err := parsePromptVol(in); err == nil {
+		if _, err := parsePromptVol(in, nil); err == nil {
 			t.Errorf("%q accepted", in)
 		}
+	}
+	// A model with its own steps: words map onto them, other numbers refused.
+	steps := []int{6, 10, 12}
+	for in, want := range map[string]byte{"6": 6, "12": 12, "low": 6, "max": 12, "medium": 10, "high": 10} {
+		if got, err := parsePromptVol(in, steps); err != nil || got != want {
+			t.Errorf("steps %q: %d %v", in, got, err)
+		}
+	}
+	if _, err := parsePromptVol("4", steps); err == nil {
+		t.Error("4 accepted on 6/10/12")
 	}
 }
 
 func TestParseWearSensitivity(t *testing.T) {
 	for in, want := range map[string]byte{"1": 1, "2": 2, "3": 3, "medium": 1, "normal": 2, "HIGH": 3} {
-		if got, err := parseWearSensitivity(in); err != nil || got != want {
+		if got, err := parseWearSensitivity(in, nil); err != nil || got != want {
 			t.Errorf("%q: %d %v", in, got, err)
 		}
 	}
 	for _, in := range []string{"0", "4", "low"} {
-		if _, err := parseWearSensitivity(in); err == nil {
+		if _, err := parseWearSensitivity(in, nil); err == nil {
 			t.Errorf("%q accepted", in)
 		}
+	}
+	items := []wearItem{{"Low", 1}, {"High", 5}}
+	if got, err := parseWearSensitivity("high", items); err != nil || got != 5 {
+		t.Errorf("model items: %d %v", got, err)
+	}
+	if got, err := parseWearSensitivity("1", items); err != nil || got != 1 {
+		t.Errorf("model items numeric: %d %v", got, err)
+	}
+	if _, err := parseWearSensitivity("3", items); err == nil {
+		t.Error("3 accepted on items 1/5")
 	}
 }
 

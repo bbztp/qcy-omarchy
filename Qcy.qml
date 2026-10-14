@@ -329,10 +329,8 @@ Singleton {
   // ------------------------------------------------------------- full state
 
   property var report: null        // parsed `qcyctl status --json`
-  // Model detection from the daemon (vendorId first, name as fallback). A unit
-  // outside the verified set runs on the shared controls only.
-  readonly property bool modelUnverified: !!(report && report.capabilities
-    && report.capabilities.verified === false)
+  // Model detection from the daemon (vendorId first, name as fallback). What a
+  // model offers is what its panel declares; `tested` is informational only.
   readonly property string productTitle: (report && report.model && report.model.productTitle)
     ? String(report.model.productTitle) : ""
   // Real product images of the connected model ({left,right,box,icon} as

@@ -584,7 +584,9 @@ writing is forbidden for every model.
 - `verified` / `tested` (same value): informational, "this tool was tested on
   hardware with this model" (only the N70). It gates nothing; a client must not
   hide a declared feature because it is false.
-- `actions` / `features`: what the model declares (see `capabilities`).
+- `actions` / `features`: what the model declares (see `capabilities`). `features` also carries `spatial` (the N70 handler) and `hearingTest`
+  (the hearing-test frames are driven; the N70 only). `anc --raw` writes the three
+  ANC bytes a model's `ancModes` lists.
 - `keyActions` maps each music-mode key id (two hex digits, as in the `keys`
   pairs) to the actions the model's panel offers for it, `[{id, name}]`; it is
   absent when the panel declares none. Call-mode keys are not listed. Present
@@ -604,7 +606,7 @@ writing is forbidden for every model.
 - `eq`: `{bands, freqs, minDb, maxDb, slots, protectedSlots}`. `bands` is 10
   (the only layout `eqApply` writes), `freqs` the panel's band centres, `minDb`
   and `maxDb` the panel's own range as signed values (the daemon itself accepts
-  +-12 dB), `slots` the effect ids the panel lists (an effect without an id takes
+  +-12 dB; the N70 reports its tested +-12), `slots` the effect ids the panel lists (an effect without an id takes
   its list position + 1) plus the personalised-listening slot, `protectedSlots`
   the personalised-listening slot and the classic curve (id 6) when listed.
   For a model other than the N70, `eqApply` accepts an explicit `slot` only
