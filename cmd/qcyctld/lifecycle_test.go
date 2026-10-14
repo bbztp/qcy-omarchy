@@ -407,7 +407,7 @@ func TestBusyBacksOffBoundedWithoutLocks(t *testing.T) {
 	if !isBusy(err) || errorCode(err) != "busy" {
 		t.Fatalf("err = %v, want busy", err)
 	}
-	if err.Error() != "earbuds are in use by another app (close the phone app and retry)" {
+	if err.Error() != busyMessage {
 		t.Fatalf("message %q", err.Error())
 	}
 	if fd.dialCount() != 3 {

@@ -176,7 +176,8 @@ off at login. Other environment variables: [docs/CLI.md](docs/CLI.md#environment
 
 | Symptom | Cause and fix |
 | --- | --- |
-| Error "earbuds are in use by another app" (`busy`) | The phone app or another client holds the earbuds. Close it or switch it off; the panel recovers on the next refresh. |
+| Error "earbuds are in use by another app" (`busy`) | The phone app or another client, on this or another device (phone, tablet, computer), holds the earbuds. Close it or switch it off; the panel recovers on the next refresh. |
+| Error "earbuds not found" (`not_found`) | The earbuds are off or out of range, or an app open on this or another device holds them: they accept one client at a time and stop advertising while connected. Close the other app, then retry. |
 | Panel shows stale data | The last known state is shown while the earbuds are busy. Right-click the button or press `r` to refresh. |
 | Preparation failed | The panel says why; use "Try again". Offline or unpublished version: install Go and see [Installation](#installation). |
 | Need logs | Daemon output is in `${XDG_STATE_HOME:-~/.local/state}/qcy-omarchy/qcyctld.log`. Run `qcyctl daemon status` for its state. |

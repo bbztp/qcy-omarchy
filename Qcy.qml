@@ -380,7 +380,7 @@ Singleton {
   // Age in seconds of a status served from the daemon's cache, or -1 when the
   // report on screen is fresh.
   property int staleAgeSeconds: -1
-  readonly property string busyMessage: tr("The earbuds are in use by another app — close it and refresh")
+  readonly property string busyMessage: tr("The earbuds are in use by another app — check that no app on this or another device (phone, tablet, computer) is open, then refresh")
   property double updatedAt: 0     // Date.now() of the last successful read
   property string busyAction: ""   // label of an in-flight setter, for UI feedback
 
@@ -1293,7 +1293,7 @@ Singleton {
     if (j && j.code === "busy" || root._isBusyText(err))
       msg = root.busyMessage
     else if (j && j.code === "not_found")
-      msg = tr("Earbuds not found (off or out of range).")
+      msg = tr("Earbuds not found: off, out of range, or an app open on this or another device is using them.")
     else if (/hold at most|bands, but/i.test((j && j.error ? j.error : "") + " " + err))
       msg = tr("Too many bands: zero some bars or choose another effect.")
     else

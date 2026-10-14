@@ -540,14 +540,14 @@ adapter again after an idle window:
 If the connect fails in a way that means another app holds the earbuds
 (`In Progress`, `Already Connected`, `Connection Refused`, `Resource Busy`), the
 daemon retries 3 times with a 1.5 s backoff, then answers
-`{"ok": false, "error": "earbuds are in use by another app (close the phone app and retry)", "code": "busy"}`.
+`{"ok": false, "error": "earbuds are in use by another app: close it on this or any other device (phone, tablet, computer) and retry", "code": "busy"}`.
 Further requests fail fast with the same answer for 3 s. `status` and `battery`
 instead return the last valid reading when one exists, with two extra fields,
 `"stale": true` and `"ageSeconds": N`; fresh readings carry neither. `code` is
 absent on every other error except `not_found`. `capabilities` is answered from the known model
 without connecting.
 
-If the scan finds nothing and no cached address answers, the daemon replies `{"ok": false, "error": "earbuds not found: powered off or out of range", "code": "not_found"}`: the earbuds are off or out of range, not held by another app. Only `In Progress`, `Already Connected`, `Connection Refused`, `Resource Busy` and `busy` count as `busy`; timeouts, aborts and `Not Connected` go on to the scan. A write that reaches the device drops the cached readings, so `status` and `battery` never answer `stale` after it.
+If the scan finds nothing and no cached address answers, the daemon replies `{"ok": false, "error": "earbuds not found: powered off, out of range, or held by an app open on this or another device (they accept one client at a time)", "code": "not_found"}`: the earbuds are off or out of range, or an app on this or another device holds them (a connected client stops advertising, so the scan cannot see them). Only `In Progress`, `Already Connected`, `Connection Refused`, `Resource Busy` and `busy` count as `busy`; timeouts, aborts and `Not Connected` go on to the scan. A write that reaches the device drops the cached readings, so `status` and `battery` never answer `stale` after it.
 
 | `cmd` | `args` | `data` |
 |---|---|---|

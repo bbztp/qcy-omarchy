@@ -19,12 +19,13 @@ const (
 
 	busyCode     = "busy"
 	notFoundCode = "not_found"
-	busyMessage  = "earbuds are in use by another app (close the phone app and retry)"
+	busyMessage  = "earbuds are in use by another app: close it on this or any other device (phone, tablet, computer) and retry"
 )
 
 // errNotFound: nothing answered the scan and no cached address worked. Distinct
-// from busy: the earbuds are powered off or out of range, not held by an app.
-var errNotFound = errors.New("earbuds not found: powered off or out of range")
+// from busy: the earbuds may be off or out of range, or held by an app on
+// another device (a connected client stops advertising, so the scan misses it).
+var errNotFound = errors.New("earbuds not found: powered off, out of range, or held by an app open on this or another device (they accept one client at a time)")
 
 type lifecycleConfig struct {
 	idle        time.Duration // 0 = never drop the link

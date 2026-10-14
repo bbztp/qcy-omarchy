@@ -119,7 +119,7 @@ The earbuds accept **one BLE client at a time**, so the daemon does not hold the
 permanently. It connects on the first request, keeps the link for an idle window
 and then disconnects, which frees the earbuds for the phone app. If another app
 holds them, requests fail with a `busy` error ("earbuds are in use by another
-app"), the panel shows the last known state marked stale, and it recovers on the
+app", on this or another device), the panel shows the last known state marked stale, and it recovers on the
 next refresh once the other app lets go.
 
 ### Environment variables

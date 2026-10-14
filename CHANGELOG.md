@@ -6,6 +6,10 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The busy and not-found errors now ask you to check whether another app, on this or another device (phone, tablet, computer), is open and holding the earbuds.
+
 ## [0.1.0] - 2026-10-14
 
 First release.
