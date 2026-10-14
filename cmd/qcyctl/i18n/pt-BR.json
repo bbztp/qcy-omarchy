@@ -236,5 +236,7 @@
   "Stopped": "Parado",
   "Start with the system": "Iniciar com o sistema",
   "Remove QCY data…": "Remover dados do QCY…",
-  "This stops the service and deletes your effects, settings, cache and the downloaded programs. The plugin itself stays installed. Continue?": "Isto para o serviço e apaga seus efeitos, ajustes, cache e os programas baixados. O plugin continua instalado. Continuar?"
+  "This stops the service and deletes your effects, settings, cache and the downloaded programs. The plugin itself stays installed. Continue?": "Isto para o serviço e apaga seus efeitos, ajustes, cache e os programas baixados. O plugin continua instalado. Continuar?",
+  "Not created yet — run the hearing test to create it": "Ainda não criada — faça o teste auditivo para criá-la",
+  "Go to the hearing test": "Ir ao teste auditivo"
 }

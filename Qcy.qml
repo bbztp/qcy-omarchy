@@ -398,6 +398,8 @@ Singleton {
     onTriggered: if (root.connected && !imageProc.running && Object.keys(root.images).length === 0) root._loadImages()
   }
   property bool loading: false
+  property double _loadingSince: 0
+  onLoadingChanged: _loadingSince = loading ? Date.now() : 0
   property string error: ""
   // True when the last failure was the daemon's "busy" answer: the earbuds
   // accept one BLE client at a time and another app (the phone) holds them.
@@ -425,7 +427,18 @@ Singleton {
   // using the adapter the read is skipped and retried on the next tick.
   // `auto` is true for the retry timer, which must keep counting its backoff.
   function refresh(auto) {
-    if (!ready) return
+    if (!ready) {
+      // Never silent for a manual refresh: say why nothing is read.
+      if (auto !== true && !_removing)
+        error = setupState === "error" && setupMessage !== "" ? setupMessage : tr("Preparing QCY…")
+      return
+    }
+    // "Reading…" with nothing running that could end it: release it.
+    if (loading && !statusProc.running && !setProc.running && _pendingSet === null
+        && _run === null && _loadingSince > 0 && Date.now() - _loadingSince > _readWatchdogMs) {
+      _refreshQueued = false
+      loading = false
+    }
     if (connected && _imageKey !== "" && Object.keys(images).length === 0
         && !imageProc.running) _loadImages()
     if (statusProc.running) {
@@ -890,10 +903,13 @@ Singleton {
     if (trimmed === "") return
     try {
       report = JSON.parse(trimmed)
+      Qt.callLater(root._maybeImportHearing)
       updatedAt = Date.now()
       if (report && report.stale === true) {
-        // Cached reading: the earbuds are held elsewhere right now.
+        // Cached reading: the earbuds are held elsewhere right now. The data
+        // is as old as the daemon says, not as old as this answer.
         var age = Math.max(0, Math.round(Number(report.ageSeconds) || 0))
+        updatedAt = Date.now() - age * 1000
         staleAgeSeconds = age
         busy = true
         error = tr("{message} (showing the last reading, from {n} s ago)", { message: busyMessage, n: age })
@@ -976,6 +992,10 @@ Singleton {
 
   // Detect state on connect/disconnect edges: clear stale reports on drop, read
   // on (re)connect.
+  onReadyChanged: {
+    if (ready) { error = ""; refresh() }
+  }
+
   onConnectedChanged: {
     retryTimer.stop()
     _retryCount = 0
@@ -985,6 +1005,7 @@ Singleton {
     } else {
       report = null
       battery = null
+      updatedAt = 0
       error = ""
       busy = false
       staleAgeSeconds = -1
@@ -1038,7 +1059,9 @@ Singleton {
       // A read killed to make way for a click always exits non-zero, so the
       // failure is only worth reporting when no setter is taking over. This
       // used to be tracked with a flag that other callbacks had to clear.
-      var failed = exitCode !== 0 && !root.settling && (root.connected || root.busy)
+      // Any failed read is reported, connected or not (a silent failure left
+      // the old "Updated N min ago" on screen).
+      var failed = exitCode !== 0 && !root.settling
       var wasBusy = failed && root._isBusyText(statusErr.text)
       if (wasBusy) {
         root.busy = true
@@ -1053,6 +1076,8 @@ Singleton {
         root.staleAgeSeconds = ageS
         root.error = tr("{message} (showing the last reading, from {n} s ago)", { message: root.busyMessage, n: ageS })
       }
+      if (failed && root.report === null) root.updatedAt = 0
+      if (failed && !wasBusy) root.staleAgeSeconds = -1
       if (failed) root._scheduleRetry(wasBusy)
       else if (exitCode === 0 && !root.busy) root._retryCount = 0
       else if (exitCode === 0 && root.staleAgeSeconds >= 0) root._scheduleRetry(true)
@@ -1338,6 +1363,37 @@ Singleton {
     }
   }
 
+  // Slot 11 (the hearing experience) active on the earbuds but no entry for it
+  // in the library: save a read-only copy of what the earbuds report, once per
+  // session. `import-device` never writes to the earbuds and refuses an
+  // existing id; --expect-slot makes it save nothing if the active slot moved.
+  property bool _hearingImportTried: false
+  function _maybeImportHearing() {
+    if (_hearingImportTried || !libraryLoaded || !ready || !connected || busy || report === null) return
+    var eq = report.eq
+    if (!eq || eq.preset === null || eq.preset === undefined || Number(eq.preset) !== 11) return
+    for (var i = 0; i < library.length; i++) {
+      // Seen present: if the user deletes it later, it is not brought back.
+      if (library[i].id === "experiencia-auditiva") { _hearingImportTried = true; return }
+    }
+    if (settling) return
+    _hearingImportTried = true
+    runOffline(["library", "import-device", "Experiência auditiva", "--expect-slot", "11", "--json"],
+      function (code, out, err) {
+        if (code === 0) { root.libraryReload(); return }
+        // Transient failure (busy, timeout, slot moved): try again later, a
+        // few times only, spaced out.
+        if (++root._hearingImportFails < 3) hearingImportRetry.restart()
+      })
+  }
+  property int _hearingImportFails: 0
+  Timer {
+    id: hearingImportRetry
+    interval: 30000
+    repeat: false
+    onTriggered: { root._hearingImportTried = false; root._maybeImportHearing() }
+  }
+
   // Reload the list. On a first, empty library, seed it once (idempotent) and
   // read again.
   function libraryReload() {
@@ -1362,6 +1418,7 @@ Singleton {
       root.library = arr
       root.libraryLoaded = true
       root.libraryLoading = false
+      root._maybeImportHearing()
     })
   }
 
@@ -1481,6 +1538,7 @@ Singleton {
 
   // Moves a user curve to the library's .trash (recoverable by hand).
   function libraryDelete(id) {
+    if (id === "experiencia-auditiva") _hearingImportTried = true
     _setOp("delete", "running", id, "", "")
     runOffline(["library", "delete", id, "--yes"], function (code, out, err) {
       if (code === 0) {

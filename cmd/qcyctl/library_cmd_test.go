@@ -643,6 +643,23 @@ func TestLibraryImportDevice(t *testing.T) {
 	}
 }
 
+func TestLibraryImportDeviceExpectSlot(t *testing.T) {
+	libEnv(t)
+	useFakeLink(t, hexBytes(t, slot0Flat))
+	if err := cmdLibrary([]string{"import-device", "Experiência auditiva", "--expect-slot", "11"}); err == nil {
+		t.Fatal("imported slot 0 although slot 11 was expected")
+	}
+	if _, err := qcycore.LoadCurve("experiencia-auditiva"); err == nil {
+		t.Fatal("entry saved despite the slot mismatch")
+	}
+	if err := cmdLibrary([]string{"import-device", "Experiência auditiva", "--expect-slot", "0"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdLibrary([]string{"import-device", "Experiência auditiva", "--expect-slot", "0"}); err == nil {
+		t.Fatal("existing entry replaced")
+	}
+}
+
 func TestLibraryUsageErrors(t *testing.T) {
 	libEnv(t)
 	for _, args := range [][]string{nil, {"nope"}, {"show"}, {"list", "extra"}, {"export", "a"}, {"import"}} {

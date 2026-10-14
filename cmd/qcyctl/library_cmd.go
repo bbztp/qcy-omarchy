@@ -29,7 +29,7 @@ const libraryUsage = `usage: qcyctl library <subcommand>
   library export <id> <file>
   library import <file>
   library seed [--json]
-  library import-device <name> [seconds]            (reads the active EQ from the earbuds)
+  library import-device <name> [seconds] [--expect-slot N]   (reads the active EQ from the earbuds; --expect-slot saves nothing unless that slot is the active one)
   library apply <id> --yes [--full-length] [--slot 0|255] [--json] [seconds]   (writes the curve to slot 255 by default = the phone app's "Personalizado" buffer, the only target allowed while slot 6 or 11 is active, and the only one that takes bands at positions 10-19 without --full-length; --slot 0 is the old test slot)
   library compose --base <id|none> --gains g1,...,g10 [--master dB] (--yes | --dry-run) [--json] [seconds]   (the phone app's layout in slot 255: your non-zero bars, then the base effect's bands)`
 
@@ -582,9 +582,17 @@ func cmdLibrarySeed(args []string) error {
 
 func cmdLibraryImportDevice(args []string) error {
 	const usage = "usage: qcyctl library import-device <name> [seconds]"
-	a, err := parseLibArgs(args, []string{"--json"}, nil)
+	a, err := parseLibArgs(args, []string{"--json"}, []string{"--expect-slot"})
 	if err != nil || len(a.pos) < 1 || len(a.pos) > 2 {
 		return errors.New(usage)
+	}
+	expect := -1
+	if v, ok := a.vals["--expect-slot"]; ok {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 0 || n > 255 {
+			return fmt.Errorf("--expect-slot: %q is not a slot number", v)
+		}
+		expect = n
 	}
 	name := a.pos[0]
 	// Validate the name (and refuse a taken id) before connecting.
@@ -600,6 +608,9 @@ func cmdLibraryImportDevice(args []string) error {
 		snap, err := dc.eqRead()
 		if err != nil {
 			return fmt.Errorf("library import-device: %w", err)
+		}
+		if expect >= 0 && snap.Slot != expect {
+			return fmt.Errorf("library import-device: the active slot is %d, not %d; nothing saved", snap.Slot, expect)
 		}
 		c, err := qcycore.SeedFromPayload(qcycore.SourceDeviceImport, snap.Slot, name, snap.Payload)
 		if err != nil {

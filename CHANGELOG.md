@@ -6,6 +6,16 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `qcyctl library import-device --expect-slot N` saves nothing unless slot N is the one active on the earbuds.
+- The Sound tab shows a "Hearing experience" placeholder (with a shortcut to the test) when the model declares the hearing test and the library has no entry for it yet; when the earbuds report that effect active and the entry is missing, the panel imports it once per session (read-only, never writes to the earbuds).
+
+### Fixed
+
+- The footer no longer shows "Updated N min ago" for old data: the age is cleared on disconnect and on a failed read, and a cached reading is reported with its age in the error line.
+- A failed read is always reported in the panel, even while the earbuds are not connected; Refresh never does nothing silently (a stuck "Reading…" is released after 25 s).
+
 ## [0.1.3] - 2026-10-14
 
 ### Changed
@@ -17,9 +27,6 @@ the project uses [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - First-time setup no longer makes the shell reload every plugin (and leave the widget missing until `omarchy restart shell`): the shell reloads on any write under `~/.config/omarchy/plugins`, so the bootstrap now downloads, builds and installs entirely in `~/.local/share/qcy-omarchy` and never writes under the plugin directory; interrupted runs leave nothing behind and a failed update keeps the installed binaries.
-
-### Fixed
-
 - The equalizer graph now follows the bands the earbuds report when the library has no entry for the effect in use (for example the hearing experience on a computer without the local backup), instead of drawing a flat line.
 
 ## [0.1.2] - 2026-10-14

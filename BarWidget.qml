@@ -934,6 +934,15 @@ Panel {
     }
   }
 
+  // The model declares the hearing test but the library has no entry for it
+  // (it only appears after a test or once the earbuds report slot 11).
+  readonly property bool hearingEntryMissing: {
+    if (!root.hearingDeclared || !Qcy.libraryLoaded) return false
+    var l = Qcy.library
+    for (var i = 0; i < l.length; i++) if (l[i].id === "experiencia-auditiva") return false
+    return true
+  }
+
   function hearingStart() {
     root.hearingConfirming = false
     root.hearingAcceptFloor = false
@@ -1009,6 +1018,7 @@ Panel {
     if (Qcy.loading) return Qcy.tr("Reading the earbuds…")
     if (!Qcy.updatedAt) return Qcy.tr("Open to read the earbuds' state")
     var s = Math.round((Date.now() - Qcy.updatedAt) / 1000)
+    // A cached reading always sets Qcy.error (with its age), handled above.
     if (s < 5) return Qcy.tr("Updated just now")
     if (s < 60) return Qcy.tr("Updated {n} s ago", { n: s })
     return Qcy.tr("Updated {n} min ago", { n: Math.round(s / 60) })
@@ -2018,6 +2028,32 @@ Panel {
                     onDeleteAsked: root.pendingDeleteId = modelData.id
                     onDeleteCancelled: root.pendingDeleteId = ""
                     onDeleteConfirmed: root.deleteEffect(modelData.id)
+                  }
+                }
+              }
+
+              // Placeholder for the hearing experience until it exists.
+              Card {
+                width: parent.width
+                visible: root.hearingEntryMissing
+                active: false
+
+                Text {
+                  width: parent.width
+                  text: Qcy.tr("Not created yet — run the hearing test to create it")
+                  color: root.muted
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+                Row {
+                  Chip {
+                    label: Qcy.tr("Go to the hearing test")
+                    onClicked: Qt.callLater(function () {
+                      scroller.contentY = Math.max(0, Math.min(
+                        scroller.contentHeight - scroller.height,
+                        hearingCard.mapToItem(scroller.contentItem, 0, 0).y))
+                    })
                   }
                 }
               }
@@ -3226,7 +3262,7 @@ Panel {
             Chip {
               label: Qcy.loading ? Qcy.tr("Reading…") : Qcy.tr("Refresh")
               active: Qcy.loading
-              onClicked: if (!Qcy.loading) Qcy.refresh()
+              onClicked: Qcy.refresh()
             }
           }
 
