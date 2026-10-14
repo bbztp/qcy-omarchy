@@ -170,6 +170,7 @@
   "The earbuds are in use by another app — check that no app on this or another device (phone, tablet, computer) is open, then refresh": "Os fones estão em uso por outro app — confira se nenhum app neste ou em outro dispositivo (celular, tablet, computador) está aberto e atualize",
   "{message} (showing the last reading, from {n} s ago)": "{message} (mostrando a última leitura, de {n} s atrás)",
   "Could not read qcyctl's output": "Não foi possível ler a saída do qcyctl",
+  "The earbuds did not answer in time": "Os fones não responderam a tempo",
   "Could not read the earbuds (code {code})": "Não foi possível ler os fones (código {code})",
   "The command failed (code {code})": "O comando falhou (código {code})",
   "Could not read the library": "Não foi possível ler a biblioteca",

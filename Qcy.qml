@@ -398,13 +398,64 @@ Singleton {
 
   // Read the full state from the earbuds. Low priority: if anything else is
   // using the adapter the read is skipped and retried on the next tick.
-  function refresh() {
+  // `auto` is true for the retry timer, which must keep counting its backoff.
+  function refresh(auto) {
     if (!ready) return
     if (connected && _imageKey !== "" && Object.keys(images).length === 0
         && !imageProc.running) _loadImages()
-    if (statusProc.running || setProc.running || batteryProc.running) return
+    if (statusProc.running) {
+      // A read that outlived its watchdog is killed with a visible error (the
+      // button is clickable again); otherwise the click shows "loading".
+      if (Date.now() - _statusStartedAt > _readWatchdogMs) _readTimedOut()
+      return
+    }
+    if (setProc.running || _pendingSet !== null || _run !== null) {
+      // A change is going out: read right after it, and say so meanwhile.
+      _refreshQueued = true
+      loading = true
+      return
+    }
+    if (batteryProc.running) { batteryProc.signal(9); batteryProc.running = false }
+    // A manual refresh always gets a full attempt, whatever the retry history.
+    if (auto !== true) _retryCount = 0
+    retryTimer.stop()
     error = ""
+    _statusKilled = false
+    _statusStartedAt = Date.now()
     statusProc.running = true
+  }
+
+  // True while the panel is open (set by the bar widget): the retry loop for a
+  // busy/stale/unreadable state only runs then.
+  property bool panelOpen: false
+  property bool _refreshQueued: false
+  property bool _statusKilled: false
+  property bool _batteryKilled: false
+  property real _statusStartedAt: 0
+  readonly property int _readWatchdogMs: 25000
+  readonly property int _periodicRetryMs: 20000
+  readonly property string _timeoutMessage: tr("The earbuds did not answer in time")
+
+  onPanelOpenChanged: {
+    if (!panelOpen) { retryTimer.stop(); return }
+    if (ready && (busy || error !== "") && !statusProc.running) refresh(true)
+  }
+
+  // A read that never ended: kill it, say so, and keep trying while open.
+  function _readTimedOut() {
+    if (statusProc.running) {
+      _statusKilled = true
+      statusProc.signal(9)
+      statusProc.running = false
+    }
+    if (batteryProc.running) {
+      _batteryKilled = true
+      batteryProc.signal(9)
+      batteryProc.running = false
+    }
+    error = _timeoutMessage
+    _scheduleRetry(false)
+    _drain()
   }
 
   // Fire a qcyctl setter with priority. The UI already shows the change
@@ -454,7 +505,9 @@ Singleton {
     _run = done ? { done: done, exit: -1, out: "", err: "", haveExit: false, haveOut: false, haveErr: false } : null
     setProc.command = [root.binary].concat(args, [String(root.scanSeconds)])
     setProc.running = true
-    if (done) setWatchdog.restart()
+    // Plain setters get a short leash; callback runs (long operations) keep 60 s.
+    setWatchdog.interval = done ? 60000 : _readWatchdogMs
+    setWatchdog.restart()
   }
 
   // A setter with a callback that never exits would pin _run, settling and the
@@ -465,6 +518,16 @@ Singleton {
     repeat: false
     onTriggered: {
       if (setProc.running) setProc.signal(9)
+      if (root._run === null) {
+        // Plain setter: onExited reports the failure; make sure the panel frees.
+        setProc.running = false
+        if (root._pendingSet === null) {
+          root.error = root._timeoutMessage
+          root.setFailed()
+        }
+        root._drain()
+        return
+      }
       root._joinRun(true)
     }
   }
@@ -787,6 +850,12 @@ Singleton {
       _startSet(s.action, s.args, s.done)
       return
     }
+    if (_refreshQueued) {
+      _refreshQueued = false
+      loading = false
+      refresh(true)
+      if (statusProc.running) return
+    }
     if (_wantBattery && connected) pollBattery()
   }
 
@@ -806,6 +875,7 @@ Singleton {
       } else {
         staleAgeSeconds = -1
         busy = false
+        error = ""
       }
     } catch (e) {
       error = tr("Could not read qcyctl's output")
@@ -833,6 +903,12 @@ Singleton {
   readonly property int _busyRetryMs: 30000
 
   function _scheduleRetry(wasBusy) {
+    if (wasBusy && panelOpen) {
+      // Panel open: keep looking every ~20 s until the earbuds are free.
+      retryTimer.interval = _periodicRetryMs
+      retryTimer.restart()
+      return
+    }
     if (wasBusy) {
       if (_retryCount >= 1) return
       _retryCount = 1
@@ -840,7 +916,13 @@ Singleton {
       retryTimer.restart()
       return
     }
-    if (_retryCount >= _retryMax) return
+    if (_retryCount >= _retryMax) {
+      if (panelOpen) {
+        retryTimer.interval = _periodicRetryMs
+        retryTimer.restart()
+      }
+      return
+    }
     _retryCount++
     retryTimer.interval = Math.min(30000, 5000 * Math.pow(2, _retryCount - 1))
     retryTimer.restart()
@@ -848,17 +930,22 @@ Singleton {
 
   // The daemon's busy error reaches qcyctl's stderr verbatim.
   function _isBusyText(text) {
-    return !!text && String(text).indexOf("in use by another app") !== -1
+    if (!text) return false
+    var t = String(text)
+    // busy: "in use by another app"; not_found: "held by an app open on this or
+    // another device". Both mean the earbuds are held elsewhere.
+    return t.indexOf("another app") !== -1 || t.indexOf("another device") !== -1
   }
 
   Timer {
     id: retryTimer
     repeat: false
     onTriggered: {
-      if (!root.connected) return
+      // While busy the BlueZ link flag says nothing about the BLE link: keep going.
+      if (!root.connected && !root.busy) return
       // Adapter busy: look again later without spending an attempt.
       if (statusProc.running || setProc.running || batteryProc.running) restart()
-      else root.refresh()
+      else root.refresh(true)
     }
   }
 
@@ -877,6 +964,8 @@ Singleton {
       busy = false
       staleAgeSeconds = -1
       _wantBattery = false
+      _refreshQueued = false
+      loading = false
       _writeNext = null   // a queued write must not run on the next connection
       _dropPending("disconnected")
     }
@@ -910,19 +999,34 @@ Singleton {
   Process {
     id: statusProc
     command: [root.binary, "status", "--json", String(root.scanSeconds)]
-    onRunningChanged: root.loading = running
+    onRunningChanged: {
+      root.loading = running || root._refreshQueued
+      if (running) statusWatchdog.restart(); else statusWatchdog.stop()
+    }
     onExited: function (exitCode) {
+      if (root._statusKilled) {
+        // Killed by the watchdog, which already reported it.
+        root._statusKilled = false
+        root._drain()
+        return
+      }
       // A read killed to make way for a click always exits non-zero, so the
       // failure is only worth reporting when no setter is taking over. This
       // used to be tracked with a flag that other callbacks had to clear.
-      var failed = exitCode !== 0 && !root.settling && root.connected
+      var failed = exitCode !== 0 && !root.settling && (root.connected || root.busy)
       var wasBusy = failed && root._isBusyText(statusErr.text)
       if (wasBusy) {
         root.busy = true
         root.error = root.busyMessage
-      } else if (failed && root.report === null) {
+      } else if (failed) {
         root.busy = false
         root.error = tr("Could not read the earbuds (code {code})", { code: exitCode })
+      }
+      if (wasBusy && root.report !== null) {
+        // Keep the last reading on screen, but say it is old.
+        var ageS = Math.max(0, Math.round((Date.now() - (root.updatedAt || Date.now())) / 1000))
+        root.staleAgeSeconds = ageS
+        root.error = tr("{message} (showing the last reading, from {n} s ago)", { message: root.busyMessage, n: ageS })
       }
       if (failed) root._scheduleRetry(wasBusy)
       else if (exitCode === 0 && !root.busy) root._retryCount = 0
@@ -937,6 +1041,13 @@ Singleton {
       id: statusErr
       waitForEnd: true
     }
+  }
+
+  Timer {
+    id: statusWatchdog
+    interval: root._readWatchdogMs
+    repeat: false
+    onTriggered: root._readTimedOut()
   }
 
   // Setter runner: only a failure triggers a re-read (the optimistic UI holds
@@ -996,7 +1107,13 @@ Singleton {
     setFailed()
     // No immediate re-read when the earbuds are held elsewhere: that would
     // clear the message and only contest the link again.
-    if (!wasBusy) refresh()
+    if (!wasBusy) {
+      var keep = error
+      refresh()
+      // refresh() clears the error; the failure must stay visible until the
+      // re-read lands.
+      if (keep !== "") error = keep
+    }
   }
 
   // Delivers a setter's result once exit and both streams have all arrived;
@@ -1024,14 +1141,25 @@ Singleton {
   Process {
     id: batteryProc
     command: [root.binary, "battery", "--json", String(root.scanSeconds)]
-    onRunningChanged: root.batteryLoading = running
+    onRunningChanged: {
+      root.batteryLoading = running
+      if (running) batteryWatchdog.restart(); else batteryWatchdog.stop()
+    }
     onExited: function (exitCode) {
+      root._batteryKilled = false
       root._drain()
     }
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root._applyBattery(text)
     }
+  }
+
+  Timer {
+    id: batteryWatchdog
+    interval: root._readWatchdogMs
+    repeat: false
+    onTriggered: root._readTimedOut()
   }
 
   // ------------------------------------------------- generic panel functions

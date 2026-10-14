@@ -1382,6 +1382,7 @@ Panel {
   // Opening the panel is the display trigger: read battery lightly now and keep
   // it fresh while open; full status re-runs only occasionally.
   onOpenedChanged: {
+    Qcy.panelOpen = opened
     if (!opened) {
       root.flushEq()
       // Never leave the find tone playing behind a closed panel.
@@ -1406,7 +1407,7 @@ Panel {
     repeat: true
     running: false
     onTriggered: {
-      if (root.opened && Qcy.connected) Qcy.pollBattery()
+      if (root.opened && (Qcy.connected || Qcy.busy)) Qcy.pollBattery()
     }
   }
 
@@ -1416,7 +1417,7 @@ Panel {
     repeat: true
     running: false
     onTriggered: {
-      if (root.opened && Qcy.connected) Qcy.refresh()
+      if (root.opened && (Qcy.connected || Qcy.busy)) Qcy.refresh()
     }
   }
 
@@ -1445,7 +1446,11 @@ Panel {
       // Drop the optimistic master gain; the refresh Qcy starts re-reads the
       // real value, which the cleared signature lets through.
       root._masterGainSig = ""
-      Qcy.refresh()
+      // The optimistic change did not happen: show the real state again.
+      root.optimistic = ({})
+      // Keep a failure message visible: a refresh would clear it (and, when the
+      // earbuds are held elsewhere, only contest the link again).
+      if (Qcy.error === "") Qcy.refresh()
     }
     function onConnectedChanged() {
       root.optimistic = ({})

@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/bbztp/qcy-omarchy/internal/protocol"
 )
 
 // fakeDialer / fakeSession stand in for BlueZ: every query frame is answered
@@ -80,6 +82,10 @@ type fakeSession struct {
 	gate   chan struct{} // when non-nil, WriteCmd blocks until it is closed
 
 	active, maxActive int32
+
+	silent  bool // queries are never answered (link wedged by another client)
+	muteANC bool // only the ANC query goes unanswered
+	battErr bool // the battery characteristic read fails
 }
 
 func (s *fakeSession) WriteCmd(pkt []byte) error {
@@ -98,6 +104,9 @@ func (s *fakeSession) WriteCmd(pkt []byte) error {
 	// pkt = FF <len> <op> <plen> <params>; a query is op 0xFE with the asked opcode.
 	if len(pkt) >= 5 && pkt[2] == 0xFE {
 		op := pkt[4]
+		if s.silent || (s.muteANC && op == protocol.OpANC) {
+			return nil
+		}
 		s.notify(buildFrame(op, []byte{1, 2, 3}))
 	}
 	return nil
@@ -107,6 +116,9 @@ func (s *fakeSession) Has(k charKind) bool { return k == charBattery || k == cha
 func (s *fakeSession) Read(k charKind, buf []byte) (int, error) {
 	switch k {
 	case charBattery:
+		if s.battErr {
+			return 0, errors.New("Not Connected")
+		}
 		return copy(buf, []byte{80, 70, 60}), nil
 	case charVersion:
 		return copy(buf, []byte{1, 2, 3}), nil
@@ -770,5 +782,55 @@ func TestShutdownRefusesNewLink(t *testing.T) {
 	}
 	if n := fd.dialCount(); n != 0 {
 		t.Fatalf("dials=%d, want 0", n)
+	}
+}
+
+// A session whose every read and query fails (another client took the
+// earbuds) must not report success with an empty status: the request fails
+// not_found and the dead session is dropped so the next one reconnects.
+func TestStatusDeadSessionIsNotFoundAndDropsSession(t *testing.T) {
+	fd := &fakeDialer{}
+	fd.hook = func(s *fakeSession) { s.silent, s.battErr = true, true }
+	d, _, _ := testDaemon(fd, time.Hour)
+	start := time.Now()
+	v, err := d.handleRequest(request{Cmd: "status"})
+	if err == nil {
+		t.Fatalf("status succeeded with %v", v)
+	}
+	if errorCode(err) != notFoundCode {
+		t.Fatalf("code=%q err=%v", errorCode(err), err)
+	}
+	if d.isConnected() {
+		t.Fatal("dead session still marked connected")
+	}
+	if fd.closed() != 1 {
+		t.Fatalf("closed sessions=%d", fd.closed())
+	}
+	// Aborted after the battery and ANC queries, not after the whole sweep.
+	if el := time.Since(start); el > 12*time.Second {
+		t.Fatalf("status took %v", el)
+	}
+	// The next request dials again instead of reusing the dead session.
+	fd.hook = nil
+	if rep := mustStatus(t, d); rep["battery"] == nil || fd.dialCount() != 2 {
+		t.Fatalf("no recovery: dials=%d rep=%v", fd.dialCount(), rep)
+	}
+}
+
+// One essential field is enough: a partial status stays a success and keeps
+// the session.
+func TestStatusPartialBatteryOnlyStaysSuccess(t *testing.T) {
+	fd := &fakeDialer{}
+	fd.hook = func(s *fakeSession) { s.muteANC = true }
+	d, _, _ := testDaemon(fd, time.Hour)
+	rep := mustStatus(t, d)
+	if rep["battery"] == nil {
+		t.Fatalf("no battery in %v", rep)
+	}
+	if _, ok := rep["anc"]; ok {
+		t.Fatal("anc present without an answer")
+	}
+	if !d.isConnected() {
+		t.Fatal("partial status dropped the session")
 	}
 }

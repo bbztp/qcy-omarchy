@@ -6,6 +6,14 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-14
+
+### Fixed
+
+- A status read that gets no answer at all (no battery and no ANC, typically because another app took the earbuds and left a dead session) now fails with `not_found` (or `busy`) and drops the session so the next request reconnects, instead of reporting an empty success; the sweep also aborts after the first two queries instead of waiting out every toggle.
+- The panel now says so when the earbuds cannot be read because another app (on this or another device) holds them, instead of silently showing the last reading; a manual refresh always runs, and a failed change is reverted with the reason shown.
+- While the panel is open it keeps retrying (about every 20 s) when the earbuds are held by another app or unreadable, so it reconnects by itself once the other app is closed; a read or change that never answers is cut off with a visible error instead of leaving the panel unresponsive.
+
 ## [0.1.1] - 2026-10-14
 
 ### Changed
@@ -30,5 +38,6 @@ First release.
 - Automatic setup: the plugin downloads the matching `qcyctl` and `qcyctld` release, verifies its SHA-256, and installs it inside the plugin's own `.bin` directory, so removing the plugin removes the programs (falls back to building from source with Go); the daemon starts on demand, exits by itself when its executable is removed, and can optionally run as a systemd user service.
 - Features follow each model's own panel: nothing is blocked because a model was not tested on hardware (the panel only says so). Prompt volume steps, wear sensitivity items, noise modes and equalizer geometry come from the model; features whose encoding is not understood are listed under "Not available on this model".
 
+[0.1.2]: https://github.com/bbztp/qcy-omarchy/releases/tag/v0.1.2
 [0.1.1]: https://github.com/bbztp/qcy-omarchy/releases/tag/v0.1.1
 [0.1.0]: https://github.com/bbztp/qcy-omarchy/releases/tag/v0.1.0

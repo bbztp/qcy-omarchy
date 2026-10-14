@@ -1035,8 +1035,27 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 	d.waitProbe(8 * time.Second)
 
 	rep := map[string]interface{}{}
-	if left, right, box, lc, rc, cc, raw, err := d.readBatteryRaw(); err == nil {
+	left, right, box, lc, rc, cc, raw, battErr := d.readBatteryRaw()
+	if battErr == nil {
 		rep["battery"] = batteryMap(left, right, box, lc, rc, cc, raw)
+	}
+	// ANC is the other essential field (statusValid). Asked right after the
+	// battery so a dead link is noticed after ~1.5 s, not after the whole sweep.
+	var ancErr error
+	if p, err := d.query(protocol.OpANC, 1500*time.Millisecond); err != nil {
+		ancErr = err
+	} else if len(p) >= 3 {
+		rep["anc"] = map[string]interface{}{"modeRaw": int(p[0]), "sceneRaw": int(p[1]), "value": int(p[2])}
+	}
+	if battErr != nil && ancErr != nil {
+		// Neither essential field answered: the session is dead (typically
+		// another client took the earbuds). Drop it so the next request
+		// reconnects or scans instead of reusing it until the idle window.
+		d.markDisconnected()
+		if looksBusy(battErr) || looksBusy(ancErr) {
+			return nil, &busyError{cause: ancErr}
+		}
+		return nil, errNotFound
 	}
 	if fw := d.readVersionRaw(); len(fw) > 0 {
 		rep["firmwareBytes"] = bytesJSON(fw)
@@ -1078,11 +1097,6 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 				rep["wearSensitivity"] = int(p[0])
 			}
 		}
-	}
-
-	// ANC
-	if p, err := d.query(protocol.OpANC, 1500*time.Millisecond); err == nil && len(p) >= 3 {
-		rep["anc"] = map[string]interface{}{"modeRaw": int(p[0]), "sceneRaw": int(p[1]), "value": int(p[2])}
 	}
 
 	// Toggles
