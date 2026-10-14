@@ -11,3 +11,6 @@
 
 # Release output
 /dist/
+
+# Local assistant notes (contain the forbidden-terms list)
+CLAUDE.local.md
