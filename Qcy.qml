@@ -98,8 +98,10 @@ Singleton {
   // ----------------------------------------------------------------- setup
   //
   // The plugin prepares its own binaries on first use (scripts/bootstrap.sh
-  // downloads the matching release, or builds with Go). They live in the user's
-  // data directory, never inside the plugin directory, which the shell watches.
+  // downloads the matching release, or builds with Go). They live in the hidden
+  // <plugin dir>/.bin so `omarchy plugin remove` deletes them with the plugin
+  // (the shell ignores writes under dot-directories; ~/.local/share/qcy-omarchy/bin
+  // is the fallback when the plugin directory is not writable).
   //
   // setupState: "checking" (looking for a matching qcyctl), "preparing"
   // (bootstrap running), "ready", "error". No other process of the plugin calls
@@ -107,16 +109,19 @@ Singleton {
   property string setupState: "checking"
   property string setupStep: ""        // last STEP text from the bootstrap
   property string setupMessage: ""     // error text when setupState is "error"
+  property string _bootstrapBinary: "" // qcyctl path the bootstrap reported (BIN line)
   readonly property bool ready: setupState === "ready"
 
   readonly property string _home: Quickshell.env("HOME")
   readonly property string dataDir: (Quickshell.env("XDG_DATA_HOME")
     ? Quickshell.env("XDG_DATA_HOME") : (_home + "/.local/share")) + "/qcy-omarchy"
-  readonly property string _managedBinary: dataDir + "/bin/qcyctl"
+  readonly property string _pluginBinary: pluginDir + "/.bin/qcyctl"
+  readonly property string _dataBinary: dataDir + "/bin/qcyctl"
 
-  // The binary in use: QCYCTL, else the managed copy; after the check it
-  // becomes whichever matching candidate was found (~/.local/bin, PATH).
-  property string binary: Quickshell.env("QCYCTL") || _managedBinary
+  // The binary in use: QCYCTL, else the plugin's own copy; after the check it
+  // becomes whichever matching candidate was found (old data dir copy,
+  // ~/.local/bin, PATH).
+  property string binary: Quickshell.env("QCYCTL") || _pluginBinary
 
   // Directory the plugin was loaded from.
   readonly property string pluginDir: {
@@ -168,6 +173,8 @@ Singleton {
       var sp = rest.indexOf(" ")
       var text = sp >= 0 ? rest.substring(sp + 1) : rest
       if (text !== "") setupStep = text
+    } else if (l.indexOf("BIN /") === 0) {
+      _bootstrapBinary = l.substring(4)
     } else if (l.indexOf("ERROR ") === 0) {
       setupMessage = l.substring(6)
     }
@@ -203,7 +210,7 @@ Singleton {
       + "*) c=\"$(command -v \"$c\" 2>/dev/null)\" || continue ;; esac; "
       + "o=\"$(\"$c\" version 2>/dev/null | head -n 1)\"; "
       + "if [ \"$o\" = \"qcyctl $v\" ]; then printf '%s\\n' \"$c\"; exit 0; fi; done; exit 1",
-      "qcyprobe", root.pluginVersion, root._managedBinary,
+      "qcyprobe", root.pluginVersion, root._pluginBinary, root._dataBinary,
       root._home + "/.local/bin/qcyctl", "qcyctl"]
     stdout: StdioCollector {
       waitForEnd: true
@@ -223,7 +230,7 @@ Singleton {
     }
     onExited: function (exitCode) {
       if (exitCode === 0) {
-        root._setupReady(root._managedBinary)
+        root._setupReady(root._bootstrapBinary !== "" ? root._bootstrapBinary : root._pluginBinary)
       } else {
         root.setupState = "error"
         if (root.setupMessage === "")

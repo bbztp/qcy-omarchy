@@ -134,9 +134,15 @@ func TestResolveDaemonBinaryOrder(t *testing.T) {
 		t.Fatalf("share: %q", got)
 	}
 	d.lookPath = func(string) (string, error) { return "/usr/bin/qcyctld", nil }
+	if got, _ := d.resolveDaemonBinary(); got != share {
+		t.Fatalf("share must beat PATH: %q", got)
+	}
+	delete(f.execs, share)
+	delete(f.execs, local)
 	if got, _ := d.resolveDaemonBinary(); got != "/usr/bin/qcyctld" {
 		t.Fatalf("PATH: %q", got)
 	}
+	f.install(share)
 	f.install(next)
 	if got, _ := d.resolveDaemonBinary(); got != next {
 		t.Fatalf("next to executable: %q", got)
@@ -364,6 +370,9 @@ func TestInstallServiceWritesResolvedUnitAndSequence(t *testing.T) {
 	b, err := os.ReadFile(d.unitPath)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if want := "ConditionPathExists=" + strings.ReplaceAll(bin, "%", "%%") + "\n"; !strings.Contains(string(b), want) {
+		t.Fatalf("unit lacks %q:\n%s", want, b)
 	}
 	want := `ExecStart="` + strings.NewReplacer("$", "$$", "%", "%%").Replace(bin) + `"`
 	if !strings.Contains(string(b), want+"\n") {

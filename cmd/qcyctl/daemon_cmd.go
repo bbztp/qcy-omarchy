@@ -240,8 +240,9 @@ func spawnDetached(bin, logPath string) (int, <-chan struct{}, error) {
 	return cmd.Process.Pid, done, nil
 }
 
-// resolveDaemonBinary finds qcyctld: next to this executable, then PATH, then
-// the install locations.
+// resolveDaemonBinary finds qcyctld: next to this executable (the plugin's own
+// .bin directory when qcyctl runs from there), then the managed data directory,
+// ~/.local/bin and finally PATH.
 func (d *daemonDeps) resolveDaemonBinary() (string, error) {
 	var tried []string
 	if exe, err := d.executable(); err == nil {
@@ -254,10 +255,6 @@ func (d *daemonDeps) resolveDaemonBinary() (string, error) {
 			return p, nil
 		}
 	}
-	if p, err := d.lookPath("qcyctld"); err == nil && p != "" {
-		return p, nil
-	}
-	tried = append(tried, "$PATH")
 	for _, p := range []string{
 		filepath.Join(d.home, ".local", "share", "qcy-omarchy", "bin", "qcyctld"),
 		filepath.Join(d.home, ".local", "bin", "qcyctld"),
@@ -267,6 +264,10 @@ func (d *daemonDeps) resolveDaemonBinary() (string, error) {
 			return p, nil
 		}
 	}
+	if p, err := d.lookPath("qcyctld"); err == nil && p != "" {
+		return p, nil
+	}
+	tried = append(tried, "$PATH")
 	return "", fmt.Errorf("qcyctld not found (looked in: %s)", strings.Join(tried, ", "))
 }
 
@@ -454,7 +455,10 @@ func parseJSONFlag(args []string, usage string) (bool, error) {
 // unitContents renders the user unit for the resolved qcyctld path.
 func unitContents(bin string) string {
 	q := strings.NewReplacer(`\`, `\\`, `"`, `\"`, `%`, `%%`, `$`, `$$`).Replace(bin)
-	return "[Unit]\nDescription=" + unitDescription + "\n\n[Service]\nType=simple\n" +
+	// The condition keeps a removed plugin (its binaries live inside the plugin
+	// directory) from leaving a unit that fails in a restart loop.
+	cond := strings.NewReplacer(`%`, `%%`).Replace(bin)
+	return "[Unit]\nDescription=" + unitDescription + "\nConditionPathExists=" + cond + "\n\n[Service]\nType=simple\n" +
 		unitIdleComments +
 		"ExecStart=\"" + q + "\"\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
 }

@@ -3,6 +3,10 @@
 /cmd/qcyctl/qcyctl
 /cmd/qcyctld/qcyctld
 
+# Binaries prepared by scripts/bootstrap.sh inside the plugin directory
+/.bin/
+/bin/
+
 # Build/test artifacts
 *.test
 *.out

@@ -72,9 +72,11 @@ or run `omarchy bar move io.github.bbztp.qcy --section right`.
 
 **First open.** The plugin prepares everything itself, and the panel shows
 "Preparing QCY…" meanwhile. It downloads the `qcyctl`/`qcyctld` release matching
-its version, checks its SHA-256 and installs both to
-`~/.local/share/qcy-omarchy/bin`. Nothing runs as root and nothing is executed
-before the checksum matches.
+its version, checks its SHA-256 and installs both to the plugin's own hidden
+`.bin` directory (`~/.config/omarchy/plugins/io.github.bbztp.qcy/.bin`), so
+removing the plugin removes them; if that directory is not writable they go to
+`~/.local/share/qcy-omarchy/bin` instead. Nothing runs as root and nothing is
+executed before the checksum matches.
 
 If no release can be downloaded (offline, unpublished version), the plugin builds
 from source instead. That needs Go (`sudo pacman -S go`) and the repository's
@@ -182,9 +184,15 @@ off at login. Other environment variables: [docs/CLI.md](docs/CLI.md#environment
 
 ## Uninstall
 
-- Settings > Daemon > "Remove QCY data…" stops the service and deletes
-  `~/.local/share/qcy-omarchy`, `~/.config/qcy-omarchy` and `~/.cache/qcy-omarchy`.
-- Then run `omarchy plugin remove io.github.bbztp.qcy`.
+- If you turned on Settings > Daemon > "Start with the system", turn it off
+  first (or run `qcyctl daemon uninstall-service`): the unit points into the
+  plugin directory.
+- Optional: Settings > Daemon > "Remove QCY data…" stops the service and deletes
+  `~/.local/share/qcy-omarchy`, `~/.config/qcy-omarchy` and `~/.cache/qcy-omarchy`
+  (your effects, settings, backups and cache; the program is not touched).
+- Then run `omarchy plugin remove io.github.bbztp.qcy`. It deletes the plugin
+  directory, including the binaries in `.bin`; a still-running `qcyctld` notices
+  that its executable is gone and exits within about 30 s.
 - Remove the `{ "id": "io.github.bbztp.qcy" }` entry from `shell.json`.
 
 For a development install, `make uninstall` disables and removes the

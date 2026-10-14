@@ -69,15 +69,19 @@ omarchy plugin add https://github.com/bbztp/qcy-omarchy --enable
 
 Open the panel: it shows "Preparing QCY..." while the bootstrap downloads and
 verifies the release, then the earbuds' state. Check
-`~/.local/share/qcy-omarchy/bin/qcyctl version` prints `qcyctl <version>`.
+`~/.config/omarchy/plugins/io.github.bbztp.qcy/.bin/qcyctl version` prints
+`qcyctl <version>`.
 
 ```sh
 omarchy plugin update io.github.bbztp.qcy     # after a new release
 omarchy plugin remove io.github.bbztp.qcy
 ```
 
-Settings > Daemon > "Remove QCY data..." deletes the data, config and cache
-directories before removing the plugin.
+The binaries live inside the plugin directory (`.bin/`, git-ignored), so
+`plugin remove` deletes them with the plugin; a running `qcyctld` notices that
+its executable is gone and exits. If "Start with the system" is on, turn it off
+first (or run `qcyctl daemon uninstall-service`). Settings > Daemon >
+"Remove QCY data..." deletes the data, config and cache directories.
 
 ## 4. Submit to the marketplace
 
@@ -127,8 +131,8 @@ so a scanner will flag the following. All of it is deliberate:
   qcy-omarchy_<version>_linux_<arch>.tar.gz and SHA256SUMS from this
   repository's own GitHub release (https only, host restricted to github.com
   and *.githubusercontent.com), verifies the SHA-256, checks the files are
-  ELF binaries for this architecture, and installs them to
-  ~/.local/share/qcy-omarchy/bin. Nothing is executed before the checksum
+  ELF binaries for this architecture, and installs them to the plugin's own
+  .bin directory (~/.local/share/qcy-omarchy/bin if that is not writable). Nothing is executed before the checksum
   matches. The release is built by .github/workflows/release.yml from the
   tagged source (static, -trimpath).
 - Fallback: if no release can be downloaded, it runs `go build` on the cloned
@@ -136,9 +140,9 @@ so a scanner will flag the following. All of it is deliberate:
 - Optional systemd --user unit: the daemon can be enabled at login from
   Settings > Daemon; it is off until the user turns it on. The unit lives in
   ~/.config/systemd/user.
-- No sudo, no root, no system paths. No `curl | sh`. Writes only under
-  ~/.local/share, ~/.config and ~/.cache in a qcy-omarchy directory, and
-  "Remove QCY data..." deletes them.
+- No sudo, no root, no system paths. No `curl | sh`. Writes only inside the
+  plugin directory and under ~/.local/share, ~/.config and ~/.cache in a
+  qcy-omarchy directory; "Remove QCY data..." deletes the latter.
 - Network: only the release download above and, on demand, product pictures
   from img.qcymall.com (size-limited, type-checked, can be turned off with
   `qcyctl model images off`).

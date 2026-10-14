@@ -235,5 +235,5 @@
   "Stopped": "Parado",
   "Start with the system": "Iniciar com o sistema",
   "Remove QCY data…": "Remover dados do QCY…",
-  "This stops the service and deletes the downloaded program, your effects and settings, and the cache. Continue?": "Isto para o serviço e apaga o programa baixado, seus efeitos e ajustes, e o cache. Continuar?"
+  "This stops the service and deletes your effects, settings and cache. The plugin itself stays installed. Continue?": "Isto para o serviço e apaga seus efeitos, ajustes e cache. O plugin continua instalado. Continuar?"
 }

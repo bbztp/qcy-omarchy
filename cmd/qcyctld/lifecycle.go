@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -462,4 +463,42 @@ func (d *daemon) staleFor(cmd string) (map[string]interface{}, bool) {
 	out["stale"] = true
 	out["ageSeconds"] = int(age.Seconds())
 	return out, true
+}
+
+// ---- executable watch ----
+
+// The binaries live inside the plugin directory, which `omarchy plugin remove`
+// deletes without any hook, and which an update replaces. A daemon whose
+// executable is gone must not linger holding the socket (and, when busy, the
+// earbuds): it exits once idle and the next request starts the current one.
+
+const exeWatchEvery = 30 * time.Second
+
+// executableGone reports whether the running binary was deleted or replaced.
+func executableGone() bool {
+	p, err := os.Readlink("/proc/self/exe")
+	if err != nil {
+		return false
+	}
+	return strings.HasSuffix(p, " (deleted)")
+}
+
+// shouldExitForGoneExecutable is true when the executable is gone and no
+// request or background hold is in flight.
+func (d *daemon) shouldExitForGoneExecutable(gone func() bool) bool {
+	d.mu.Lock()
+	busy := d.inflight > 0
+	d.mu.Unlock()
+	return !busy && gone()
+}
+
+// watchExecutable calls stop once, on the first tick at which the executable is
+// gone and the daemon is idle.
+func (d *daemon) watchExecutable(tick <-chan time.Time, gone func() bool, stop func()) {
+	for range tick {
+		if d.shouldExitForGoneExecutable(gone) {
+			stop()
+			return
+		}
+	}
 }

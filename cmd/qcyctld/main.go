@@ -2358,6 +2358,12 @@ func main() {
 		_ = l.Close()
 	}()
 
+	// Exit (releasing BLE and the socket) when the binary was removed or
+	// replaced underneath the daemon, e.g. by `omarchy plugin remove`.
+	exeTick := time.NewTicker(exeWatchEvery)
+	defer exeTick.Stop()
+	go d.watchExecutable(exeTick.C, executableGone, func() { _ = l.Close() })
+
 	for {
 		conn, err := l.Accept()
 		if err != nil {

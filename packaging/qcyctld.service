@@ -1,5 +1,6 @@
 [Unit]
 Description=QCY earbuds BLE daemon (qcyctld)
+ConditionPathExists=%h/.local/bin/qcyctld
 
 [Service]
 Type=simple

@@ -85,8 +85,9 @@ payload of the currently **active** slot, as read from the earbuds, is saved to
 
 Commands that talk to the earbuds start `qcyctld` on demand when its socket does
 not answer: through `qcyctld.service` if that user unit is enabled, otherwise by
-launching `qcyctld` detached (looked up next to `qcyctl`, then in `PATH`, then
-`~/.local/share/qcy-omarchy/bin` and `~/.local/bin`). Its output goes to
+launching `qcyctld` detached (looked up next to `qcyctl` — the plugin's
+`.bin` directory for the plugin's own copy — then in
+`~/.local/share/qcy-omarchy/bin`, `~/.local/bin` and finally `PATH`). Its output goes to
 `${XDG_STATE_HOME:-~/.local/state}/qcy-omarchy/qcyctld.log` (truncated above
 1 MiB); concurrent starters are serialised with a lock. Offline commands (`i18n`,
 `library list/show/...`, `model`, `hearing plan|result`, `version`) never start
@@ -104,7 +105,13 @@ qcyctl version [--json]          # also: qcyctld --version
 ```
 
 [`packaging/qcyctld.service`](../packaging/qcyctld.service) is a static example;
-`install-service` writes the same unit with the real `ExecStart=` path.
+`install-service` writes the same unit with the real `ExecStart=` path and a
+`ConditionPathExists=` on it, so a removed plugin does not leave a unit failing
+in a restart loop.
+
+`qcyctld` exits by itself (releasing the earbuds and the socket) when its own
+executable was deleted or replaced, checked every 30 s and only while no request
+is in flight; the next command starts the current binary.
 
 ### One client at a time
 

@@ -8,6 +8,12 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `qcyctl` and `qcyctld` now live in the plugin's own `.bin` directory, so `omarchy plugin remove` deletes them with the plugin; the old `~/.local/share/qcy-omarchy/bin` is only a fallback when the plugin directory is not writable. The build fallback no longer leaves a Go cache under `~/.cache`.
+- `qcyctld` exits by itself when its executable was deleted or replaced (checked every 30 s, never during a request).
+- The generated `qcyctld.service` carries `ConditionPathExists=` on the binary, so a removed plugin does not leave a failing unit.
+- Daemon lookup order: next to `qcyctl`, then `~/.local/share/qcy-omarchy/bin`, `~/.local/bin`, `PATH`.
+- "Remove QCY data…" no longer mentions the program: it removes data, settings and cache only.
+
 - Features follow each model's own panel: nothing is blocked because a model was not tested on hardware (the panel only says so). Prompt volume steps, wear sensitivity items, noise modes and equalizer geometry come from the model; features whose encoding is not understood are listed under "Not available on this model".
 - `qcyctl prompt-vol` and `wear-sensitivity` validate against the model's own values; `qcyctl anc --raw` writes the three ANC bytes a model's panel lists.
 

@@ -3159,7 +3159,7 @@ Panel {
               Text {
                 width: parent.width
                 visible: root.removeConfirming
-                text: Qcy.tr("This stops the service and deletes the downloaded program, your effects and settings, and the cache. Continue?")
+                text: Qcy.tr("This stops the service and deletes your effects, settings and cache. The plugin itself stays installed. Continue?")
                 color: root.foreground
                 font.family: root.textFamily
                 font.pixelSize: Style.font.caption

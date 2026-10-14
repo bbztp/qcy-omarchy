@@ -2,16 +2,23 @@
 # Prepare qcyctl + qcyctld for the plugin: download the release matching the
 # plugin version (checksum verified), or build from source with Go.
 #
-# Binaries go to ${XDG_DATA_HOME:-~/.local/share}/qcy-omarchy/bin, never into
-# the plugin directory (the shell reloads the plugin on every write there).
+# Binaries go to <plugin dir>/.bin, so `omarchy plugin remove` (which just
+# deletes the plugin directory) removes them too. The directory is hidden on
+# purpose: the shell reloads a plugin on every write under it except for paths
+# whose first component starts with a dot. When the plugin directory is not
+# writable they go to ${XDG_DATA_HOME:-~/.local/share}/qcy-omarchy/bin instead.
+# The version marker, the lock, the staging directory and the Go build cache
+# (build fallback) all live next to the binaries or in a staging directory that
+# is removed on exit; nothing is left under ~/.cache.
 #
 # Progress is one line per step on stdout:
 #   STEP <key> <text>      keys: check, download, verify, install, build, done
+#   BIN <path>             the qcyctl that is ready (before the final done)
 #   ERROR <text>           final failure (exit status is non-zero)
 #
 # Overrides (tests, mirrors):
 #   QCY_RELEASE_BASE_URL  directory URL holding the tarball and SHA256SUMS
-#   QCY_DATA_DIR          replaces ${XDG_DATA_HOME}/qcy-omarchy
+#   QCY_DATA_DIR          replaces ${XDG_DATA_HOME}/qcy-omarchy (fallback location only)
 #   QCY_SRC_DIR           source tree for the build fallback (default: repo root)
 #   QCY_BUILD=1           skip the download and build from source
 set -euo pipefail
@@ -31,8 +38,11 @@ case "${version}" in
 esac
 
 data_dir="${QCY_DATA_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/qcy-omarchy}"
-bin_dir="${data_dir}/bin"
-cache_home="${XDG_CACHE_HOME:-${HOME}/.cache}/qcy-omarchy"
+bin_dir="${repo_dir}/.bin"
+if ! { [ -d "${bin_dir}" ] || { [ -w "${repo_dir}" ] && mkdir -p "${bin_dir}" 2>/dev/null; }; } \
+   || [ ! -w "${bin_dir}" ]; then
+  bin_dir="${data_dir}/bin"
+fi
 
 case "$(uname -m)" in
   x86_64|amd64) arch=amd64; elf_machine="3e00" ;;
@@ -41,11 +51,11 @@ case "$(uname -m)" in
 esac
 
 mkdir -p "${bin_dir}"
-chmod 0700 "${data_dir}" 2>/dev/null || true
+[ "${bin_dir}" != "${data_dir}/bin" ] || chmod 0700 "${data_dir}" 2>/dev/null || true
 
 # One bootstrap at a time; a second waits and then finds everything ready.
 if command -v flock >/dev/null 2>&1; then
-  exec 9>"${data_dir}/.bootstrap.lock"
+  exec 9>"${bin_dir}/.bootstrap.lock"
   flock -w 300 9 || fail "another preparation is still running"
 fi
 
@@ -56,11 +66,12 @@ ready() {
 
 step check "Checking the installed version"
 if [ "${QCY_BUILD:-0}" != 1 ] && ready; then
+  printf 'BIN %s\n' "${bin_dir}/qcyctl"
   step done "Ready (${version})"
   exit 0
 fi
 
-tmp="$(mktemp -d "${data_dir}/.bootstrap.XXXXXX")"
+tmp="$(mktemp -d "${bin_dir}/.bootstrap.XXXXXX")"
 chmod 0700 "${tmp}"
 trap 'rm -rf "${tmp}"' EXIT
 
@@ -124,7 +135,7 @@ download() {
 }
 
 build() {
-  local out="${tmp}/build" cache="${cache_home}/go-build"
+  local out="${tmp}/build" cache="${tmp}/go-build"
   [ -d "${src_dir}/cmd/qcyctl" ] || fail "no release available and no source here; install Go and clone the repository to build"
   command -v go >/dev/null 2>&1 || fail "no release available; install Go (pacman -S go) and try again"
   mkdir -p "${out}" "${cache}"
@@ -142,4 +153,5 @@ fi
 if [ "${done_ok}" = 0 ]; then
   build
 fi
+printf 'BIN %s\n' "${bin_dir}/qcyctl"
 step done "Ready (${version})"
