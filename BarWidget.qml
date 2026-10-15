@@ -697,6 +697,9 @@ Panel {
     root.saveOpen = false
     root.menuId = ""
     root.pendingDeleteId = ""
+    // The new tab starts at its top.
+    wheelGlide.stop()
+    scroller.contentY = 0
     if (root.tab === 1) {
       Qcy.libraryClearOp()
       Qcy.libraryReload()
@@ -1751,7 +1754,8 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(420))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight)
+    contentHeight: panel.fittedContentHeight(column.implicitHeight
+      + (Qcy.ready ? tabBar.height + Style.space(14) : 0))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -1791,6 +1795,35 @@ Panel {
         else if (t === "3") root.tab = 2
       }
 
+      // ---------- Tabs ----------
+      // Status (device + noise mode), Sound (live curve + library) and
+      // Settings (everything else). Short tabs keep every section reachable.
+      // Pinned above the scrolling content so a tab switch never needs a
+      // scroll back up.
+      Row {
+        id: tabBar
+        visible: Qcy.ready
+        height: visible ? implicitHeight : 0
+        anchors.top: parent.top
+        anchors.left: parent.left
+        width: parent.width - scroller.gutter
+        spacing: Style.space(6)
+
+        Repeater {
+          model: [
+            { label: Qcy.tr("Status"), index: 0 },
+            { label: Qcy.tr("Sound"), index: 1 },
+            { label: Qcy.tr("Settings"), index: 2 }
+          ]
+          TabButton {
+            required property var modelData
+            label: modelData.label
+            index: modelData.index
+            tabWidth: (tabBar.width - Style.space(6) * 2) / 3
+          }
+        }
+      }
+
       // The card clamps its height to the space between the bar and the
       // bottom of the screen, but the content used to be a plain Column pinned
       // to that clamped box: on a short screen the tail spilled past the card
@@ -1798,7 +1831,11 @@ Panel {
       // reachable, and the thin bar on the right says there is more below.
       Flickable {
         id: scroller
-        anchors.fill: parent
+        anchors.top: tabBar.bottom
+        anchors.topMargin: Qcy.ready ? Style.space(14) : 0
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
         contentWidth: width
         contentHeight: column.implicitHeight
         clip: true
@@ -1893,30 +1930,6 @@ Panel {
               visible: Qcy.setupState === "error"
               label: Qcy.tr("Try again")
               onClicked: Qcy.setupRetry()
-            }
-          }
-
-          // ---------- Tabs ----------
-          // Status (device + noise mode), Sound (live curve + library) and
-          // Settings (everything else). Short tabs keep every section reachable.
-          Row {
-            id: tabBar
-            visible: Qcy.ready
-            width: parent.width
-            spacing: Style.space(6)
-
-            Repeater {
-              model: [
-                { label: Qcy.tr("Status"), index: 0 },
-                { label: Qcy.tr("Sound"), index: 1 },
-                { label: Qcy.tr("Settings"), index: 2 }
-              ]
-              TabButton {
-                required property var modelData
-                label: modelData.label
-                index: modelData.index
-                tabWidth: (tabBar.width - Style.space(6) * 2) / 3
-              }
             }
           }
 

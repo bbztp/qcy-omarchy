@@ -15,6 +15,7 @@ the project uses [Semantic Versioning](https://semver.org/).
 - Upgrading from 0.1.5: a daemon left by 0.1.5 is stopped (waiting for the process to exit) and an enabled 0.1.5 `qcyctld.service` is disabled before the socket is enabled. 0.1.5 removed the unit file when its toggle was turned off, so 0.1.6 cannot see that choice and enables the socket; turn the toggle off again if you prefer to start the daemon yourself.
 - Without a systemd user session the daemon keeps working as before (started by qcyctl). A lock in `$XDG_RUNTIME_DIR` keeps a second daemon from starting, and only the lock holder removes the socket file.
 - `scripts/install.sh` installs the units through `qcyctl daemon install-service`. `packaging/qcyctld.service` is gone.
+- The panel tabs (Status, Sound, Settings) stay fixed at the top while the content scrolls, and switching tabs starts the new tab at its top.
 
 ### Fixed
 
