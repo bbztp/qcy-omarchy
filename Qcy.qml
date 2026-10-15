@@ -137,12 +137,23 @@ Singleton {
     return u.replace(/\/+$/, "")
   }
   property string pluginVersion: ""
+  // The version the running code was loaded with. `omarchy plugin update`
+  // rescans but keeps the old QML alive (this singleton included), so
+  // pluginVersion moves on while old code keeps running; only a shell restart
+  // loads the new files. Stays "" under the QCYCTL dev override. It is the
+  // first version read, so an update landing before that first read (or a
+  // first read that fails) goes unnoticed; the window is the shell's startup.
+  property string loadedVersion: ""
+  property string _readVersion: ""     // the last manifestProc read, "" on failure
+  readonly property bool restartNeeded: loadedVersion !== "" && pluginVersion !== ""
+    && pluginVersion !== loadedVersion
 
   function _setupStart() {
     setupState = "checking"
     setupMessage = ""
     setupStep = ""
     if (Quickshell.env("QCYCTL")) { _setupReady(Quickshell.env("QCYCTL")); return }
+    _readVersion = ""
     manifestProc.running = true
   }
 
@@ -194,11 +205,15 @@ Singleton {
       onStreamFinished: {
         var v = ""
         try { v = String(JSON.parse(text).version || "") } catch (e) {}
-        root.pluginVersion = v
+        root._readVersion = v
+        // A half-written manifest (mid-update) must not blank the known version.
+        if (v !== "") root.pluginVersion = v
+        if (v !== "" && root.loadedVersion === "" && !Quickshell.env("QCYCTL"))
+          root.loadedVersion = v
       }
     }
     onExited: function (exitCode) {
-      if (exitCode !== 0 || root.pluginVersion === "") {
+      if (exitCode !== 0 || root._readVersion === "") {
         root.setupState = "error"
         root.setupMessage = root.tr("Could not read the plugin version")
         return
@@ -240,12 +255,14 @@ Singleton {
   }
 
   // `omarchy plugin update` replaces the files and rescans, but this singleton
-  // survives the reload, so its setup would never run again and the QML would
-  // keep calling the old binary. manifest.json is watched read-only (nothing is
-  // written under the plugin directory); when its version differs from the one
-  // the setup ran with, or the setup is in "error", the setup starts over. The
-  // debounce covers git writing several files; a setup already in flight is not
-  // duplicated, the check is retried until it ends.
+  // survives the reload, so its setup would never run again and the running
+  // QML (old code, until the shell restarts) would keep calling the old
+  // binary. This only prepares the matching binaries; it does not refresh the
+  // QML (see loadedVersion / restartNeeded). manifest.json is watched read-only
+  // (nothing is written under the plugin directory); when its version differs
+  // from the one the setup ran with, or the setup is in "error", the setup
+  // starts over. The debounce covers git writing several files; a setup
+  // already in flight is not duplicated, the check is retried until it ends.
   FileView {
     id: manifestWatch
     path: root.pluginDir + "/manifest.json"
@@ -346,7 +363,7 @@ Singleton {
       : ((daemon && daemon.socketActive) ? tr("on demand") : tr("stopped"))
     var cv = (daemon && daemon.cliVersion) ? daemon.cliVersion : "?"
     return tr("Plugin {plugin} · Daemon {daemon} · qcyctl {cli}",
-      { plugin: pluginVersion || "?", daemon: dv, cli: cv })
+      { plugin: loadedVersion || pluginVersion || "?", daemon: dv, cli: cv })
   }
 
   // The running daemon is older than this qcyctl (an update replaced the

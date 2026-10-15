@@ -6,6 +6,17 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-10-15
+
+### Added
+
+- A notice in the panel (and a line in the bar tooltip) when the plugin files are newer than the code the shell is running, asking for `omarchy restart shell`.
+
+### Changed
+
+- The versions line in Settings shows the version of the running code, not the one on disk.
+- README and publishing notes: after `omarchy plugin update`, run `omarchy restart shell`; the plugin reload alone keeps the old QML.
+
 ## [0.1.10] - 2026-10-15
 
 ### Added

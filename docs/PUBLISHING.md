@@ -74,6 +74,7 @@ verifies the release, then the earbuds' state. Check
 
 ```sh
 omarchy plugin update io.github.bbztp.qcy     # after a new release
+omarchy restart shell                         # the reload alone keeps the old QML
 omarchy plugin remove io.github.bbztp.qcy
 ```
 

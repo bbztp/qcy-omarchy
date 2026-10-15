@@ -729,12 +729,13 @@ Panel {
       var name = root.modelName
       if (Qcy.setupState === "error")
         return Qcy.setupMessage !== "" ? Qcy.setupMessage : Qcy.tr("Preparing QCY…")
+      var more = Qcy.restartNeeded ? "\n" + Qcy.tr("Restart the shell to finish updating") : ""
       if (!Qcy.ready) return Qcy.tr("Preparing QCY…")
-      if (!Qcy.connected) return Qcy.tr("{name} — disconnected", { name: name })
-      if (!batt) return Qcy.tr("{name} — reading battery…", { name: name })
+      if (!Qcy.connected) return Qcy.tr("{name} — disconnected", { name: name }) + more
+      if (!batt) return Qcy.tr("{name} — reading battery…", { name: name }) + more
       var parts = [Qcy.tr("L {n}%", { n: batt.left }), Qcy.tr("R {n}%", { n: batt.right })]
       if (batt.casePresent) parts.push(Qcy.tr("case {n}%", { n: batt.case }))
-      return name + " — " + parts.join(" · ")
+      return name + " — " + parts.join(" · ") + more
     }
 
   function heroStatus() {
@@ -1900,6 +1901,23 @@ Panel {
           id: column
           width: scroller.width - scroller.gutter
           spacing: Style.space(14)
+
+          // ---------- Restart notice ----------
+          // The plugin files are newer than the code the shell is running.
+          Card {
+            width: parent.width
+            visible: Qcy.restartNeeded
+
+            Text {
+              width: parent.width
+              text: Qcy.tr("Plugin updated to {version}. Run omarchy restart shell to load it.",
+                { version: Qcy.pluginVersion })
+              color: Color.urgent
+              font.family: root.textFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+          }
 
           // ---------- First-run preparation ----------
           // Until qcyctl is ready nothing below can work: show what is going

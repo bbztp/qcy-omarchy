@@ -262,5 +262,7 @@
   "The new entry will not have the per-ear curves of the hearing test. The local curve is backed up first.": "A nova entrada não terá as curvas por orelha do teste auditivo. A curva local é guardada em backup antes.",
   "Overwrite": "Sobrescrever",
   "Local curve overwritten.": "Curva local sobrescrita.",
-  "Saved as a new curve.": "Salva como nova curva."
+  "Saved as a new curve.": "Salva como nova curva.",
+  "Plugin updated to {version}. Run omarchy restart shell to load it.": "Plugin atualizado para {version}. Rode omarchy restart shell para carregar a versão nova.",
+  "Restart the shell to finish updating": "Reinicie o shell para concluir a atualização"
 }

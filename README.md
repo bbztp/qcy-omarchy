@@ -85,7 +85,7 @@ from source instead. That needs Go (`sudo pacman -S go`) and the repository's
 `cmd/` tree. The same step by hand: `QCY_BUILD=1 scripts/bootstrap.sh`. If
 preparation fails, the panel says why and offers "Try again".
 
-When the plugin is updated, the shell notices the new `manifest.json` version and prepares the matching binaries on its own (no shell restart).
+When the plugin is updated, the shell notices the new `manifest.json` version and prepares the matching binaries on its own, but Omarchy's plugin reload keeps the running panel on the old code: run `omarchy restart shell` after `omarchy plugin update`. From 0.1.11 on, the running panel shows a notice when that is needed (updating to 0.1.11 itself still needs the restart).
 `qcyctl version` prints the version, which matches `manifest.json`.
 
 ## Usage
