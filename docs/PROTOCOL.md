@@ -76,6 +76,13 @@ firmware; on this unit only `0x07`, `0x11` and `0x2D` are ever asked, and all
 three stay silent, which is what makes `spatial`, `fit` and `ancLevel` report
 as unsupported.
 
+Measured on a MeloBuds N70 (firmware 3.0.13) on 2026-10-15 with read-only
+query frames, with the earbuds both out of and in the ears: `FF 03 FE 01 2D`,
+`FF 03 FE 01 07` and `FF 03 FE 01 11` get no reply (each asked twice in the
+ears, 3 s window), and neither do `FF 03 FE 01 20` and `FF 03 FE 01 35`;
+`FF 03 FE 01 17` and `FF 03 FE 01 22` answer. The fit test result is only
+delivered as the notification during a test, never on a query.
+
 `0x07` not answering on this model is also why ANC strength is carried in the
 third byte of `0x17` instead of being set directly.
 
@@ -230,6 +237,11 @@ get --json` and the results of the write commands additionally carry the raw
 unproven full-length format was used.
 
 ### Writing: read, patch, back up, write, confirm
+
+Measured on a MeloBuds N70 (firmware 3.0.13) on 2026-10-15: a slot argument
+after the 0x22 query does not select what is reported. `FF 04 FE 01 22 06`,
+`FF 04 FE 01 22 07`, `FF 04 FE 01 22 0B` and `FF 04 FE 02 22 FF` all answer
+with the active slot's 0x22 frame, byte for byte identical to the plain query.
 
 There is no select-only command and no way to read an inactive slot, so a write
 always starts from the payload the device reports **now** and changes only the

@@ -6,6 +6,10 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Documentation
+
+- PROTOCOL.md: measured on the N70 that an inactive EQ slot cannot be read even with a slot argument, and that the spatial-audio, ANC-level and fit-test queries get no reply with the earbuds in the ears.
+
 ## [0.1.8] - 2026-10-15
 
 ### Fixed
