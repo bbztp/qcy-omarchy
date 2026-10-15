@@ -6,6 +6,15 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-10-15
+
+### Fixed
+
+- A factory card (for example Rock) written to the custom slot by another computer or the phone app is now marked as playing. Before, only your own curves were recognised on that slot, so the panel kept marking a stale card or none. `qcyctl library matches --any` tries your curves first, then the factory cards, and never the hearing-experience card.
+- The panel no longer marks any card when the earbuds' last report is stale (the earbuds were busy with another client), so an old hearing-experience report is not shown as live.
+- Clicking a card that is already being applied is ignored. Before, repeated clicks queued the same write several times, and the hearing card could stay on "applying".
+- An apply whose queued request is dropped (for example when the earbuds disconnect) now ends with a "not sent" error instead of staying on "applying".
+
 ## [0.1.7] - 2026-10-15
 
 ### Fixed

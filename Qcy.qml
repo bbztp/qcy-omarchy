@@ -1097,6 +1097,10 @@ Singleton {
       _wantBattery = false
       _refreshQueued = false
       loading = false
+      if (_writeNext !== null) {
+        // The queued request never ran: its card must not stay on "applying".
+        _setOp(_writeNext.kind, "error", _writeNext.kind === "apply" ? _writeNext.id : "", tr("Not sent: the earbuds went out of range."), "")
+      }
       _writeNext = null   // a queued write must not run on the next connection
       _dropPending("disconnected")
     }
@@ -1550,9 +1554,27 @@ Singleton {
 
   property bool writeBusy: false
   property var _writeNext: null
+  // Id of the library apply that is running now ("" when none).
+  property string _inflightApplyId: ""
+
+  // True while the apply of card `id` is the one running: the run already
+  // produces that card, so a repeated click must not queue it again.
+  function applyInFlight(id) {
+    return writeBusy && _inflightApplyId !== "" && _inflightApplyId === String(id)
+  }
 
   // Applies library curve `id`.
   function libraryApply(id) {
+    if (applyInFlight(id)) {
+      // Last click wins: the final state is this card, so a queued apply of
+      // another card is superseded (not an error) and the running card's
+      // "applying" state is shown again.
+      if (_writeNext !== null && _writeNext.kind === "apply") {
+        _writeNext = null
+        _setOp("apply", "running", String(id), "", "")
+      }
+      return
+    }
     _writeNext = { kind: "apply", id: String(id) }
     _setOp("apply", "running", String(id), "", "")
     _writeKick()
@@ -1577,6 +1599,7 @@ Singleton {
     var req = _writeNext
     _writeNext = null
     writeBusy = true
+    _inflightApplyId = req.kind === "apply" ? req.id : ""
     var args
     if (req.kind === "apply") {
       args = ["library", "apply", req.id, "--yes", "--json"]
@@ -1587,6 +1610,7 @@ Singleton {
     }
     set(req.kind === "apply" ? "Apply effect" : "Apply equalizer", args, function (code, out, err) {
       root.writeBusy = false
+      root._inflightApplyId = ""
       root._writeDone(req, code, out, err)
       // -1: replaced inside set() by another setter; starting the next write
       // from here would re-enter set(), so let that call finish first.
@@ -1695,10 +1719,10 @@ Singleton {
       })
   }
 
-  // Which of the user's own curves is the EQ the earbuds report? done(ok, id)
-  // with id "" when none is.
-  function libraryMatchesAnyUser(master, bands, done) {
-    runOffline(["library", "matches", "--any-user", "--master", Number(master).toFixed(2), "--bands", JSON.stringify(bands)],
+  // Which of the user's own curves, or else which factory card, is the EQ the
+  // earbuds report? done(ok, id) with id "" when none is.
+  function libraryMatchesAny(master, bands, done) {
+    runOffline(["library", "matches", "--any", "--master", Number(master).toFixed(2), "--bands", JSON.stringify(bands)],
       function (code, out, err) {
         var j = root._parseJson(out)
         if (done) done(code === 0 && !!j, j && j.match && j.id ? String(j.id) : "")

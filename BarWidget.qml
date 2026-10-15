@@ -627,6 +627,14 @@ Panel {
   // Click on an effect card: apply it now, bars go back to zero on top of it.
   function chooseEffect(id) {
     if (!root.canApplyLibrary) return
+    // This card's apply is already running: ignore the click (a queued apply of
+    // another card is dropped inside libraryApply, so the marker follows it).
+    // Checked first: an ignored click must not cancel a debounced edit.
+    if (Qcy.applyInFlight(id)) {
+      Qcy.libraryApply(id)
+      if (root.baseId !== id) root.baseId = id
+      return
+    }
     eqTimer.stop()
     root.menuId = ""
     root.pendingDeleteId = ""
@@ -1023,8 +1031,9 @@ Panel {
     var b = rep && rep.eq ? rep.eq.bands : null
     if (root.activeSlot !== 255 || root.baseId !== "" || !Qcy.libraryLoaded || !b || b.length === 0) return ""
     // The hearing card and entries with per-ear curves are slot 11's: not candidates here.
-    var users = Qcy.library.filter(function (e) { return e.source === "user" && !root.slot11Only(e) && !root.hiddenEntry(e) })
-    return Number(rep.eq.masterGain || 0).toFixed(2) + "|" + JSON.stringify(b) + "#" + JSON.stringify(users)
+    // Factory cards too: another computer or the phone app may have written one to this slot.
+    var users = Qcy.library.filter(function (e) { return (e.source === "user" || e.source === "factory-snapshot") && !root.slot11Only(e) && !root.hiddenEntry(e) })
+    return "any|" + Number(rep.eq.masterGain || 0).toFixed(2) + "|" + JSON.stringify(b) + "#" + JSON.stringify(users)
   }
 
   function requestMatch255(force) {
@@ -1034,7 +1043,7 @@ Panel {
     root._m255Key = key
     root._m255Result = ""
     root._m255Id = ""
-    Qcy.libraryMatchesAnyUser(rep.eq.masterGain || 0, rep.eq.bands, function (ok, id) {
+    Qcy.libraryMatchesAny(rep.eq.masterGain || 0, rep.eq.bands, function (ok, id) {
       if (root._m255Key !== key) return
       root._m255Result = ok ? (id !== "" ? "same" : "diff") : ""
       root._m255Id = id
@@ -2204,7 +2213,7 @@ Panel {
                     entry: modelData
                     cardWidth: (fxGrid.width - fxGrid.spacing * 2) / 3
                     canApply: root.canApplyLibrary
-                    live: root.activeEntryId === modelData.id
+                    live: !root.isStale && root.activeEntryId === modelData.id
                     adjusted: root.adjusted
                     phase: Qcy.libraryOp.kind === "apply" && Qcy.libraryOp.id === modelData.id
                       ? Qcy.libraryOp.phase : "idle"

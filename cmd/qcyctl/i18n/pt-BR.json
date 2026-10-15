@@ -175,6 +175,7 @@
   "The command failed (code {code})": "O comando falhou (código {code})",
   "Could not read the library": "Não foi possível ler a biblioteca",
   "Cancelled: another action was sent or the earbuds went out of range.": "Cancelado: outra ação foi enviada ou os fones saíram de alcance.",
+  "Not sent: the earbuds went out of range.": "Não enviado: os fones saíram de alcance.",
   "Earbuds not found: off, out of range, or an app open on this or another device is using them.": "Fones não encontrados: desligados, fora de alcance ou em uso por um app aberto neste ou em outro dispositivo.",
   "Too many bands: zero some bars or choose another effect.": "Bandas demais: zere algumas barras ou escolha outro efeito.",
   "An effect with that name already exists. Choose another name.": "Já existe um efeito com esse nome. Escolha outro nome.",

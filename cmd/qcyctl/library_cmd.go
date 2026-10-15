@@ -31,7 +31,7 @@ const libraryUsage = `usage: qcyctl library <subcommand>
   library import <file>
   library seed [--json]
   library import-device <name> [seconds] [--expect-slot N] [--user] [--replace [--backup]] [--require-ears]   (reads the active EQ from the earbuds, never writes to them; --expect-slot saves nothing unless that slot is the active one; --user saves it as one of your own curves; --replace overwrites the existing entry of that name, needs --expect-slot, and --backup first copies the old entry to the backup directory; the "Experiência auditiva" card imported from slot 11 keeps both ears when the earbuds report them (status eq.ears), and --require-ears saves nothing when they do not)
-  library matches (<id> | --any-user) --master dB --bands <json> [--slot N] [--ears <json>]      (offline: does the EQ the earbuds report (status eq.masterGain, eq.bands) match this entry, or one of your own curves? A hearing-test entry (with per-ear curves) only matches slot 11: --slot gives the active slot, --ears the status eq.ears to compare both ears; --any-user never names a hearing-test entry. prints {"match":bool[,"id":...]})
+  library matches (<id> | --any-user | --any) --master dB --bands <json> [--slot N] [--ears <json>]      (offline: does the EQ the earbuds report (status eq.masterGain, eq.bands) match this entry, one of your own curves, or (--any) your curves first, then the factory cards? A hearing-test entry (with per-ear curves) only matches slot 11: --slot gives the active slot, --ears the status eq.ears to compare both ears; --any-user and --any never name a hearing-test entry. prints {"match":bool[,"id":...]})
   library apply <id>|--file <curve.json> --yes [--full-length] [--slot 0|255] [--json] [seconds]   (writes the curve to slot 255 by default = the phone app's "Personalizado" buffer, the only target allowed while slot 6 or 11 is active, and the only one that takes bands at positions 10-19 without --full-length; --slot 0 is the old test slot; --file applies a curve JSON such as a restore point from the backup directory without adding it to the library)
   library compose --base <id|none> --gains g1,...,g10 [--master dB] (--yes | --dry-run) [--json] [seconds]   (the phone app's layout in slot 255: your non-zero bars, then the base effect's bands)`
 
@@ -670,14 +670,19 @@ func cmdLibraryImportDevice(args []string) error {
 
 // cmdLibraryMatches is offline: it compares an entry with the EQ the earbuds
 // reported (qcycore.CurveMatchesDevice), so the panel does not duplicate the
-// rule. With --any-user it tries every curve of the user and the hearing-test
-// card (not the factory effects nor the editor's working copy) and names the first that
-// matches, in library order.
+// rule. With --any-user it tries every curve of the user (not the factory
+// effects, the hearing-test card nor the editor's working copy) and names the
+// first that matches, in library order. With --any it tries the user's curves
+// first and then the factory-snapshot cards (what another machine or the vendor
+// app may have written to slot 255); never hearing-test entries, imports or the
+// working copy.
 func cmdLibraryMatches(args []string) error {
-	const usage = "usage: qcyctl library matches (<id> | --any-user) --master dB --bands <json> [--slot N] [--ears <json>]"
-	a, err := parseLibArgs(args, []string{"--any-user"}, []string{"--master", "--bands", "--slot", "--ears"})
+	const usage = "usage: qcyctl library matches (<id> | --any-user | --any) --master dB --bands <json> [--slot N] [--ears <json>]"
+	a, err := parseLibArgs(args, []string{"--any-user", "--any"}, []string{"--master", "--bands", "--slot", "--ears"})
 	anyUser := a.bools["--any-user"]
-	if err != nil || (anyUser && len(a.pos) != 0) || (!anyUser && len(a.pos) != 1) {
+	anyCard := a.bools["--any"]
+	scan := anyUser || anyCard
+	if err != nil || (anyUser && anyCard) || (scan && len(a.pos) != 0) || (!scan && len(a.pos) != 1) {
 		return errors.New(usage)
 	}
 	master, err := strconv.ParseFloat(a.vals["--master"], 64)
@@ -703,7 +708,7 @@ func cmdLibraryMatches(args []string) error {
 			return fmt.Errorf("library matches: --ears: %w", err)
 		}
 	}
-	if !anyUser {
+	if !scan {
 		c, err := qcycore.LoadCurve(a.pos[0])
 		if err != nil {
 			return err
@@ -719,14 +724,22 @@ func cmdLibraryMatches(args []string) error {
 	}
 	curves, _ := qcycore.ListCurves()
 	sortCurves(curves)
-	for _, c := range curves {
-		// The hearing-experience card is slot 11's: a curve of Personalizado
-		// that merely equals its averaged bands is not "the hearing experience".
-		if c.Source != qcycore.SourceUser || c.Ears != nil || c.ID == qcycore.HearingTestCurveID() || c.ID == "rascunho" {
-			continue
-		}
-		if qcycore.CurveMatchesDevice(c, master, bands) {
-			return printJSON(map[string]any{"match": true, "id": c.ID})
+	curves, _ = hideSuperseded(curves) // the panel does not list those, so none could be marked
+	sources := []string{qcycore.SourceUser}
+	if anyCard {
+		// User curves win over a factory card with the same bands.
+		sources = append(sources, qcycore.SourceFactorySnapshot)
+	}
+	for _, src := range sources {
+		for _, c := range curves {
+			// The hearing-experience card is slot 11's: a curve of Personalizado
+			// that merely equals its averaged bands is not "the hearing experience".
+			if c.Source != src || c.Ears != nil || c.ID == qcycore.HearingTestCurveID() || c.ID == "rascunho" {
+				continue
+			}
+			if qcycore.CurveMatchesDevice(c, master, bands) {
+				return printJSON(map[string]any{"match": true, "id": c.ID})
+			}
 		}
 	}
 	return printJSON(map[string]any{"match": false})

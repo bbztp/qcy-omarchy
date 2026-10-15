@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bbztp/qcy-omarchy/internal/qcycore"
 )
@@ -1235,5 +1236,116 @@ func TestLibraryMatchesAnyUser(t *testing.T) {
 	}
 	if err := cmdLibrary([]string{"matches", "--any-user", "x", "--master", "0", "--bands", "[]"}); err == nil {
 		t.Fatal("--any-user with an id accepted")
+	}
+}
+
+// rockOnSlot255 is what the earbuds reported after the factory card Rock was
+// written to the custom slot by another computer: master -12 dB, five bands.
+const rockOnSlot255Payload = "ff50fb3c00f401320002c80050fb460002840338ff460002f00ac800780002401f44fd5e0102000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+
+const rockOnSlot255Bands = `[{"index":0,"freq":60,"gain":5,"q":50,"type":2},{"index":1,"freq":200,"gain":-12,"q":70,"type":2},{"index":2,"freq":900,"gain":-2,"q":70,"type":2},{"index":3,"freq":2800,"gain":2,"q":120,"type":2},{"index":4,"freq":8000,"gain":-7,"q":350,"type":2}]`
+
+func matchesRock(t *testing.T, flag string) map[string]any {
+	t.Helper()
+	var e error
+	out := captureStdout(t, func() {
+		e = cmdLibrary([]string{"matches", flag, "--master", "-12.00", "--bands", rockOnSlot255Bands, "--slot", "255"})
+	})
+	if e != nil {
+		t.Fatal(e)
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(out), &m) != nil {
+		t.Fatalf("output %q", out)
+	}
+	return m
+}
+
+func TestLibraryMatchesAnyNamesFactoryCard(t *testing.T) {
+	libEnv(t)
+	if _, err := qcycore.SeedFromPayload(qcycore.SourceFactorySnapshot, 1, "Rock", rockOnSlot255Payload); err != nil {
+		t.Fatal(err)
+	}
+	if m := matchesRock(t, "--any"); m["match"] != true || m["id"] != "rock" {
+		t.Fatalf("--any did not name the factory card: %v", m)
+	}
+	// --any-user keeps its contract: factory cards are never named.
+	if m := matchesRock(t, "--any-user"); m["match"] != false || m["id"] != nil {
+		t.Fatalf("--any-user named a factory card: %v", m)
+	}
+}
+
+func TestLibraryMatchesAnyPrefersUserOverFactory(t *testing.T) {
+	libEnv(t)
+	// "aaa" sorts before the user curve, so only the pass order can make the user win.
+	if _, err := qcycore.SeedFromPayload(qcycore.SourceFactorySnapshot, 1, "AAA Factory", rockOnSlot255Payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := qcycore.SeedFromPayload(qcycore.SourceUser, 255, "ZZZ Mine", rockOnSlot255Payload); err != nil {
+		t.Fatal(err)
+	}
+	if m := matchesRock(t, "--any"); m["id"] != "zzz-mine" {
+		t.Fatalf("user curve must win over the factory card: %v", m)
+	}
+}
+
+func TestLibraryMatchesAnyNeverNamesHearingImportOrDraft(t *testing.T) {
+	libEnv(t)
+	if _, err := qcycore.SeedFromPayload(qcycore.SourceDeviceImport, 255, "Imported", rockOnSlot255Payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := qcycore.SeedFromPayload(qcycore.SourceFactorySnapshot, 1, "rascunho", rockOnSlot255Payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := qcycore.SeedFromPayload(qcycore.SourceFactorySnapshot, 11, qcycore.HearingTestCurveID(), rockOnSlot255Payload); err != nil {
+		t.Fatal(err)
+	}
+	if m := matchesRock(t, "--any"); m["match"] != false {
+		t.Fatalf("named a device import, a draft or the hearing id: %v", m)
+	}
+	// An entry with per-ear curves is never named either, even as a user curve.
+	h, err := hearingResultCurve(earsL, earsR, earsMaster, time.Now(), 0, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.ID = "other-ears"
+	if err := qcycore.CreateCurve(h); err != nil {
+		t.Fatal(err)
+	}
+	bj, _ := json.Marshal(h.Bands)
+	var e error
+	out := captureStdout(t, func() {
+		e = cmdLibrary([]string{"matches", "--any", "--master", strconv.FormatFloat(h.MasterGain, 'f', 2, 64), "--bands", string(bj)})
+	})
+	if e != nil || strings.Contains(out, `"id"`) {
+		t.Fatalf("entry with ears named: %v %s", e, out)
+	}
+}
+
+func TestLibraryMatchesAnyUsageErrors(t *testing.T) {
+	libEnv(t)
+	for _, args := range [][]string{
+		{"matches", "--any", "--any-user", "--master", "0", "--bands", "[]"},
+		{"matches", "--any", "x", "--master", "0", "--bands", "[]"},
+	} {
+		if err := cmdLibrary(args); err == nil {
+			t.Fatalf("accepted %v", args)
+		}
+	}
+}
+
+func TestLibraryMatchesAnySkipsSupersededTwin(t *testing.T) {
+	libEnv(t)
+	// The twin an older seed created matches the earbuds; its replacement
+	// (listed) does not. The panel does not list the twin, so naming it would
+	// mark no card: the answer is "none".
+	if _, err := qcycore.SeedFromPayload(qcycore.SourceFactorySnapshot, 5, "Clássico (slot 6)", rockOnSlot255Payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := qcycore.SeedFromPayload(qcycore.SourceFactorySnapshot, 6, "Clássico", slot0Flat); err != nil {
+		t.Fatal(err)
+	}
+	if m := matchesRock(t, "--any"); m["match"] != false {
+		t.Fatalf("--any named a superseded twin: %v", m)
 	}
 }
