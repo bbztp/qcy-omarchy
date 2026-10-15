@@ -1087,7 +1087,10 @@ Singleton {
     if (connected) {
       refresh()
       pollBattery()
+      if (panelOpen) codecRefresh()
     } else {
+      codec = null
+      codecError = ""
       report = null
       battery = null
       updatedAt = 0
@@ -1299,6 +1302,123 @@ Singleton {
     interval: root._readWatchdogMs
     repeat: false
     onTriggered: root._readTimedOut()
+  }
+
+  // ------------------------------------------------- computer codec
+  //
+  // `qcyctl codec`: the Bluetooth audio codec the computer uses for the
+  // earbuds, read from and switched through PipeWire (no BLE, no daemon). The
+  // device is found by the classic address BlueZ gives us. `codec` is the
+  // parsed JSON, or null when PipeWire or the device is not available, which
+  // hides the row. Exit codes: 3 unavailable, 4 not applied (see docs/CLI.md).
+  property var codec: null          // {device, active:{codec,kind}, music:[{codec,profile,index,active}]}
+  property bool codecBusy: false
+  property string codecError: ""
+  readonly property string deviceAddress: (device && device.address) ? String(device.address) : ""
+  property bool _codecReadQueued: false
+
+  onDeviceAddressChanged: {
+    codec = null
+    if (panelOpen && deviceAddress !== "") codecRefresh()
+  }
+
+  function codecRefresh() {
+    if (deviceAddress === "" || !ready) { codec = null; return }
+    if (_codecReadQueued) return
+    _codecReadQueued = true
+    runOffline(["codec", "--json", "--address", deviceAddress], function (code, out, err) {
+      _codecReadQueued = false
+      var j = code === 0 ? _parseJson(out) : null
+      if (j && j.music && j.active) codec = j
+      else if (code === 3 || (code === 0 && !j)) codec = null   // unavailable
+      // any other failure (a transient pw-dump timeout) keeps the last state
+    })
+  }
+
+  // A click on a codec button. It cancels a pending automatic LDAC switch.
+  function codecSet(name) {
+    _codecSet(name, false)
+  }
+
+  function _codecSet(name, auto) {
+    if (codecBusy || deviceAddress === "") return
+    if (!auto) codecDisarmLdac()
+    codecBusy = true
+    codecError = ""
+    runOffline(["codec", "set", String(name), "--json", "--address", deviceAddress], function (code, out, err) {
+      codecBusy = false
+      var j = code === 0 ? _parseJson(out) : null
+      if (j && j.music && j.active) {
+        codec = j
+      } else {
+        codecError = tr("Could not switch the codec. Try again.")
+        codecRefresh()
+      }
+    })
+  }
+
+  // After LDAC is turned ON the earbuds restart and the computer needs the
+  // LDAC profile. Armed from the confirmed write, it polls `codec` for at most
+  // _ldacWaitMs (an absolute deadline; a read error just means "later",
+  // because the device leaves PipeWire while the earbuds restart), switches
+  // once, and stops. Never a loop: the single-shot timer re-arms itself only
+  // inside the deadline.
+  readonly property int _ldacWaitMs: 40000
+  readonly property int _ldacPollMs: 2000
+  property double _ldacDeadline: 0   // 0 = not armed
+
+  function codecArmLdac() {
+    _ldacDeadline = Date.now() + _ldacWaitMs
+    ldacTimer.interval = _ldacPollMs
+    ldacTimer.restart()
+  }
+
+  function codecDisarmLdac() {
+    _ldacDeadline = 0
+    ldacTimer.stop()
+  }
+
+  // "stop": nothing to do (LDAC already in use, or a call is active: skip);
+  // "set": LDAC is offered and not in use; "wait": try again within the deadline.
+  // Verified on hardware, not unit-tested (there is no QML harness).
+  function ldacDecision(st) {
+    if (!st || !st.music || !st.active) return "wait"
+    var offered = false
+    for (var i = 0; i < st.music.length; i++) {
+      if (String(st.music[i].codec).toLowerCase() === "ldac") offered = true
+    }
+    if (st.active.kind === "music" && String(st.active.codec).toLowerCase() === "ldac") return "stop"
+    if (st.active.kind === "call") return "stop"
+    if (!offered) return "wait"
+    return "set"
+  }
+
+  function _ldacTick() {
+    if (_ldacDeadline === 0) return
+    if (Date.now() >= _ldacDeadline) { codecDisarmLdac(); return }
+    var again = function () {
+      if (_ldacDeadline === 0) return
+      if (Date.now() >= _ldacDeadline) { codecDisarmLdac(); return }
+      ldacTimer.interval = _ldacPollMs
+      ldacTimer.restart()
+    }
+    if (deviceAddress === "" || codecBusy) { again(); return }
+    runOffline(["codec", "--json", "--address", deviceAddress], function (code, out, err) {
+      if (_ldacDeadline === 0) return        // the user picked a codec meanwhile
+      var j = code === 0 ? _parseJson(out) : null
+      var st = (j && j.music && j.active) ? j : null
+      codec = st
+      var d = ldacDecision(st)
+      if (d === "stop") { codecDisarmLdac(); return }
+      if (d === "set") { codecDisarmLdac(); _codecSet("LDAC", true); return }
+      again()
+    })
+  }
+
+  Timer {
+    id: ldacTimer
+    repeat: false
+    onTriggered: root._ldacTick()
   }
 
   // ------------------------------------------------- generic panel functions

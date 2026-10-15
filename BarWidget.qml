@@ -719,6 +719,7 @@ Panel {
       Qcy.libraryClearOp()
       Qcy.libraryReload()
     }
+    if (root.tab === 2 && root.opened) Qcy.codecRefresh()
   }
 
   // The tooltip is the fastest read of the earbud state without opening the
@@ -1222,10 +1223,14 @@ Panel {
     // panel passes only after its own two-step confirmation.
     if (key === "ldac") {
       args.push("--yes")
+      if (!on) Qcy.codecDisarmLdac()
       Qcy.set(label, args, function (code, out, err) {
         // "indeterminado": the earbuds still echoed the old value and the
         // restart may be pending. Do not assume success: drop the optimistic
         // value and read the state again.
+        // Turned ON (confirmed or not): the earbuds restart, so the computer
+        // switches to the LDAC codec by itself once it is offered.
+        if (code === 0 && on) Qcy.codecArmLdac()
         if (code === 0 && String(out || "").indexOf("indeterminado") !== -1) {
           var o = Object.assign({}, root.optimistic)
           delete o["ldac"]
@@ -1243,6 +1248,10 @@ Panel {
   // LDAC: only with the daemon's capability (the model's panel declares it),
   // never from the fallback `true`; not gated on the connect probe.
   readonly property bool ldacVisible: !!(caps && caps.ldac === true) && has("ldac")
+  // The computer-codec row: needs the earbuds' device and a PipeWire answer.
+  readonly property bool codecVisible: Qcy.connected && Qcy.codec !== null
+                                       && Qcy.codec.music && Qcy.codec.music.length > 0
+  readonly property bool codecInCall: codecVisible && Qcy.codec.active.kind === "call"
   property bool ldacConfirming: false
   property bool ldacTarget: false
   // After an "indeterminate" LDAC write: shown until the next state read ends.
@@ -1623,6 +1632,7 @@ Panel {
       batteryTimer.running = opened
       statusTimer.running = opened
       if (root.tab === 1) Qcy.libraryReload()
+      if (root.tab === 2) Qcy.codecRefresh()
     }
   }
 
@@ -3078,7 +3088,7 @@ Panel {
               Text {
                 width: parent.width
                 visible: root.ldacVisible
-                text: Qcy.tr("The vendor app does not offer this on this model, but the earbuds accept it. Turning it on or off restarts the earbuds (about 10 s). Then pick the LDAC codec in the computer's audio settings. Use at your own risk.")
+                text: Qcy.tr("The vendor app does not offer this on this model, but the earbuds accept it. Turning it on or off restarts the earbuds (about 10 s); when LDAC is turned on, the computer switches to the LDAC codec by itself. Use at your own risk.")
                 color: root.muted
                 font.family: root.textFamily
                 font.pixelSize: Style.font.caption
@@ -3120,6 +3130,59 @@ Panel {
                 font.family: root.textFamily
                 font.pixelSize: Style.font.caption
                 wrapMode: Text.WordWrap
+              }
+
+              // The computer's own Bluetooth codec for these earbuds (PipeWire).
+              // Hidden when PipeWire or the device is not available.
+              PanelSeparator {
+                visible: root.codecVisible
+                foreground: root.foreground
+              }
+              Column {
+                width: parent.width
+                visible: root.codecVisible
+                spacing: Style.space(6)
+                Text {
+                  width: parent.width
+                  text: Qcy.tr("Computer codec")
+                  color: root.foreground
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.body
+                  elide: Text.ElideRight
+                }
+                Text {
+                  width: parent.width
+                  visible: root.codecInCall
+                  text: Qcy.tr("In a call ({codec})", { codec: root.codecInCall ? Qcy.codec.active.codec : "" })
+                  color: root.muted
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+                Flow {
+                  width: parent.width
+                  visible: !root.codecInCall
+                  spacing: Style.space(8)
+                  opacity: Qcy.codecBusy ? 0.6 : 1
+                  Repeater {
+                    model: root.codecVisible ? Qcy.codec.music : []
+                    Chip {
+                      required property var modelData
+                      label: modelData.codec
+                      active: modelData.active === true
+                      onClicked: if (!Qcy.codecBusy && !active) Qcy.codecSet(modelData.codec)
+                    }
+                  }
+                }
+                Text {
+                  width: parent.width
+                  visible: Qcy.codecError !== ""
+                  text: Qcy.codecError
+                  color: Color.urgent
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
               }
 
               PanelSeparator {

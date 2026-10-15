@@ -35,6 +35,7 @@ Availability depends on the model's panel; the list below is the full set.
 | Battery | Left, right and case as pictures with a level bar (red below 20%, amber to 49%, green from 50%) and charging flags. |
 | Noise control | Off, Adaptive, Indoor, Commuting, Noisy, Anti-wind, Transparency. |
 | Toggles | LDAC (hi-res audio), Multipoint, Game mode (low latency), Sleep mode, Wind noise reduction. |
+| Computer codec | Shows the Bluetooth codec the computer uses (SBC, AAC, LDAC, ...) and switches it; after turning LDAC on the computer switches to LDAC by itself. |
 | Equalizer | Effect library and a band editor (10 bands, 31 Hz to 16 kHz; range from the model's panel, ±12 dB on the N70), with a personal library of saved curves. |
 | Settings | Prompt volume, wear-sensor sensitivity, ear-tip fit test with a result per ear, touch controls, balance, auto power-off; value sets come from the model's panel. |
 | Readout | Firmware, EQ preset and curve, balance, auto power-off, prompt volume. |

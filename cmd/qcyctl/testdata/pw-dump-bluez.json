@@ -1,0 +1,215 @@
+[
+ {
+  "id": 92,
+  "type": "PipeWire:Interface:Device",
+  "info": {
+   "props": {
+    "device.api": "bluez5",
+    "api.bluez5.address": "AA:BB:CC:DD:EE:FF",
+    "device.name": "bluez_card.AA_BB_CC_DD_EE_FF"
+   },
+   "params": {
+    "EnumProfile": [
+     {
+      "index": 0,
+      "name": "off",
+      "description": "Off",
+      "available": "yes",
+      "priority": 0
+     },
+     {
+      "index": 131073,
+      "name": "a2dp-sink-sbc",
+      "description": "High Fidelity Playback (A2DP Sink, codec SBC)",
+      "available": "yes",
+      "priority": 132,
+      "classes": [
+       [
+        "Audio/Sink",
+        1,
+        "card.profile.devices",
+        [
+         1
+        ]
+       ]
+      ]
+     },
+     {
+      "index": 131074,
+      "name": "a2dp-sink-sbc_xq",
+      "description": "High Fidelity Playback (A2DP Sink, codec SBC-XQ)",
+      "available": "yes",
+      "priority": 131,
+      "classes": [
+       [
+        "Audio/Sink",
+        1,
+        "card.profile.devices",
+        [
+         1
+        ]
+       ]
+      ]
+     },
+     {
+      "index": 131076,
+      "name": "a2dp-sink-aac",
+      "description": "High Fidelity Playback (A2DP Sink, codec AAC)",
+      "available": "yes",
+      "priority": 133,
+      "classes": [
+       [
+        "Audio/Sink",
+        1,
+        "card.profile.devices",
+        [
+         1
+        ]
+       ]
+      ]
+     },
+     {
+      "index": 131080,
+      "name": "a2dp-sink",
+      "description": "High Fidelity Playback (A2DP Sink, codec LDAC)",
+      "available": "yes",
+      "priority": 134,
+      "classes": [
+       [
+        "Audio/Sink",
+        1,
+        "card.profile.devices",
+        [
+         1
+        ]
+       ]
+      ]
+     },
+     {
+      "index": 196864,
+      "name": "headset-head-unit-cvsd",
+      "description": "Headset Head Unit (HSP/HFP, codec CVSD)",
+      "available": "yes",
+      "priority": 6,
+      "classes": [
+       [
+        "Audio/Source",
+        1,
+        "card.profile.devices",
+        [
+         0
+        ]
+       ],
+       [
+        "Audio/Sink",
+        1,
+        "card.profile.devices",
+        [
+         1
+        ]
+       ]
+      ]
+     },
+     {
+      "index": 196865,
+      "name": "headset-head-unit",
+      "description": "Headset Head Unit (HSP/HFP, codec MSBC)",
+      "available": "yes",
+      "priority": 7,
+      "classes": [
+       [
+        "Audio/Source",
+        1,
+        "card.profile.devices",
+        [
+         0
+        ]
+       ],
+       [
+        "Audio/Sink",
+        1,
+        "card.profile.devices",
+        [
+         1
+        ]
+       ]
+      ]
+     }
+    ],
+    "Profile": [
+     {
+      "index": 131080,
+      "name": "a2dp-sink",
+      "description": "High Fidelity Playback (A2DP Sink, codec LDAC)",
+      "available": "yes",
+      "priority": 134,
+      "classes": [
+       [
+        "Audio/Sink",
+        1,
+        "card.profile.devices",
+        [
+         1
+        ]
+       ]
+      ],
+      "save": false
+     }
+    ]
+   }
+  }
+ },
+ {
+  "id": 95,
+  "type": "PipeWire:Interface:Node",
+  "info": {
+   "props": {
+    "api.bluez5.codec": "ldac",
+    "device.id": 92,
+    "media.class": "Audio/Sink"
+   }
+  }
+ },
+ {
+  "id": 120,
+  "type": "PipeWire:Interface:Device",
+  "info": {
+   "props": {
+    "device.api": "bluez5",
+    "api.bluez5.address": "11:22:33:44:55:66"
+   },
+   "params": {
+    "EnumProfile": [
+     {
+      "index": 0,
+      "name": "off",
+      "description": "Off",
+      "available": "yes"
+     },
+     {
+      "index": 7,
+      "name": "a2dp-sink-sbc",
+      "description": "x (codec SBC)",
+      "available": "yes"
+     }
+    ],
+    "Profile": [
+     {
+      "index": 7,
+      "name": "a2dp-sink-sbc"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "id": 48,
+  "type": "PipeWire:Interface:Device",
+  "info": {
+   "props": {
+    "device.api": "alsa"
+   },
+   "params": {}
+  }
+ }
+]

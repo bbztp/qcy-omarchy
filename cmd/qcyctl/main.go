@@ -961,6 +961,8 @@ func main() {
 		err = cmdFn(args)
 	case "daemon":
 		err = cmdDaemon(args)
+	case "codec":
+		err = cmdCodec(args)
 	case "version", "--version":
 		err = cmdVersion(args)
 	default:
@@ -969,6 +971,10 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "qcyctl: %v\n", err)
+		var ee *exitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.code)
+		}
 		os.Exit(1)
 	}
 }
@@ -983,7 +989,7 @@ func usage() {
   qcyctl anc <off|adaptive|indoor|commuting|noisy|antiwind|transparency> [seconds]  (anc = adaptive)
   qcyctl anc --raw <mode> <scene> <level> [seconds]   (the three bytes a model's panel lists)
   qcyctl <game|sleep|multipoint|wind> <on|off> [seconds]
-  qcyctl ldac <on|off> --yes [seconds]   (restarts the earbuds; only where the model's panel declares it; not yet tested on hardware)
+  qcyctl ldac <on|off> --yes [seconds]   (restarts the earbuds; only where the model's panel declares it; tested on the N70)
   qcyctl wind off --off-byte <0|2> --yes [seconds]   (DIAGNOSTIC: which byte means "off"; default 0 where the panel declares it, 2 otherwise)
   qcyctl wear <on|off> [seconds]
   qcyctl wear off --off-byte <0|2> --yes [seconds]   (DIAGNOSTIC: byte 0 of 0x2C; default 0 where the panel declares it, 2 otherwise)
@@ -1012,6 +1018,8 @@ func usage() {
   qcyctl daemon <start|stop|status [--json]|install-service [--json]|uninstall-service [--json]>
       the daemon (qcyctld) is started on demand by commands that need it (QCYCTL_NO_AUTOSTART=1 disables that);
       install-service keeps it under systemd --user instead
+  qcyctl codec [--json] --address AA:BB:CC:DD:EE:FF   (the computer's Bluetooth audio codec for the earbuds, from PipeWire; no BLE)
+  qcyctl codec set <codec> [--json] --address AA:BB:CC:DD:EE:FF   (switch it; exit 3 = PipeWire/device unavailable, 4 = not applied)
   qcyctl version [--json]
   qcyctl keys get [seconds]
   qcyctl keys set <keyId:funId> [<keyId:funId> ...] [seconds]

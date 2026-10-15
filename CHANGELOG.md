@@ -6,6 +6,17 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-10-15
+
+### Added
+
+- Computer codec selector in Settings, below the LDAC row: one button per music (A2DP) codec the computer offers for the earbuds (SBC, SBC-XQ, AAC, LDAC, aptX, ...), the one in use highlighted; during a call it shows the call codec instead. It works for any Bluetooth earbuds and is hidden when PipeWire or the earbuds' Bluetooth device is not found. New `qcyctl codec` and `qcyctl codec set <codec>` (PipeWire only; no sudo, no Bluetooth LE, no daemon).
+- After LDAC is turned on in the panel, the computer switches to the LDAC codec by itself once the earbuds are back (waits at most 40 s, switches once, never loops).
+
+### Changed
+
+- The LDAC note now says the computer switches to LDAC by itself, instead of asking you to pick the codec in the audio settings.
+
 ## [0.1.9] - 2026-10-15
 
 ### Fixed

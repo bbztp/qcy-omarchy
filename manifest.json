@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.bbztp.qcy",
   "name": "QCY Earbuds",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "author": "bbztp",
   "license": "MIT",
   "description": "Control QCY earbuds (MeloBuds and other models) from the Omarchy bar: battery, active noise control, LDAC, multipoint, low-latency game mode, find-my-buds, and a readout of the earbuds' state.",

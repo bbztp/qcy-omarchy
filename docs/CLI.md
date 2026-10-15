@@ -14,6 +14,8 @@ qcyctl anc noisy              # set ANC mode
 qcyctl anc --raw 1 5 0        # the three bytes a model's panel lists (status --json: model.ancModes)
 qcyctl game on                # toggles: game|sleep|multipoint|wind (wind and wear "off" write 0x00 where the model's panel says so)
 qcyctl ldac on --yes          # restarts the earbuds; only where the model's panel declares it; tested on the N70
+qcyctl codec --address AA:BB:CC:DD:EE:FF [--json]            # the computer's Bluetooth audio codec for the earbuds (see Computer codec below)
+qcyctl codec set LDAC --address AA:BB:CC:DD:EE:FF [--json]   # switch the computer to another music codec
 qcyctl find                   # play a beeping tone on the earbuds' audio sink to find them: 100% sink volume, tone at -3 dBFS
                               # (--start-volume/--max-volume/--tone-level), stops after --timeout (default 60 s); asks you to take the
                               # earbuds out of your ears first (--yes skips the question; --events = JSON lines for the plugin)
@@ -30,6 +32,36 @@ qcyctl library apply <id>|--file <curve.json> --yes [--slot 255|0]   # --file ap
 qcyctl library compose --base predefinido --gains 0,0,3,0,0,-2,0,0,0,4.5 --yes   # your bars on top of a factory effect, in the app's layout, into slot 255
 qcyctl library compose --base none --gains 1,0,0,0,0,0,0,0,0,0 --dry-run --json  # only print the payload and the resulting bands
 ```
+
+### Computer codec
+
+`qcyctl codec` reads the earbuds' Bluetooth device from PipeWire (`pw-dump`) and
+`qcyctl codec set <codec>` switches it with `wpctl set-profile`. It needs no sudo,
+no Bluetooth LE and no daemon, and works for any Bluetooth earbuds. `--address` is
+the classic Bluetooth address (the one `bluetoothctl devices` shows), required. The
+codec name is matched ignoring case, spaces and dashes (`sbc-xq`, `SBC_XQ`).
+
+```json
+{"device": 92,
+ "active": {"codec": "LDAC", "kind": "music"},
+ "music": [{"codec": "SBC", "profile": "a2dp-sink-sbc", "index": 131073, "active": false},
+           {"codec": "LDAC", "profile": "a2dp-sink", "index": 131080, "active": true}]}
+```
+
+`kind` is `music` (an A2DP profile), `call` (HSP/HFP; `music` can still be switched
+to) or `off`. `music` lists the offered codecs in PipeWire's order. `set` re-reads
+PipeWire every 0.4 s, for about 3 s in all (the `wpctl` call excluded), to confirm the switch, and does nothing when the codec is
+already in use. The plugin runs `codec` when the Settings tab opens and, after you
+turn LDAC on, polls it for at most 40 s to switch to LDAC once it is offered.
+Whether the choice survives a reconnect has not been measured.
+
+| Exit | Meaning |
+|---|---|
+| 0 | done (`set`: the new codec is in use) |
+| 1 | other error |
+| 2 | usage error (missing or invalid `--address`, unknown flag or argument) |
+| 3 | unavailable: `pw-dump` or `wpctl` missing, PipeWire not running, or the earbuds are not in PipeWire; the plugin hides the row |
+| 4 | failed: the codec is not offered, `wpctl` failed, or the switch was not confirmed; the plugin shows an error |
 
 ### Curve library
 
