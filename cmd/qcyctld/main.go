@@ -1187,10 +1187,12 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 		}
 		// Model-dependent, derived from the handler of this connection.
 		caps["eq"] = d.handlerHasFeature(FeatureEQ)
-		// ldac restarts the earbuds: the panel is told "available" only
-		// when the model declares it and the device answered the probe.
+		// ldac restarts the earbuds, but the model's own panel declares it:
+		// it follows the panel, not the one-shot probe (a missed reply would
+		// hide the toggle for the whole session). The state comes from the
+		// toggles.ldac read.
 		h := d.knownHandler()
-		caps["ldac"] = snap["ldac"] && h != nil && writableDeclared(h.Capabilities(), "ldac")
+		caps["ldac"] = h != nil && writableDeclared(h.Capabilities(), "ldac")
 		rep["capabilities"] = caps
 	}
 	if p, err := d.query(protocol.OpSpatial, 800*time.Millisecond); err == nil && len(p) >= 1 {

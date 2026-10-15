@@ -61,7 +61,7 @@ answer a game-mode query with `0x02` when it is off.
 | `0x1E` | music control | `[1, action]` | unverified |
 | `0x20` | EQ v1 write | — | unverified |
 | `0x22` | EQ v2 read **and** write | see [EQ](#eq) | verified read and write; every write is read-modify-write with a backup |
-| `0x23` | LDAC | `[1, 1\|2]` | restarts the earbuds (the official panel declares it: "Turning on LDAC will restart the device"); written on any model whose panel declares it (cmd 35); **not verified on hardware**: the readback after the restart is unobserved |
+| `0x23` | LDAC | `[1, 1\|2]` | restarts the earbuds (the official panel declares it: "Turning on LDAC will restart the device"); written on any model whose panel declares it (cmd 35); **measured on the N70, fw 3.0.13, 2026-10-15**: the write is confirmed, the earbuds reboot and reconnect in about 10 s, the other settings are kept, and the host then offers the LDAC A2DP codec |
 | `0x24` | multipoint | `[1, 1\|2]` | verified: reboots the earbuds, expected |
 | `0x2A` | wind noise reduction | `[1, 1\|2]` | verified (added — was missing from this table) |
 | `0x2A` | wind detection | `[1, 1\|2]`; off is **0x00** as the app writes it (**verified on hardware 2026-10-13**: `FF 03 2A 01 00` reads back 0x00); 0x02 also reads as off (also verified) | verified |
@@ -105,7 +105,7 @@ Every wired setter was exercised through the daemon and read back with
 | spatial `0x2D` | no query reply on this model |
 | fit `0x11` | no query reply (the app never queries it); start `FF 05 11 03 01 01 01` / stop `FF 05 11 03 00 00 00` verified 2026-10-13: the final notification `[2, left, right]` arrives |
 | eq `0x22` | honours the write; only written through a read-patch-backup-write transaction (see [EQ](#eq)) |
-| ldac `0x23` | an earlier test rebooted the earbuds; the restart is declared by the official panel, so the write is allowed on any model whose panel declares it (`qcyctl ldac <on\|off> --yes`); **not verified on hardware since this change** |
+| ldac `0x23` | an earlier test rebooted the earbuds; the restart is declared by the official panel, so the write is allowed on any model whose panel declares it (`qcyctl ldac <on\|off> --yes`); **measured on the N70, fw 3.0.13, 2026-10-15**: confirmed, see [Restarts caused by writing](#restarts-caused-by-writing) |
 
 Game, sleep and wind read back `false` after a reconnect and wind persisted
 across one, so treat their post-reconnect value as unsettled rather than as
@@ -420,12 +420,14 @@ Two writes restart the earbuds:
   declares the action with the text "Turning on LDAC will restart the device"
   (see WEB_API.md), so the restart is documented behaviour, like multipoint.
   The setter is therefore enabled on models that declare it
-  (`qcyctl ldac <on|off> --yes`; the `ldac` capability comes from the `FE 01 23`
-  probe). The write is sent once and never repeated: if the link drops right
+  (`qcyctl ldac <on|off> --yes`; the `ldac` capability follows the panel; the
+  `FE 01 23` read supplies the on/off state). The write is sent once and never repeated: if the link drops right
   after the write was accepted, the daemon reports "applied, the earbuds
-  restarted" instead of an error. **Verified on hardware: NO** (not tested
-  since the write was enabled); treat the restart/readback behaviour as
-  unverified until it is.
+  restarted" instead of an error. **Measured on the N70 (fw 3.0.13,
+  2026-10-15):** the write is confirmed, the earbuds reboot and reconnect in
+  about 10 s, the other settings are kept, and the host then offers the LDAC
+  A2DP codec. The panel shows the toggle whenever the model's panel declares
+  it, not only when the connect-time probe answered.
   When the earbuds still echo the old value at 4 s and the link is up, `set`
   replies `{"indeterminate": "indeterminado: aplicado possivelmente, reinício
   pendente — releia o estado"}` (the string is Portuguese verbatim; it means

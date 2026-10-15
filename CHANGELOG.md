@@ -6,8 +6,15 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-10-15
+
+### Fixed
+
+- The LDAC toggle is shown whenever the model's panel declares it. Before, a single missed reply to the connect-time probe hid it for the whole session. The panel now notes that the vendor app does not offer it on this model, that the earbuds restart (about 10 s) and that the codec is then picked in the computer's audio settings.
+
 ### Documentation
 
+- PROTOCOL.md and CLI.md: LDAC measured on the N70 (fw 3.0.13): the write is confirmed, the earbuds reboot and reconnect in about 10 s, the other settings are kept, and the host then offers the LDAC codec.
 - PROTOCOL.md: measured on the N70 that an inactive EQ slot cannot be read even with a slot argument, and that the spatial-audio, ANC-level and fit-test queries get no reply with the earbuds in the ears.
 
 ## [0.1.8] - 2026-10-15

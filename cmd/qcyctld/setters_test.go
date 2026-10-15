@@ -355,19 +355,22 @@ func TestLdacLinkDropAfterAcceptedWriteIsNotAnError(t *testing.T) {
 	}
 }
 
-func TestLdacProbeCapabilityComesFromTheDevice(t *testing.T) {
-	d, s := scriptDaemon(t, nil)
-	s.set(0x23, []byte{2})
+func TestLdacCapabilityFollowsThePanelNotTheProbe(t *testing.T) {
+	// The 0x23 probe gets no usable reply (a miss): a declaring model still
+	// offers the toggle.
+	d, s := vendorScriptDaemon(t, 23877, nil)
+	s.set(0x23, []byte{9})
 	d.mu.Lock()
 	d.probed = false
+	d.caps = nil
 	d.mu.Unlock()
 	d.probeCapabilities()
-	if !d.capabilitiesSnapshot()["ldac"] {
-		t.Fatal("probe: ldac false although the device answered 2")
+	if d.capabilitiesSnapshot()["ldac"] {
+		t.Fatal("probe: ldac true although the device never answered")
 	}
 	rep := mustStatus(t, d)
 	if c, _ := rep["capabilities"].(map[string]interface{}); c["ldac"] != true {
-		t.Fatalf("status capabilities.ldac = %v on a verified model", c["ldac"])
+		t.Fatalf("status capabilities.ldac = %v on a model whose panel declares it", c["ldac"])
 	}
 }
 

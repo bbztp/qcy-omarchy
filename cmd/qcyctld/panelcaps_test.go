@@ -637,3 +637,38 @@ func TestANCN70StaysUnrestricted(t *testing.T) {
 		t.Fatalf("%d frames", got)
 	}
 }
+
+// capabilities.ldac is true exactly for the models whose panel declares LDAC
+// (cmd 35), whatever the probe says, and never panics.
+func TestLdacCapabilityOverAllVendorIDs(t *testing.T) {
+	declaring := 0
+	for _, p := range models.All() {
+		v := p.VendorID
+		t.Run(strconv.Itoa(int(v)), func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("panic: %v", r)
+				}
+			}()
+			want := false
+			for _, f := range models.FunctionsFor(v) {
+				if f.CmdID != nil && *f.CmdID == 35 {
+					if _, ok := f.Toggle(); ok {
+						want = true
+						declaring++
+					}
+				}
+			}
+			d, _ := vendorScriptDaemon(t, v, nil)
+			rep := mustStatus(t, d)
+			c, _ := rep["capabilities"].(map[string]interface{})
+			if got, _ := c["ldac"].(bool); got != want {
+				t.Errorf("capabilities.ldac = %v, panel declares %v", c["ldac"], want)
+			}
+		})
+	}
+	if declaring == 0 {
+		t.Fatal("no model declares LDAC: the declaring branch is not exercised")
+	}
+	t.Logf("%d models declare LDAC", declaring)
+}

@@ -141,8 +141,8 @@ Panel {
   readonly property var _cancelScenes: ["adaptive", "indoor", "commuting", "noisy", "antiwind"]
 
   // LDAC is not in this list: it restarts the earbuds, so it has its own row
-  // below with a two-step confirmation, shown only when the daemon reports the
-  // `ldac` capability (verified models). Multipoint is listed because the
+  // below with a two-step confirmation, shown whenever the daemon reports the
+  // `ldac` capability (the model's panel declares it). Multipoint is listed because the
   // product notes state the earphones restart every time Dual Device
   // Connection is toggled — that is expected, not a fault.
   readonly property var toggleDefs: [
@@ -1240,7 +1240,8 @@ Panel {
     Qcy.set(label, args)
   }
 
-  // LDAC: only with the daemon's capability, never from the fallback `true`.
+  // LDAC: only with the daemon's capability (the model's panel declares it),
+  // never from the fallback `true`; not gated on the connect probe.
   readonly property bool ldacVisible: !!(caps && caps.ldac === true) && has("ldac")
   property bool ldacConfirming: false
   property bool ldacTarget: false
@@ -3065,7 +3066,7 @@ Panel {
                 width: parent.width
                 visible: root.ldacVisible
                 label: Qcy.tr("LDAC")
-                hint: Qcy.tr("Restarts the earbuds; this is expected, not a fault")
+                hint: ""
                 checked: root.toggleState("ldac")
                 onToggled: {
                   // The target is frozen now: a state refresh while the
@@ -3073,6 +3074,15 @@ Panel {
                   root.ldacTarget = !root.toggleState("ldac")
                   root.ldacConfirming = true
                 }
+              }
+              Text {
+                width: parent.width
+                visible: root.ldacVisible
+                text: Qcy.tr("The vendor app does not offer this on this model, but the earbuds accept it. Turning it on or off restarts the earbuds (about 10 s). Then pick the LDAC codec in the computer's audio settings. Use at your own risk.")
+                color: root.muted
+                font.family: root.textFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
               }
               Column {
                 width: parent.width

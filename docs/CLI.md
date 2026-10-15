@@ -13,7 +13,7 @@ qcyctl status                 # human-readable snapshot
 qcyctl anc noisy              # set ANC mode
 qcyctl anc --raw 1 5 0        # the three bytes a model's panel lists (status --json: model.ancModes)
 qcyctl game on                # toggles: game|sleep|multipoint|wind (wind and wear "off" write 0x00 where the model's panel says so)
-qcyctl ldac on --yes          # restarts the earbuds; only where the model's panel declares it; not yet tested on hardware
+qcyctl ldac on --yes          # restarts the earbuds; only where the model's panel declares it; tested on the N70
 qcyctl find                   # play a beeping tone on the earbuds' audio sink to find them: 100% sink volume, tone at -3 dBFS
                               # (--start-volume/--max-volume/--tone-level), stops after --timeout (default 60 s); asks you to take the
                               # earbuds out of your ears first (--yes skips the question; --events = JSON lines for the plugin)
