@@ -67,6 +67,12 @@ func (f *fakeLibAPI) eqRead() (*qcycore.EqSnapshot, error) {
 	s, err := qcycore.DecodeEq(f.link.state)
 	return &s, err
 }
+func (f *fakeLibAPI) status() (map[string]interface{}, error) {
+	if f.link.statusMap == nil {
+		return nil, errors.New("no status")
+	}
+	return f.link.statusMap, nil
+}
 func (f *fakeLibAPI) eqApply(op qcycore.EqOp) (*qcycore.EqResult, error) {
 	return eqApplyVia(f.link, op)
 }
@@ -1213,8 +1219,10 @@ func TestLibraryMatchesAnyUser(t *testing.T) {
 	if m := run(other, other.MasterGain); m["match"] != true || m["id"] != "other" {
 		t.Fatalf("second: %v", m)
 	}
-	if m := run(hearing, hearing.MasterGain); m["match"] != true || m["id"] != "experiencia-auditiva" {
-		t.Fatalf("hearing card in 255: %v", m)
+	// The hearing-experience card belongs to slot 11: even a Personalizado
+	// curve equal to its bands is not named as it.
+	if m := run(hearing, hearing.MasterGain); m["match"] != false {
+		t.Fatalf("hearing card named for slot 255: %v", m)
 	}
 	if m := run(mine, mine.MasterGain+3); m["match"] != false {
 		t.Fatalf("master differs: %v", m)

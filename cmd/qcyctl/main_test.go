@@ -173,6 +173,8 @@ type fakeEqLink struct {
 	echo   []byte // returned by setConfirm; nil = the written payload
 	ok     bool
 	writes [][]byte
+	// statusMap is what the library fake answers to status() (nil: it errors).
+	statusMap map[string]interface{}
 }
 
 func (f *fakeEqLink) query(byte, time.Duration) ([]byte, error) { return f.state, nil }

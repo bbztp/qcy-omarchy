@@ -334,6 +334,9 @@ func statusFromDaemon(raw map[string]interface{}) *statusReport {
 	if p := bytesOf(raw["eq"]); len(p) > 0 {
 		if eq, err := eqReportFrom(p); err == nil {
 			rep.EQ = eq
+			if eq.Preset == qcycore.HearingTestSlot {
+				eq.Ears = earsReportFrom(raw["ears"], eq.MasterGain)
+			}
 		}
 	}
 	return rep
@@ -1727,11 +1730,38 @@ type eqBandReport struct {
 //	masterGain    master gain in dB (int16 centi-dB / 100), -12..+12
 //	bands[]       every band position with freq != 0 (up to 20), in order:
 //	              index (0-19), freq in Hz as stored on the device, gain in dB, q, type
+//	ears          only while slot 11 (hearing experience) is active and the daemon read
+//	              both ears: {"left":[8 bands],"right":[8 bands]}, each band
+//	              {index (0-7 within the ear), freq, gain, q, type}; absent otherwise
 type eqReport struct {
 	Preset     int            `json:"preset"`
 	Effect     string         `json:"effect,omitempty"` // measured effect name of the slot, when known
 	MasterGain float64        `json:"masterGain"`
 	Bands      []eqBandReport `json:"bands"`
+	Ears       *earsReport    `json:"ears,omitempty"`
+}
+
+// earsReport is the per-ear curve pair of the hearing experience, as the daemon
+// read it from the earbuds.
+type earsReport struct {
+	Left  []qcycore.EqBand `json:"left"`
+	Right []qcycore.EqBand `json:"right"`
+}
+
+// earsReportFrom decodes the daemon's "ears" object. Anything that is not a
+// valid pair of ears (an older daemon sends none) yields nil.
+func earsReportFrom(v interface{}, master float64) *earsReport {
+	if v == nil {
+		return nil
+	}
+	var e earsReport
+	if err := remarshal(v, &e); err != nil {
+		return nil
+	}
+	if qcycore.ValidateEars(&qcycore.EarCurves{Left: e.Left, Right: e.Right, MasterGain: master}) != nil {
+		return nil
+	}
+	return &e
 }
 
 // eqReportFrom decodes a raw 0x22 payload into the status schema.

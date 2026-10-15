@@ -946,6 +946,63 @@ func TestHearingApplyLeftConfirmedRightUnverifiableIsSuccess(t *testing.T) {
 	}
 }
 
+// When the daemon reads both ears back, the right one is verified too: no
+// "not independently verifiable" any more.
+func TestHearingApplyVerifiesBothEarsWhenTheEarbudsReportThem(t *testing.T) {
+	r := newRig(t, nil)
+	r.link.earsReport = true
+	err := hearingApplyFile(r.env, distinctEars(t), hearingApplyOpts{yes: true, acceptFloor: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := r.out.String()
+	if !strings.Contains(out, "both ears confirmed by readback") || strings.Contains(out, "not independently verifiable") || strings.Contains(out, "NOT CONFIRMED") {
+		t.Fatal(out)
+	}
+	if len(r.recorded) != 1 || !strings.Contains(r.recorded[0].Note, "duas orelhas") {
+		t.Fatalf("recorded %d", len(r.recorded))
+	}
+}
+
+// The right ear shows a curve other than the one written: that is wrong, not
+// unverifiable, and the card is not updated.
+func TestHearingApplyRightEarReadBackWrongIsNotConfirmed(t *testing.T) {
+	r := newRig(t, nil)
+	r.link.earsReport = true
+	junk := [hearing.Bands]int{5, 5, 5, 5, 5, 5, 5, 5}
+	r.link.rightSh = &junk
+	err := hearingApplyFile(r.env, distinctEars(t), hearingApplyOpts{yes: true, acceptFloor: true})
+	if err == nil || !strings.Contains(err.Error(), "NOT CONFIRMED for the right ear") || strings.Contains(err.Error(), "left and") || len(r.recorded) != 0 {
+		t.Fatalf("%v recorded %d", err, len(r.recorded))
+	}
+	if !strings.Contains(r.out.String(), "NOT CONFIRMED") {
+		t.Fatal(r.out.String())
+	}
+}
+
+// A stale status (served from before the write when the earbuds are busy)
+// proves nothing: the older check stands.
+func TestHearingApplyIgnoresAStaleStatus(t *testing.T) {
+	st := earStatus(earsL, earsR, 0)
+	st["stale"] = true
+	l := &fakeLink{}
+	l.earsReport = false
+	if _, _, have := verifyEarsByStatus(staleLink{l, st}, earsL, earsR); have {
+		t.Fatal("a stale status was used")
+	}
+	st["stale"] = false
+	if lo, ro, have := verifyEarsByStatus(staleLink{l, st}, earsL, earsR); !have || !lo || !ro {
+		t.Fatal("a fresh status was refused")
+	}
+}
+
+type staleLink struct {
+	*fakeLink
+	st map[string]interface{}
+}
+
+func (s staleLink) status() (map[string]interface{}, error) { return s.st, nil }
+
 func TestHearingApplyDivergentLeftIsNotConfirmed(t *testing.T) {
 	r := newRig(t, nil)
 	other := [hearing.Bands]int{1, 1, 1, 1, 1, 1, 1, 1}

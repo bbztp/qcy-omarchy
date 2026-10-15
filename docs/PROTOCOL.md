@@ -805,8 +805,9 @@ How the phone app handles the result (as observed): "use this
 result" writes `0x46` (left) and `0x47` (right) with effect index 11, nothing
 else (no 0x22, no slot select). Tapping the "Hearing experience" effect again
 with curves already saved does NOT reopen the test: the app re-sends 0x46/0x47
-index 11 from the left/right curves it keeps on the phone. The earbuds only
-report the active EQ through 0x22.
+index 11 from the left/right curves it keeps on the phone. The vendor app never
+asks the earbuds for the ears: it keeps both curves itself. The 0x22 report holds
+the left ear only; the right ear is readable with the query below.
 
 We mirror that. A library entry may carry `ears` (`left` and `right`, 8 bands
 each at 63..8000 Hz, Q 70, type 2, plus `masterGain`); its `bands`/payload hold
@@ -847,7 +848,8 @@ panel's `library matches`) therefore compares only the LAST 8 bands with
   accepted), never by frequency: the default effect's 8000 Hz band collides
   with the test's 8000 Hz band;
 - the left ear is confirmed by that readback (master within 0.05 dB, bands
-  within 0.1 dB); the right ear has no independent reading and is reported as
+  within 0.1 dB); when the daemon cannot read the right ear (see "Reading both
+  ears" below) it has no independent reading and is reported as
   "left confirmed by readback; right sent, not independently verifiable (0x22
   reports the left ear)". That is a PARTIAL confirmation and counts as success
   (exit 0, the `experiencia-auditiva` card is updated with a note saying so),
@@ -963,3 +965,27 @@ CLI: `qcyctl fn list [--json]`, `qcyctl fn set <cmdId> <value|on|off> [--yes]`
 (`--yes` for a restart warning, `--yes --yes` for a reset-type command). The
 plugin shows the section "More controls" in Ajustes, hidden when the list is
 empty.
+
+### Reading both ears (measured on an N70, firmware 3.0.13; other models inferred)
+
+While slot 11 is the active slot, the generic query frame (`FF 03 FE 01 <op>`)
+with `op` 0x46 or 0x47 is answered by a frame of opcode **0x22** (not 0x46/0x47)
+whose payload is that ear's curve, in the same layout as a 0x22 report: slot byte
+0x0b, master gain, then the bands (the prefix left by the previous effect plus the
+8 ear bands). Measured: the reply to 0x46 is byte-identical to the 0x22 report
+(the left ear is what 0x22 reports), the reply to 0x47 is the right ear and is
+byte-identical to what was written to it; the order of queries (47, 46, 47) does
+not change the answers. With slot 255 active the same queries answer with the
+active 0x22 EQ, not an ear, so the per-ear read only exists while slot 11 is
+active.
+
+The daemon reads it only when the 0x22 report says slot 11 and the model's panel
+declares the hearing test, under one transaction lock: 0x22 (opening), query 0x46,
+query 0x47, 0x22 (closing). The read is discarded unless the opening equals the
+payload the status saw, the closing equals the opening (the EQ did not change in
+between), the 0x46 reply equals the opening, both replies are slot 11 with the
+same master gain and carry at least 8 bands, no second, different 0x22 frame
+crosses a reply, and the 8 bands of each ear pass the ear-curve validation. The
+last 8 bands of each reply are the ear. The result is cached by the 0x22 payload;
+a failed read is not retried for 60 s. It is exposed in the status as
+`eq.ears` (see CLI.md).

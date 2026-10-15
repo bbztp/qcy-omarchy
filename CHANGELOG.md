@@ -6,6 +6,19 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-15
+
+### Fixed
+
+- The hearing-experience card is marked as playing only when the earbuds report the hearing-test slot (11). Before, a custom curve on slot 255 that happened to equal the average of both ears marked the card as playing, although the earbuds were playing a custom curve.
+- After a hearing-test curve is written, both ears are confirmed by readback. Before, only the left ear was confirmed.
+
+### Added
+
+- The earbuds report both hearing-test ears while the hearing experience is active (slot 11). This was measured on a MeloBuds N70 with firmware 3.0.13: a query for 0x46 or 0x47 is answered with a 0x22 frame that carries that ear. The daemon reads both ears and exposes them as `eq.ears` (`left`/`right`) in `qcyctl status --json`, only for models whose panel declares the hearing test.
+- When the hearing experience is active on the earbuds (set from the phone app or another computer) and there is no saved hearing card, the panel imports both ears into the "Hearing experience" card on its own, as if the test had been done here. A card left by 0.1.4–0.1.6 without the ears is replaced once, after a backup.
+- `qcyctl library import-device --require-ears` saves nothing unless both ears were read. `qcyctl library matches --slot N --ears json` compares both ears.
+
 ## [0.1.6] - 2026-10-14
 
 ### Changed

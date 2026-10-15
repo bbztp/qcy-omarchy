@@ -24,8 +24,8 @@ qcyctl i18n list|bundle|template|set   # languages, offline (see README, Languag
 qcyctl model image            # device pictures, downloaded on demand (see Device images below)
 qcyctl library seed           # the 8 factory effects (embedded) + Hearing experience, offline, idempotent
 qcyctl library list [--all]   # saved EQ curves (offline): factory in the app's order, Hearing experience, then yours; --all also shows older seeds
-qcyctl library import-device <name> --expect-slot 11 [--replace [--backup]] [--user]   # save the active EQ read from the earbuds (never writes to them); --replace overwrites the entry of that name (needs --expect-slot), --backup copies the old entry to ~/.local/share/qcy-omarchy/backups/curve-<id>-<UTC>.json first, --user stores it as your own curve; an entry with per-ear curves (hearing-test result) can only be replaced with --backup
-qcyctl library matches <id>|--any-user --master -10 --bands '[...]'   # offline: does the EQ the earbuds report (status eq.masterGain, eq.bands) match the entry? prints {"match":bool}; --any-user tries all your own curves and adds "id"; hearing-test entries match when the last 8 reported bands are the left ear (the prefix before them is ignored)
+qcyctl library import-device <name> --expect-slot 11 [--replace [--backup]] [--user] [--require-ears]   # save the active EQ read from the earbuds (never writes to them); --replace overwrites the entry of that name (needs --expect-slot), --backup copies the old entry to ~/.local/share/qcy-omarchy/backups/curve-<id>-<UTC>.json first, --user stores it as your own curve; an entry with per-ear curves (hearing-test result) can only be replaced with --backup; the "Experiência auditiva" card imported from slot 11 gets BOTH ears when the earbuds report them (`status --json` `eq.ears`), in the same shape as a card made by `hearing run`, so `library apply` writes 0x46/0x47 from it; --require-ears saves nothing when the ears are not reported (older daemon, read failed)
+qcyctl library matches <id>|--any-user --master -10 --bands '[...]' [--slot N] [--ears '{"left":[...],"right":[...]}']   # offline: does the EQ the earbuds report (status eq.masterGain, eq.bands) match the entry? prints {"match":bool}; --any-user tries all your own curves and adds "id"; hearing-test entries (with per-ear curves) match only slot 11 (--slot gives the active slot; without it the slot is not checked): the last 8 reported bands must be the left ear (the prefix before them is ignored) and, with --ears (status `eq.ears`), the right ear too; --any-user never names a hearing-test entry
 qcyctl library apply <id>|--file <curve.json> --yes [--slot 255|0]   # --file applies a curve JSON (for example a restore point `curve-*.json` from ~/.local/share/qcy-omarchy/backups/) without adding it to the library; write a saved curve to slot 255 (default: the app's "Custom" buffer, the only safe target while a factory effect 6/11 is active) or 0
 qcyctl library compose --base predefinido --gains 0,0,3,0,0,-2,0,0,0,4.5 --yes   # your bars on top of a factory effect, in the app's layout, into slot 255
 qcyctl library compose --base none --gains 1,0,0,0,0,0,0,0,0,0 --dry-run --json  # only print the payload and the resulting bands
@@ -191,3 +191,20 @@ qcyctl model images off      # stop all downloads (on re-enables, status shows)
 
 With downloads off, the panel uses only what is already cached, or its drawn
 icons. Delete the cache directory to remove the files.
+
+## Status: `eq.ears`
+
+`status --json` adds `eq.ears` only while the earbuds report slot 11 (hearing
+experience), the model's panel declares the hearing test and the daemon read both
+ears (see PROTOCOL.md, "Reading both ears"); otherwise the key is absent:
+
+```json
+"eq": { "preset": 11, "masterGain": -10, "bands": [ ... ],
+        "ears": { "left":  [ {"index":0,"freq":63,"gain":2,"q":70,"type":2}, ... 8 bands ],
+                  "right": [ {"index":0,"freq":63,"gain":0,"q":70,"type":2}, ... 8 bands ] } }
+```
+
+`index` counts the band within the ear (0-7); `gain` is in dB. `hearing apply` and
+`library apply` of a hearing-test card verify both ears with it ("both ears
+confirmed by readback"); without it they keep the older check (left confirmed,
+right "not independently verifiable").

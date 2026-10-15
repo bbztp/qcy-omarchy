@@ -45,3 +45,30 @@ func CurveMatchesDevice(c Curve, master float64, dev []EqBand) bool {
 	}
 	return true
 }
+
+// CurveMatchesDeviceEars is CurveMatchesDevice for an entry with Ears when the
+// earbuds also reported the two ears (left, right: the eight bands of each, as
+// read while slot 11 is active): both ears must equal the entry's, by
+// frequency and gain within a centi-dB. An entry without Ears is compared as
+// CurveMatchesDevice does.
+func CurveMatchesDeviceEars(c Curve, master float64, dev, left, right []EqBand) bool {
+	if !CurveMatchesDevice(c, master, dev) {
+		return false
+	}
+	if c.Ears == nil {
+		return true
+	}
+	return earsEqual(c.Ears.Left, left) && earsEqual(c.Ears.Right, right)
+}
+
+func earsEqual(want, got []EqBand) bool {
+	if len(want) != earBands || len(got) != earBands {
+		return false
+	}
+	for i, w := range want {
+		if got[i].Freq != w.Freq || math.Abs(got[i].Gain-w.Gain) > matchTolCenti {
+			return false
+		}
+	}
+	return true
+}

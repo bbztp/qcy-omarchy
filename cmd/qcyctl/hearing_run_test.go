@@ -144,6 +144,20 @@ type fakeLink struct {
 	// (18 bands); "replaced" = 13 bands, factory prefix; "odd" = 12 bands.
 	zeroModel string
 	baselines []string
+	// earsReport: the status carries eq.ears (a daemon that reads both ears
+	// while slot 11 is active). The ears shown are the last written ones;
+	// rightShown/leftShown override them.
+	earsReport         bool
+	wroteL, wroteR     [hearing.Bands]int
+	leftShown, rightSh *[hearing.Bands]int
+}
+
+func earBandMaps(g [hearing.Bands]int) []interface{} {
+	out := make([]interface{}, hearing.Bands)
+	for i, v := range g {
+		out[i] = map[string]interface{}{"index": i, "freq": hearing.Freqs[i], "gain": float64(v), "q": 70, "type": 2}
+	}
+	return out
 }
 
 func (l *fakeLink) rec(s string) {
@@ -171,7 +185,19 @@ func (l *fakeLink) status() (map[string]interface{}, error) {
 	l.mu.Lock()
 	l.statusCalls++
 	l.mu.Unlock()
-	return map[string]interface{}{"model": map[string]interface{}{"verified": l.verified}, "eq": map[string]interface{}{"slot": 6}}, nil
+	st := map[string]interface{}{"model": map[string]interface{}{"verified": l.verified}, "eq": map[string]interface{}{"slot": 6}}
+	if l.earsReport {
+		ls, rs := l.wroteL, l.wroteR
+		if l.leftShown != nil {
+			ls = *l.leftShown
+		}
+		if l.rightSh != nil {
+			rs = *l.rightSh
+		}
+		st["eq"] = map[string]interface{}{"preset": 11.0, "masterGain": 0.0,
+			"ears": map[string]interface{}{"left": earBandMaps(ls), "right": earBandMaps(rs)}}
+	}
+	return st, nil
 }
 func (l *fakeLink) hearingDeclared() (bool, error) {
 	if err := l.useClosed(); err != nil {
@@ -229,6 +255,11 @@ func (l *fakeLink) hearingWrite(ear hearing.Ear, g, o [hearing.Bands]int, baseli
 	}
 	mg, _ = hearing.ClampMaster(mg)
 	l.mu.Lock()
+	if ear == hearing.Left {
+		l.wroteL = g
+	} else {
+		l.wroteR = g
+	}
 	if ear == hearing.Left || !l.haveLeft {
 		l.leftGains, l.haveLeft = g, true
 	}
@@ -787,7 +818,7 @@ func TestHearingRunBackupJoinedBeforeVolumeAndMode(t *testing.T) {
 	if err := hearingRunLive(r.env, o); err != nil {
 		t.Fatal(err)
 	}
-	if !atVolume || !atMode || r.link.statusCalls != 1 || r.link.eqCalls < 1 {
+	if !atVolume || !atMode || r.link.statusCalls != 2 || r.link.eqCalls < 1 {
 		t.Fatalf("volume %v mode %v status %d eq %d", atVolume, atMode, r.link.statusCalls, r.link.eqCalls)
 	}
 }

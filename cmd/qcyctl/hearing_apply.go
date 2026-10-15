@@ -302,7 +302,6 @@ func hearingCommit(out io.Writer, link hearingLink, l, r [hearing.Bands]int, res
 			if uok, unote := rightUnverifiable(c, l, baseline); uok {
 				partial = true
 				addNote(unote)
-				fmt.Fprintln(out, "left confirmed by readback; right sent, not independently verifiable (0x22 reports the left ear)")
 				break
 			}
 			fallthrough
@@ -313,6 +312,27 @@ func hearingCommit(out io.Writer, link hearingLink, l, r [hearing.Bands]int, res
 	}
 	if modeOff != nil {
 		modeOff()
+	}
+	// The earbuds report both ears while slot 11 is active: that is the check,
+	// where it is available. Otherwise the weaker one above stands.
+	bothEars := false
+	if lOK, rOK, have := verifyEarsByStatus(link, l, r); have {
+		partial, unconfirmed = false, nil
+		if lOK && rOK {
+			bothEars = true
+			fmt.Fprintln(out, "both ears confirmed by readback (the earbuds report the left and the right curve)")
+		} else {
+			if !lOK {
+				unconfirmed = append(unconfirmed, hearing.Left.String())
+			}
+			if !rOK {
+				unconfirmed = append(unconfirmed, hearing.Right.String())
+			}
+			fmt.Fprintf(out, "NOT CONFIRMED: the earbuds report a different curve for the %s ear than the one written; to restore the previous state: %s\n", strings.Join(unconfirmed, " and "), restoreCmd)
+		}
+	}
+	if partial {
+		fmt.Fprintln(out, "left confirmed by readback; right sent, not independently verifiable (0x22 reports the left ear)")
 	}
 	if snap, e := link.eqRead(); e != nil {
 		fmt.Fprintf(out, "warning: final read: %v\n", e)
@@ -328,6 +348,8 @@ func hearingCommit(out io.Writer, link hearingLink, l, r [hearing.Bands]int, res
 	}
 	if partial {
 		fmt.Fprintf(out, "applied (left confirmed by readback; right sent, not independently verifiable). to restore the previous state: %s\n", restoreCmd)
+	} else if bothEars {
+		fmt.Fprintf(out, "applied (both ears confirmed by readback). to restore the previous state: %s\n", restoreCmd)
 	} else {
 		fmt.Fprintf(out, "applied. to restore the previous state: %s\n", restoreCmd)
 	}
@@ -341,6 +363,9 @@ func hearingCommit(out io.Writer, link hearingLink, l, r [hearing.Bands]int, res
 		}
 		if partial {
 			state = partialConfirmNote
+		}
+		if bothEars {
+			state = "confirmado pelo readback das duas orelhas (o aparelho reporta a esquerda e a direita)"
 		}
 		if baseline == "zero" {
 			state += "; experimento baseline zero (13 bandas por orelha, não verificado)"

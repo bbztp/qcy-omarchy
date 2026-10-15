@@ -90,3 +90,27 @@ func TestCurveMatchesDevicePlain(t *testing.T) {
 		t.Error("count differs")
 	}
 }
+
+func TestCurveMatchesDeviceEarsComparesBothEars(t *testing.T) {
+	mk := func(off float64) []EqBand {
+		out := make([]EqBand, earBands)
+		for i := range out {
+			out[i] = EqBand{Index: i, Freq: 100 * (i + 1), Gain: float64(i) + off, Q: 70, Type: 2}
+		}
+		return out
+	}
+	c := Curve{Ears: &EarCurves{Left: mk(0), Right: mk(2), MasterGain: -1}}
+	dev := mk(0)
+	if !CurveMatchesDeviceEars(c, -1, dev, mk(0), mk(2)) {
+		t.Fatal("equal ears do not match")
+	}
+	if CurveMatchesDeviceEars(c, -1, dev, mk(0), mk(3)) {
+		t.Fatal("a different right ear matches")
+	}
+	if CurveMatchesDeviceEars(c, -1, dev, mk(0), mk(2)[:7]) {
+		t.Fatal("a short right ear matches")
+	}
+	if CurveMatchesDeviceEars(c, -1, mk(1), mk(1), mk(2)) {
+		t.Fatal("a different left ear matches")
+	}
+}

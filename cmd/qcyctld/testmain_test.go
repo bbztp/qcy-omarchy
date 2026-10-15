@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Structural guard: tests never reach the real BLE adapter (the real dialer
@@ -45,6 +46,8 @@ func TestMain(m *testing.M) {
 		os.Setenv(k, v)
 	}
 	hardwareAllowed = false
+	earSettle = 20 * time.Millisecond
+	earReplyTimeout = 150 * time.Millisecond // a fake that never answers a 0x46/0x47 query must not slow every status
 
 	code := m.Run()
 

@@ -1448,35 +1448,68 @@ Singleton {
     }
   }
 
-  // Slot 11 (the hearing experience) active on the earbuds but no entry for it
-  // in the library: save a read-only copy of what the earbuds report, once per
-  // session. `import-device` never writes to the earbuds and refuses an
-  // existing id; --expect-slot makes it save nothing if the active slot moved.
+  // Slot 11 (the hearing experience) active on the earbuds, with both ears read
+  // back (status eq.ears): make the "Experiência auditiva" card from them, as if
+  // the test had been done here. `import-device` never writes to the earbuds;
+  // --expect-slot makes it save nothing if the active slot moved, and
+  // --require-ears makes it save nothing unless both ears are there (no card
+  // with half of the result).
+  //
+  // Without eq.ears nothing happens and no flag is set: an older daemon never
+  // reports them (so nothing ever runs), a current one may report them on the
+  // next status. A card from a previous version has no per-ear curves: when the
+  // ears are reported it is replaced (the old copy goes to the backups
+  // directory), once per session unless the command fails.
   property bool _hearingImportTried: false
+  property bool _hearingMigrateTried: false
+  function _reportHasEars() {
+    var eq = report ? report.eq : null
+    var e = eq ? eq.ears : null
+    return !!e && Array.isArray(e.left) && Array.isArray(e.right) && e.left.length === 8 && e.right.length === 8
+  }
+  property bool _hearingLibraryLoadAsked: false
   function _maybeImportHearing() {
-    if (_hearingImportTried || !libraryLoaded || !ready || !connected || busy || report === null) return
+    if (!ready || !connected || busy || report === null) return
+    if (hearingRunning || hearingApplyState === "running") return
     var eq = report.eq
     if (!eq || eq.preset === null || eq.preset === undefined || Number(eq.preset) !== 11) return
-    for (var i = 0; i < library.length; i++) {
-      // Seen present: if the user deletes it later, it is not brought back.
-      if (library[i].id === "experiencia-auditiva") { _hearingImportTried = true; return }
+    if (!_reportHasEars()) return
+    // The library is loaded lazily (Sound tab); load it now so the import does
+    // not wait for the user to open that tab. libraryReload() calls back here.
+    if (!libraryLoaded) {
+      if (!_hearingLibraryLoadAsked) { _hearingLibraryLoadAsked = true; libraryReload() }
+      return
     }
-    if (settling) return
+    var entry = null
+    for (var i = 0; i < library.length; i++) {
+      if (library[i].id === "experiencia-auditiva") { entry = library[i]; break }
+    }
+    if (entry !== null) {
+      // Seen present: if the user deletes it later, it is not brought back.
+      _hearingImportTried = true
+      if (entry.ears || _hearingMigrateTried || entry.source !== "device-import" || settling) return
+      _hearingMigrateTried = true
+      runOffline(["library", "import-device", "Experiência auditiva", "--expect-slot", "11", "--require-ears", "--replace", "--backup", "--json"],
+        root._hearingImportDone)
+      return
+    }
+    if (_hearingImportTried || settling) return
     _hearingImportTried = true
-    runOffline(["library", "import-device", "Experiência auditiva", "--expect-slot", "11", "--json"],
-      function (code, out, err) {
-        if (code === 0) { root.libraryReload(); return }
-        // Transient failure (busy, timeout, slot moved): try again later, a
-        // few times only, spaced out.
-        if (++root._hearingImportFails < 3) hearingImportRetry.restart()
-      })
+    runOffline(["library", "import-device", "Experiência auditiva", "--expect-slot", "11", "--require-ears", "--json"],
+      root._hearingImportDone)
+  }
+  function _hearingImportDone(code, out, err) {
+    if (code === 0) { root.libraryReload(); return }
+    // Transient failure (busy, timeout, slot moved, ears not read): try again
+    // later, a few times only, spaced out.
+    if (++root._hearingImportFails < 3) hearingImportRetry.restart()
   }
   property int _hearingImportFails: 0
   Timer {
     id: hearingImportRetry
     interval: 30000
     repeat: false
-    onTriggered: { root._hearingImportTried = false; root._maybeImportHearing() }
+    onTriggered: { root._hearingImportTried = false; root._hearingMigrateTried = false; root._maybeImportHearing() }
   }
 
   // Reload the list. On a first, empty library, seed it once (idempotent) and
@@ -1649,8 +1682,13 @@ Singleton {
 
   // Does the EQ the earbuds report match this library entry? The rule lives in
   // the CLI (`library matches`); done(ok, match).
-  function libraryMatches(id, master, bands, done) {
-    runOffline(["library", "matches", id, "--master", Number(master).toFixed(2), "--bands", JSON.stringify(bands)],
+  // `slot` is the active slot and `ears` the status eq.ears (both optional): a
+  // hearing-test entry only matches slot 11, and with the ears both are compared.
+  function libraryMatches(id, master, bands, done, slot, ears) {
+    var args = ["library", "matches", id, "--master", Number(master).toFixed(2), "--bands", JSON.stringify(bands)]
+    if (slot !== undefined && slot !== null && slot >= 0) args.push("--slot", String(slot))
+    if (ears) args.push("--ears", JSON.stringify(ears))
+    runOffline(args,
       function (code, out, err) {
         var j = root._parseJson(out)
         if (done) done(code === 0 && !!j, !!(j && j.match))

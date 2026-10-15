@@ -250,6 +250,7 @@ func (d *daemon) connect() error {
 		var name string
 		sess, name, err = d.dialer.Dial(d.onNotify)
 		if err == nil {
+			d.dropEars() // the phone may have changed the ears while we were away
 			d.mu.Lock()
 			d.sess = sess
 			d.connected = true
@@ -414,6 +415,7 @@ func (d *daemon) invalidateCache() {
 	d.lastStatus = nil
 	d.lastBattery = nil
 	d.mu.Unlock()
+	d.dropEars()
 }
 
 func (d *daemon) storeStatus(rep map[string]interface{}, gen uint64) {

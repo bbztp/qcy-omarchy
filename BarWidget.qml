@@ -293,6 +293,13 @@ Panel {
     return e.bands.map(function (x) { return x.freq + "/" + x.gain }).join(",")
   }
 
+  // The hearing-experience card (and any entry with per-ear curves) belongs to
+  // slot 11: it is "in use" only when the earbuds report slot 11, never because
+  // another slot (Personalizado) happens to hold a curve with the same bands.
+  function slot11Only(e) {
+    return !!e && (!!e.ears || e.id === "experiencia-auditiva")
+  }
+
   // Leftover of the old editor's working copy: kept on disk, never shown.
   function hiddenEntry(e) {
     return !!e && e.id === "rascunho"
@@ -309,7 +316,7 @@ Panel {
     // The effect the user just chose or adjusted stays marked at once; waiting
     // for the readback made the marker drop and come back seconds later.
     if (root.baseId !== "" && (slot === 255 || slot < 0)) {
-      for (i = 0; i < l.length; i++) if (l[i].id === root.baseId && !root.hiddenEntry(l[i])) return root.baseId
+      for (i = 0; i < l.length; i++) if (l[i].id === root.baseId && !root.hiddenEntry(l[i]) && !root.slot11Only(l[i])) return root.baseId
     }
     // Slot 11 is the hearing-test experience by definition: the card of that
     // name is the one in use, never a backup copy that happens to share bands.
@@ -327,17 +334,17 @@ Panel {
     }
     if (sig !== "") {
       for (i = 0; i < l.length; i++) {
-        if (!root.hiddenEntry(l[i]) && l[i].id !== skip && root.entrySig(l[i]) === sig) return l[i].id
+        if (!root.hiddenEntry(l[i]) && l[i].id !== skip && (slot === 11 || !root.slot11Only(l[i])) && root.entrySig(l[i]) === sig) return l[i].id
       }
     }
     if (slot >= 0 && slot !== 255) {
       for (i = 0; i < l.length; i++) {
-        if (!root.hiddenEntry(l[i]) && l[i].id !== skip && l[i].source !== "user" && Number(l[i].slot) === slot) return l[i].id
+        if (!root.hiddenEntry(l[i]) && l[i].id !== skip && (slot === 11 || !root.slot11Only(l[i])) && l[i].source !== "user" && Number(l[i].slot) === slot) return l[i].id
       }
       var eff = rep && rep.eq && rep.eq.effect ? String(rep.eq.effect) : ""
       if (eff !== "") {
         for (i = 0; i < l.length; i++) {
-          if (!root.hiddenEntry(l[i]) && l[i].id !== skip && l[i].name === eff) return l[i].id
+          if (!root.hiddenEntry(l[i]) && l[i].id !== skip && (slot === 11 || !root.slot11Only(l[i])) && l[i].name === eff) return l[i].id
         }
       }
     }
@@ -972,7 +979,7 @@ Panel {
   function matchWantKey() {
     var b = rep && rep.eq ? rep.eq.bands : null
     if (root.activeSlot !== 11 || root.hearingEntry === null || !b || b.length === 0) return ""
-    return Number(rep.eq.masterGain || 0).toFixed(2) + "|" + JSON.stringify(b) + "#" + JSON.stringify(root.hearingEntry)
+    return Number(rep.eq.masterGain || 0).toFixed(2) + "|" + JSON.stringify(b) + "|" + JSON.stringify(rep.eq.ears || null) + "#" + JSON.stringify(root.hearingEntry)
   }
 
   function requestMatch(force) {
@@ -982,10 +989,12 @@ Panel {
     if (key === root._matchKey && !force) return
     root._matchKey = key
     root._matchResult = ""
+    // Slot 11 and, when the daemon read them, both ears: the CLI compares the
+    // right ear too, not only the left one that 0x22 reports.
     Qcy.libraryMatches(root.hearingEntry.id, rep.eq.masterGain || 0, rep.eq.bands, function (ok, match) {
       if (root._matchKey !== key) return
       root._matchResult = ok ? (match ? "same" : "diff") : ""
-    })
+    }, root.activeSlot, rep.eq.ears || null)
   }
 
   Timer {
@@ -1013,7 +1022,8 @@ Panel {
   function m255WantKey() {
     var b = rep && rep.eq ? rep.eq.bands : null
     if (root.activeSlot !== 255 || root.baseId !== "" || !Qcy.libraryLoaded || !b || b.length === 0) return ""
-    var users = Qcy.library.filter(function (e) { return (e.source === "user" || e.id === "experiencia-auditiva") && !root.hiddenEntry(e) })
+    // The hearing card and entries with per-ear curves are slot 11's: not candidates here.
+    var users = Qcy.library.filter(function (e) { return e.source === "user" && !root.slot11Only(e) && !root.hiddenEntry(e) })
     return Number(rep.eq.masterGain || 0).toFixed(2) + "|" + JSON.stringify(b) + "#" + JSON.stringify(users)
   }
 

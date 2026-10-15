@@ -101,6 +101,13 @@ type daemon struct {
 	lastStatus  *snapshot
 	lastBattery *snapshot
 
+	// Per-ear readback of the hearing experience (ears.go), guarded by earsMu.
+	earsMu    sync.Mutex
+	earsKey   string // hex of the 0x22 payload the cached answer belongs to
+	earsVal   *earsReport
+	earsUntil time.Time // a failed read is not retried before this instant
+	earsAt    time.Time // when earsVal was read
+
 	// Generic panel functions (fn.go): readings cached per session, guarded by mu.
 	fnSess  session
 	fnCache map[int]fnReading
@@ -1219,6 +1226,11 @@ func (d *daemon) gatherStatus() (map[string]interface{}, error) {
 	for name, op := range other {
 		if p, err := d.query(op, 1500*time.Millisecond); err == nil {
 			rep[name] = bytesJSON(p)
+			if name == "eq" {
+				if e := d.earsFor(p); e != nil {
+					rep["ears"] = e
+				}
+			}
 		}
 	}
 	// Generic panel functions: nothing is asked when the model declares none.

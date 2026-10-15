@@ -262,6 +262,10 @@ func ValidateCurve(c Curve) error {
 	return nil
 }
 
+// ValidateEars is validateEars for callers outside the package (the daemon
+// checks what the earbuds report before it exposes it as a pair of ears).
+func ValidateEars(e *EarCurves) error { return validateEars(e) }
+
 // validateEars checks the per-ear curves: EarBands bands each, in increasing
 // position, with frequency, gain, Q and type in the ranges of a payload.
 func validateEars(e *EarCurves) error {
