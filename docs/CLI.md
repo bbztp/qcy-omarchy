@@ -89,38 +89,55 @@ payload of the currently **active** slot, as read from the earbuds, is saved to
 
 ## Daemon lifecycle
 
-Commands that talk to the earbuds start `qcyctld` on demand when its socket does
-not answer: through `qcyctld.service` if that user unit is enabled, otherwise by
-launching `qcyctld` detached (looked up next to `qcyctl`, then in
-`~/.local/share/qcy-omarchy/bin` — where the plugin installs it —
-`~/.local/bin` and finally `PATH`). A daemon installed by the plugin also exits
-by itself when the plugin directory recorded in `plugin-dir` next to its binary
-is gone (checked every 30 s, only when idle); binaries without that file are
-never checked. Its output goes to
-`${XDG_STATE_HOME:-~/.local/state}/qcy-omarchy/qcyctld.log` (truncated above
-1 MiB); concurrent starters are serialised with a lock. Offline commands (`i18n`,
-`library list/show/...`, `model`, `hearing plan|result`, `version`) never start
-it.
+Commands that talk to the earbuds need `qcyctld`. With the socket unit enabled
+(the plugin does this when it installs or updates, and Settings > Daemon >
+"Start with the system" toggles it) systemd holds the daemon socket and starts
+`qcyctld.service` on the first connection. Without it, a command whose socket
+does not answer launches `qcyctld` detached (looked up next to `qcyctl`, then in
+`~/.local/share/qcy-omarchy/bin`, `~/.local/bin` and finally `PATH`). Its output
+goes to `${XDG_STATE_HOME:-~/.local/state}/qcy-omarchy/qcyctld.log` (truncated
+above 1 MiB); concurrent starters are serialised with a lock, and a second
+detached daemon exits quietly because the first holds a lifetime lock on
+`$XDG_RUNTIME_DIR/qcyctld.lock`. Offline commands (`i18n`, `library list/show/...`,
+`model`, `hearing plan|result`, `version`) never start it.
 
 ```sh
 qcyctl daemon start              # idempotent
-qcyctl daemon stop               # SIGTERM to the socket owner, or systemctl stop
+qcyctl daemon stop               # systemctl stop of the service when socket-managed
+                                 # (the socket stays and reactivates it on demand),
+                                 # else SIGTERM and wait for the process to exit
 qcyctl daemon status [--json]    # running, pid, managedBySystemd, serviceInstalled,
-                                 # serviceEnabled, binary, log
-qcyctl daemon install-service    # writes ~/.config/systemd/user/qcyctld.service with
-                                 # the resolved qcyctld path, then enable --now
-qcyctl daemon uninstall-service  # disable --now, removes the unit
+                                 # serviceEnabled, socketActive, version, cliVersion,
+                                 # binary, log
+qcyctl daemon install-service [--json] [--quiet]
+                                 # writes qcyctld.socket + qcyctld.service under
+                                 # ~/.config/systemd/user, enable --now the socket and
+                                 # try-restart the service (picks up a new binary);
+                                 # safe to repeat; fails if no systemd user session
+qcyctl daemon disable-service   # the Settings toggle OFF: disable --now the socket,
+                                 # stop the service, keep the unit files (opt-out)
+qcyctl daemon refresh-service   # run by the bootstrap after an update: no socket unit
+                                 # file or socket enabled -> install-service; socket
+                                 # disabled (opt-out) -> rewrite changed units, never
+                                 # enable, stop the daemon so the next client starts
+                                 # the new binary
+qcyctl daemon uninstall-service  # disable --now the socket, stop the service,
+                                 # remove both units (also "Remove QCY data…")
 qcyctl version [--json]          # also: qcyctld --version
 ```
 
-[`packaging/qcyctld.service`](../packaging/qcyctld.service) is a static example;
-`install-service` writes the same unit with the real `ExecStart=` path and a
-`ConditionPathExists=` on it, so a removed plugin does not leave a unit failing
-in a restart loop.
+The service unit has no `[Install]` section (the socket activates it) and runs
+the stable `~/.local/share/qcy-omarchy/bin/qcyctld` link, with a
+`ConditionPathExists=` on it so a removed install does not leave a unit failing
+in a restart loop, and `TimeoutStopSec=20`. A 0.1.5 unit that was enabled on its
+own is disabled by `install-service`, and a daemon started the old way is stopped
+(and awaited) before systemd binds the socket. The version shown by `status` is
+informational: a daemon older than `qcyctl` is replaced by the next
+`install-service` (the plugin runs it after each update) or by toggling the
+setting off and on.
 
-`qcyctld` exits by itself (releasing the earbuds and the socket) when its own
-executable was deleted or replaced, checked every 30 s and only while no request
-is in flight; the next command starts the current binary.
+On SIGTERM the daemon stops accepting, lets the requests in flight finish (up to
+15 s, so a backup/write/readback EQ sequence is not cut) and exits.
 
 ### One client at a time
 

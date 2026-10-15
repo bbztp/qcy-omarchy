@@ -80,8 +80,8 @@ omarchy plugin remove io.github.bbztp.qcy
 The binaries live in `~/.local/share/qcy-omarchy/bin`, outside the plugin
 directory (the shell reloads all plugins on any write under
 `~/.config/omarchy/plugins`, so the plugin never writes there). `plugin remove`
-does not delete them; a running `qcyctld` notices that the plugin directory is
-gone and exits. If "Start with the system" is on, turn it off
+does not delete them; a running `qcyctld` stays up until stopped
+(the unit has a ConditionPathExists on the binary). The daemon socket is enabled by default; turn it off
 first (or run `qcyctl daemon uninstall-service`). Settings > Daemon >
 "Remove QCY data..." deletes the data, config and cache directories.
 
@@ -140,9 +140,10 @@ so a scanner will flag the following. All of it is deliberate:
   tagged source (static, -trimpath).
 - Fallback: if no release can be downloaded, it runs `go build` on the cloned
   source (needs Go; its build cache lives in the staging directory and is removed; modules use Go's normal cache).
-- Optional systemd --user unit: the daemon can be enabled at login from
-  Settings > Daemon; it is off until the user turns it on. The unit lives in
-  ~/.config/systemd/user.
+- systemd --user units (qcyctld.socket + qcyctld.service): the bootstrap runs
+  `qcyctl daemon refresh-service` after installing, which enables the socket on
+  a first install and keeps it off if the user turned it off in Settings >
+  Daemon. They live in ~/.config/systemd/user.
 - No sudo, no root, no system paths. No `curl | sh`. Writes only under
   ~/.local/share, ~/.config and ~/.cache in a qcy-omarchy directory (never
   inside the plugin directory); "Remove QCY data..." deletes them.

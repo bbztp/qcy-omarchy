@@ -80,6 +80,12 @@ type daemonClient struct {
 	conn net.Conn
 	enc  *json.Encoder
 	dec  *json.Decoder
+	// redial opens a new connection to the daemon socket (nil: no retry).
+	redial func() (net.Conn, error)
+}
+
+func (dc *daemonClient) setConn(c net.Conn) {
+	dc.conn, dc.enc, dc.dec = c, json.NewEncoder(c), json.NewDecoder(c)
 }
 
 // daemonRequestTimeout bounds one request/response round trip. The daemon may
@@ -113,11 +119,9 @@ func dialDaemon(timeout time.Duration) (*daemonClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &daemonClient{
-		conn: conn,
-		enc:  json.NewEncoder(conn),
-		dec:  json.NewDecoder(conn),
-	}, nil
+	dc := &daemonClient{redial: func() (net.Conn, error) { return net.DialTimeout("unix", sock, timeout) }}
+	dc.setConn(conn)
+	return dc, nil
 }
 
 func daemonSocketPath() (string, error) {
@@ -128,7 +132,51 @@ func (dc *daemonClient) Close() error {
 	return dc.conn.Close()
 }
 
+// Restart window: the daemon answers code "stopping" to a request it refuses
+// while it winds down (never executed), and a restart under systemd keeps the
+// socket bound, so a new connection queues for the next daemon. The budget
+// covers the unit's TimeoutStopSec=20.
+const restartRetryBudget = 25 * time.Second
+
+var retrySleep = time.Sleep
+
+// errNotExecuted wraps a failure that provably happened before the daemon could
+// execute the request: its explicit "stopping" refusal, or a connection that
+// could not be used to send it.
+type errNotExecuted struct{ err error }
+
+func (e *errNotExecuted) Error() string { return e.err.Error() }
+func (e *errNotExecuted) Unwrap() error { return e.err }
+
+// request sends one request; when the daemon is restarting it reconnects and
+// retries the same request with backoff. A request that was sent and then lost
+// its connection mid-reply is never retried (it may have executed).
 func (dc *daemonClient) request(cmd string, args map[string]interface{}) (interface{}, error) {
+	var spent time.Duration
+	backoff := 100 * time.Millisecond
+	for {
+		data, err := dc.requestOnce(cmd, args)
+		var ne *errNotExecuted
+		if err == nil || !errors.As(err, &ne) || dc.redial == nil {
+			return data, err
+		}
+		if spent >= restartRetryBudget {
+			return nil, ne.err
+		}
+		retrySleep(backoff)
+		spent += backoff
+		if backoff < 2*time.Second {
+			backoff *= 2
+		}
+		// A failed reconnect is a failure before sending: keep trying.
+		if c, derr := dc.redial(); derr == nil {
+			_ = dc.conn.Close()
+			dc.setConn(c)
+		}
+	}
+}
+
+func (dc *daemonClient) requestOnce(cmd string, args map[string]interface{}) (interface{}, error) {
 	req := map[string]interface{}{
 		"cmd":  cmd,
 		"args": args,
@@ -136,7 +184,8 @@ func (dc *daemonClient) request(cmd string, args map[string]interface{}) (interf
 	// Re-armed per round trip because the connection is reused.
 	_ = dc.conn.SetDeadline(time.Now().Add(daemonRequestTimeout))
 	if err := dc.enc.Encode(req); err != nil {
-		return nil, err
+		// The line never reached the daemon complete: it cannot have run it.
+		return nil, &errNotExecuted{err}
 	}
 	var resp map[string]interface{}
 	if err := dc.dec.Decode(&resp); err != nil {
@@ -144,6 +193,9 @@ func (dc *daemonClient) request(cmd string, args map[string]interface{}) (interf
 	}
 	if ok, _ := resp["ok"].(bool); !ok {
 		msg, _ := resp["error"].(string)
+		if code, _ := resp["code"].(string); code == "stopping" {
+			return nil, &errNotExecuted{errors.New(msg)}
+		}
 		if code, _ := resp["code"].(string); isEqCode(code) {
 			// Keep the daemon's classification: callers match it with
 			// errors.Is(err, qcycore.Err*) / errors.As(*qcycore.EqError).
@@ -1338,14 +1390,34 @@ func saveCachedAddr(addr bluetooth.Address) {
 	if p == "" {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return
 	}
 	random := "0"
 	if addr.IsRandom() {
 		random = "1"
 	}
-	_ = os.WriteFile(p, []byte(addr.String()+" "+random+"\n"), 0o644)
+	// Same lock and atomic replace as the daemon's writer. The daemon keeps
+	// more in this file (name, vendorId, colour) than the address: an entry for
+	// the same address is never replaced by this shorter one, and a file that
+	// exists but cannot be read or understood is left alone.
+	unlock, err := qcycore.LockFile(p+".lock", 2*time.Second)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	if b, err := os.ReadFile(p); err == nil {
+		f := strings.Fields(string(b))
+		if len(f) < 2 {
+			return
+		}
+		if strings.EqualFold(f[0], addr.String()) && f[1] == random {
+			return
+		}
+	} else if !os.IsNotExist(err) {
+		return
+	}
+	_ = qcycore.WriteFileAtomic(p, []byte(addr.String()+" "+random+"\n"), 0o600)
 }
 
 func findChar(s bluetooth.DeviceService, uuid bluetooth.UUID) *bluetooth.DeviceCharacteristic {

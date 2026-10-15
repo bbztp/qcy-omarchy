@@ -104,6 +104,10 @@ type daemon struct {
 	// Generic panel functions (fn.go): readings cached per session, guarded by mu.
 	fnSess  session
 	fnCache map[int]fnReading
+
+	// stopping (guarded by mu) refuses new requests once a stop began, so the
+	// ones in flight can finish.
+	stopping bool
 }
 
 type frame struct {
@@ -534,6 +538,25 @@ func loadCachedAddr() (bluetooth.Address, bool) {
 	return addr, true
 }
 
+// mergeCacheEntry never lets a save carry less than the file already knows
+// about the same address: an unknown name, vendorId or colour keeps the stored
+// one (a connection that did not scan sees none of them).
+func mergeCacheEntry(old, next cacheEntry) cacheEntry {
+	if !strings.EqualFold(old.Addr, next.Addr) {
+		return next
+	}
+	if next.Name == "" {
+		next.Name = old.Name
+	}
+	if !next.HaveVendor {
+		next.VendorID, next.HaveVendor = old.VendorID, old.HaveVendor
+		next.ColorIndex, next.HaveColor = old.ColorIndex, old.HaveColor
+	} else if !next.HaveColor && old.HaveVendor && old.VendorID == next.VendorID {
+		next.ColorIndex, next.HaveColor = old.ColorIndex, old.HaveColor
+	}
+	return next
+}
+
 // saveCachedAddr stores the address, the advertised name and (when the scan
 // saw it) the vendorId, which is what model detection uses on the fast path,
 // and the advertised colorIndex.
@@ -543,14 +566,27 @@ func saveCachedAddr(addr bluetooth.Address, name string, vendor uint16, haveVend
 		return
 	}
 	_ = os.Chmod(filepath.Dir(p), 0o700)
-	line := formatCacheEntry(cacheEntry{
+	next := cacheEntry{
 		Addr: addr.String(), Random: addr.IsRandom(), Name: name,
 		VendorID: vendor, HaveVendor: haveVendor,
 		ColorIndex: color, HaveColor: haveColor && haveVendor,
-	})
-	if os.WriteFile(p, []byte(line), 0o600) == nil {
-		_ = os.Chmod(p, 0o600)
 	}
+	// Read-merge-write under the lock the qcyctl writer shares, replaced
+	// atomically: nobody sees a truncated file and nobody saves less than it
+	// holds.
+	unlock, err := qcycore.LockFile(p+".lock", 2*time.Second)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	if b, err := os.ReadFile(p); err == nil {
+		if old, ok := parseCacheEntry(string(b)); ok {
+			next = mergeCacheEntry(old, next)
+		}
+	} else if !os.IsNotExist(err) {
+		return
+	}
+	_ = qcycore.WriteFileAtomic(p, []byte(formatCacheEntry(next)), 0o600)
 }
 
 // loadCachedName returns the name stored alongside a cached address.
@@ -804,12 +840,63 @@ func (d *daemon) drain() {
 	}
 }
 
+// errStopping is what a request gets once the daemon began to stop. Its
+// response carries code stoppingCode: the request was refused, never executed,
+// so the client may retry it against the next daemon.
+var errStopping = errors.New("daemon stopping")
+
+const stoppingCode = "stopping"
+
+// stopWait caps how long a stop waits for the requests in flight (a
+// multi-frame EQ backup/write/readback must not be cut in the middle);
+// the unit's TimeoutStopSec is larger.
+const stopWait = 15 * time.Second
+
+// beginStop refuses new requests and waits, up to wait, for the ones in
+// flight. It returns whether the daemon went idle.
+func (d *daemon) beginStop(wait time.Duration) bool {
+	d.mu.Lock()
+	d.stopping = true
+	d.mu.Unlock()
+	deadline := time.Now().Add(wait)
+	for {
+		d.mu.Lock()
+		n := d.inflight
+		d.mu.Unlock()
+		if n == 0 {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// tryBegin is beginRequest unless the daemon is stopping; the check and the
+// increment share one critical section with beginStop's.
+func (d *daemon) tryBegin() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.stopping {
+		return false
+	}
+	d.inflight++
+	d.idleGen++
+	if d.idleTimer != nil {
+		d.idleTimer.Stop()
+		d.idleTimer = nil
+	}
+	return true
+}
+
 func (d *daemon) handleRequest(req request) (interface{}, error) {
+	if !d.tryBegin() {
+		return nil, errStopping
+	}
+	defer d.endRequest()
 	// The request holds the connection for its whole duration; the idle window
 	// starts when the last one ends.
-	d.beginRequest()
-	defer d.endRequest()
-
 	if req.Cmd == "disconnect" {
 		d.closeSession()
 		return nil, nil
@@ -2286,38 +2373,6 @@ func (d *daemon) writeKeys(raw []byte) error {
 	return nil
 }
 
-// listenSocket binds the daemon socket. A live daemon is never displaced: if
-// anything answers on the path, it returns an error. A leftover socket file
-// nobody answers on is removed first. The socket is chmod 0600.
-func listenSocket() (net.Listener, string, error) {
-	sock, err := qcycore.SocketPath(true)
-	if err != nil {
-		return nil, "", err
-	}
-	if c, err := net.DialTimeout("unix", sock, 500*time.Millisecond); err == nil {
-		_ = c.Close()
-		return nil, "", fmt.Errorf("qcyctld is already running (%s answers); not taking it over", sock)
-	}
-	if fi, err := os.Lstat(sock); err == nil {
-		if fi.Mode()&os.ModeSocket == 0 {
-			return nil, "", fmt.Errorf("%s exists and is not a socket; refusing to remove it", sock)
-		}
-		if err := os.Remove(sock); err != nil {
-			return nil, "", fmt.Errorf("remove stale socket: %w", err)
-		}
-	}
-	l, err := net.Listen("unix", sock)
-	if err != nil {
-		return nil, "", err
-	}
-	if err := os.Chmod(sock, 0o600); err != nil {
-		_ = l.Close()
-		_ = os.Remove(sock)
-		return nil, "", fmt.Errorf("chmod socket: %w", err)
-	}
-	return l, sock, nil
-}
-
 func handleConn(conn net.Conn, d *daemon) {
 	defer conn.Close()
 	r := bufio.NewReader(conn)
@@ -2369,13 +2424,22 @@ func main() {
 		os.Exit(2)
 	}
 
-	l, sock, err := listenSocket()
+	l, _, release, err := listenSocket()
+	if errors.Is(err, errAlreadyRunning) {
+		return // another daemon owns the socket
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "listen: %v\n", err)
 		os.Exit(1)
 	}
-	defer os.Remove(sock)
+	defer release()
 	defer l.Close()
+
+	// First thing after the socket is ours: `daemon status` right after an
+	// activation looks for this file.
+	if err := qcycore.WriteDaemonVersion(os.Getpid(), version); err == nil {
+		defer qcycore.RemoveDaemonVersion(os.Getpid())
+	}
 
 	cfg := defaultLifecycle()
 	cfg.idle = idle
@@ -2392,16 +2456,12 @@ func main() {
 		_ = l.Close()
 	}()
 
-	// Exit (releasing BLE and the socket) when the binary was removed or
-	// replaced underneath the daemon, or when the plugin directory that installed
-	// it is gone (`omarchy plugin remove`).
-	exeTick := time.NewTicker(exeWatchEvery)
-	defer exeTick.Stop()
-	go d.watchExecutable(exeTick.C, ownerGone, func() { _ = l.Close() })
-
 	for {
 		conn, err := l.Accept()
 		if err != nil {
+			// Stop accepting, let the requests in flight finish (a multi-frame
+			// EQ sequence must not be cut), then release the link.
+			d.beginStop(stopWait)
 			d.shutdown()
 			return
 		}

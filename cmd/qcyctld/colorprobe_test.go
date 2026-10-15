@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -35,10 +37,6 @@ func TestProbeColor(t *testing.T) {
 	if c, ok := (&bleDialer{}).probeColor(nil, bluetooth.Address{}, withColor); !ok || c != 5 || *calls != 0 {
 		t.Fatalf("cache with colour: %d,%v calls=%d", c, ok, *calls)
 	}
-	// no vendor: no scan
-	if _, ok := (&bleDialer{}).probeColor(nil, bluetooth.Address{}, cacheEntry{Addr: "x"}); ok || *calls != 0 {
-		t.Fatal("no vendor must not scan")
-	}
 
 	// a different vendor on the air is not stored
 	fakeScan(t, 1, 3, true)
@@ -60,5 +58,49 @@ func TestProbeColor(t *testing.T) {
 	}
 	if *calls != colorProbeMaxTries {
 		t.Fatalf("calls=%d, want cap %d", *calls, colorProbeMaxTries)
+	}
+}
+
+// An address-only cache entry (no vendorId) gets one short scan; its result
+// reaches the cache and the model detection.
+func TestProbeAdvertFillsVendorFromAddressOnlyCache(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	var addr bluetooth.Address
+	addr.Set("AA:BB:CC:DD:EE:FF")
+	if err := os.MkdirAll(filepath.Dir(cacheFilePath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cacheFilePath(), []byte("AA:BB:CC:DD:EE:FF 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ce, _ := loadCacheEntry()
+	calls := fakeScan(t, 23877, 2, true)
+	b := &bleDialer{}
+	v, hv, c, hc := b.probeAdvert(nil, addr, ce)
+	if *calls != 1 || !hv || v != 23877 || !hc || c != 2 {
+		t.Fatalf("probe: %d %v %d %v calls=%d", v, hv, c, hc, *calls)
+	}
+	saveCachedAddr(addr, ce.Name, v, hv, c, hc)
+	b.setVendor(v, hv)
+	b.setColor(c, hc)
+	if e, _ := loadCacheEntry(); !e.HaveVendor || e.VendorID != 23877 || !e.HaveColor || e.ColorIndex != 2 {
+		t.Fatalf("cache: %+v", e)
+	}
+	if got, ok := b.VendorID(); !ok || got != 23877 {
+		t.Fatal("dialer does not report the vendor")
+	}
+	if detectModel(v, hv, "", "") == "generic" {
+		t.Fatal("model still generic with the vendorId")
+	}
+
+	// A miss keeps the fast path as before, and is bounded.
+	calls = fakeScan(t, 0, 0, false)
+	b = &bleDialer{}
+	if _, hv, _, _ := b.probeAdvert(nil, addr, cacheEntry{Addr: "x"}); hv {
+		t.Fatal("a miss produced a vendor")
+	}
+	b.probeAdvert(nil, addr, cacheEntry{Addr: "x"})
+	if *calls != 1 {
+		t.Fatalf("calls=%d, want 1 inside the interval", *calls)
 	}
 }

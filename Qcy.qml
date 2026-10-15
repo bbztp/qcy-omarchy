@@ -295,7 +295,7 @@ Singleton {
   property bool daemonBusy: false      // an install/uninstall/removal is running
   property string daemonError: ""
 
-  function daemonRefresh() {
+  function daemonRefresh(done) {
     runOffline(["daemon", "status", "--json"], function (code, out, err) {
       var j = root._parseJson(out)
       if (code === 0 && j && typeof j === "object") {
@@ -305,18 +305,66 @@ Singleton {
         root.daemon = null
         root.daemonAvailable = false
       }
+      if (done) done()
     })
   }
+
+  // After enabling/disabling the service the state is read back until it shows
+  // what was asked (the daemon needs a moment to listen), a few times at most.
+  property var _daemonWant: null      // { enable: bool } while settling
+  property int _daemonTries: 0
+
+  function _daemonSettled() {
+    if (!_daemonWant) return true
+    var d = daemon
+    if (!d) return false
+    // socket enabled: systemd holds the socket and starts the daemon on demand
+    return _daemonWant.enable ? (!!d.serviceEnabled && (!!d.socketActive || !!d.running)) : !d.serviceEnabled
+  }
+
+  function _daemonSettle() {
+    daemonRefresh(function () {
+      if (root._daemonSettled() || root._daemonTries >= 8) {
+        root._daemonWant = null
+        return
+      }
+      root._daemonTries++
+      daemonSettleTimer.restart()
+    })
+  }
+
+  Timer {
+    id: daemonSettleTimer
+    interval: 700
+    repeat: false
+    onTriggered: root._daemonSettle()
+  }
+
+  // "Plugin x · Daemon y · qcyctl z" for the end of Settings.
+  readonly property string versionsLine: {
+    var dv = (daemon && daemon.running) ? (daemon.version || "?")
+      : ((daemon && daemon.socketActive) ? tr("on demand") : tr("stopped"))
+    var cv = (daemon && daemon.cliVersion) ? daemon.cliVersion : "?"
+    return tr("Plugin {plugin} · Daemon {daemon} · qcyctl {cli}",
+      { plugin: pluginVersion || "?", daemon: dv, cli: cv })
+  }
+
+  // The running daemon is older than this qcyctl (an update replaced the
+  // binaries but not the process; a 0.1.5 daemon publishes no version at all). Display only: nothing restarts by itself.
+  readonly property bool daemonOutdated: !!(daemon && daemon.running && daemon.cliVersion
+    && (!daemon.version || daemon.version !== daemon.cliVersion))
 
   function daemonSetService(enable) {
     if (daemonBusy) return
     daemonBusy = true
     daemonError = ""
-    runOffline(["daemon", enable ? "install-service" : "uninstall-service", "--json"],
+    runOffline(["daemon", enable ? "install-service" : "disable-service", "--json"],
       function (code, out, err) {
         root.daemonBusy = false
         if (code !== 0) root.daemonError = root._lastLine(err) || root.tr("The command failed (code {code})", { code: code })
-        root.daemonRefresh()
+        root._daemonWant = code === 0 ? { enable: enable } : null
+        root._daemonTries = 0
+        root._daemonSettle()
       })
   }
 
@@ -378,6 +426,12 @@ Singleton {
     for (var i = 0; i < _devices.length; i++) {
       var d = _devices[i]
       if (!d || !d.connected) continue
+      // Only a paired/bonded device: while the daemon holds a BLE session BlueZ
+      // adds a session-only LE object with the same name (Paired and Bonded
+      // false) that flips with every session and is not the audio device.
+      // (a build exposing none of the properties keeps the old behaviour)
+      var known = d.paired !== undefined || d.bonded !== undefined || d.trusted !== undefined
+      if (known && !d.paired && !d.bonded && !d.trusted) continue
       var name = ((d.name || "") + " " + (d.deviceName || "")).toLowerCase()
       if (name.indexOf(deviceMatch) !== -1) return d
     }

@@ -6,6 +6,27 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-14
+
+### Changed
+
+- The daemon now runs under systemd socket activation by default: the setup installs `qcyctld.socket` and `qcyctld.service` in `~/.config/systemd/user/` and enables the socket. The daemon starts on the first request and owns no socket file of its own. After an update the setup runs `qcyctl daemon refresh-service`, which restarts a running daemon on the new binary (`try-restart`). Requests sent during that restart wait in the socket queue instead of failing.
+- The Settings toggle "Start with the system" now enables or disables the socket (`qcyctl daemon install-service` / `disable-service`). Turning it off keeps the unit files, and later updates respect the choice. `qcyctl daemon uninstall-service` (and "Remove QCY data…") removes both units.
+- Upgrading from 0.1.5: a daemon left by 0.1.5 is stopped (waiting for the process to exit) and an enabled 0.1.5 `qcyctld.service` is disabled before the socket is enabled. 0.1.5 removed the unit file when its toggle was turned off, so 0.1.6 cannot see that choice and enables the socket; turn the toggle off again if you prefer to start the daemon yourself.
+- Without a systemd user session the daemon keeps working as before (started by qcyctl). A lock in `$XDG_RUNTIME_DIR` keeps a second daemon from starting, and only the lock holder removes the socket file.
+- `scripts/install.sh` installs the units through `qcyctl daemon install-service`. `packaging/qcyctld.service` is gone.
+
+### Fixed
+
+- The widget no longer appears and disappears with the daemon's BLE sessions. Only a paired, bonded or trusted BlueZ device counts as the connected earbuds.
+- On SIGTERM the daemon stops accepting requests and waits up to 15 s for the ones in progress (such as an EQ backup, write and readback) before it exits. A request it refuses while stopping is retried by qcyctl on the new daemon. A request that was already sent is never retried.
+- The earbuds cache (`~/.cache/qcyctl/le-address`) is written atomically under a lock and is never rewritten with fewer fields. A cache without the model is repaired with a short scan, so the earbuds no longer fall back to a generic model.
+- Settings: the daemon state is read back after you toggle the service, instead of showing a stale value.
+
+### Added
+
+- The Settings footer shows the plugin, daemon and qcyctl versions, plus a hint when the running daemon is older than the plugin. `qcyctl daemon status --json` reports `version` and `cliVersion`.
+
 ## [0.1.5] - 2026-10-14
 
 ### Fixed

@@ -244,5 +244,18 @@ if [ "${done_ok}" = 0 ]; then
   build
 fi
 commit || fail "could not install into ${bin_root}"
+
+# Hand the daemon over to the new binaries, after the old-version cleanup above.
+# `daemon refresh-service` decides: first install or enabled socket -> install
+# and restart; socket disabled by the user -> keep it off, refresh the units and
+# stop the daemon so the next client starts the new binary. If it fails, the
+# running daemon is stopped. Best effort: it never fails the install, and nothing
+# it prints reaches the STEP/BIN protocol.
+hand_over_daemon() {
+  local q="${bin_root}/qcyctl" t=""
+  command -v timeout >/dev/null 2>&1 && t="timeout 60"
+  { ${t} "${q}" daemon refresh-service --quiet || ${t} "${q}" daemon stop --quiet; } >/dev/null 2>&1 || true
+}
+hand_over_daemon
 printf 'BIN %s\n' "${bin_root}/qcyctl"
 step done "Ready (${version})"

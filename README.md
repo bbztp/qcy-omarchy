@@ -157,8 +157,8 @@ Per widget in `shell.json` (or in the shell's settings UI):
 | `deviceMatch` | `"qcy"` | Case-insensitive substring to recognise your earbuds. |
 
 Set `QCYCTL` in the environment to point the widget at a `qcyctl` binary that is
-not in `~/.local/bin`. Settings > Daemon turns the `qcyctld` user service on or
-off at login. Other environment variables: [docs/CLI.md](docs/CLI.md#environment-variables).
+not in `~/.local/bin`. Settings > Daemon turns the `qcyctld` user socket (the daemon then
+starts on demand) on or off. Other environment variables: [docs/CLI.md](docs/CLI.md#environment-variables).
 
 ## Known limitations
 
@@ -186,8 +186,8 @@ off at login. Other environment variables: [docs/CLI.md](docs/CLI.md#environment
 
 ## Uninstall
 
-- If you turned on Settings > Daemon > "Start with the system", turn it off
-  first (or run `qcyctl daemon uninstall-service`): the unit points at the
+- The daemon socket is enabled by default; run `qcyctl daemon uninstall-service`
+  first (or use "Remove QCY data…"): the units point at the
   binaries in `~/.local/share/qcy-omarchy/bin`.
 - Optional: Settings > Daemon > "Remove QCY data…" stops the service and deletes
   `~/.local/share/qcy-omarchy`, `~/.config/qcy-omarchy` and `~/.cache/qcy-omarchy`
@@ -202,7 +202,7 @@ off at login. Other environment variables: [docs/CLI.md](docs/CLI.md#environment
 - Remove the `{ "id": "io.github.bbztp.qcy" }` entry from `shell.json`.
 
 For a development install, `make uninstall` disables and removes the
-`qcyctld.service` user unit, `~/.local/bin/qcyctl` and `qcyctld`, and the plugin
+`qcyctld.socket` and `qcyctld.service` user units, `~/.local/bin/qcyctl` and `qcyctld`, and the plugin
 directory, then rescans plugins. Backups in `~/.local/share/qcy-omarchy/backups/`
 are left in place.
 
@@ -216,8 +216,8 @@ go test ./...         # unit tests
 ./scripts/install.sh  # build + install + start the user service
 ```
 
-`scripts/install.sh` installs the binaries to `~/.local/bin`, installs and starts
-the `qcyctld.service` user unit, copies the plugin to
+`scripts/install.sh` installs the binaries to `~/.local/bin`, enables the
+`qcyctld.socket` user unit (via `qcyctl daemon install-service`), copies the plugin to
 `~/.config/omarchy/plugins/io.github.bbztp.qcy` and rescans plugins. Pass
 `--no-service` to skip the unit, `--no-build` to reuse `make build` output.
 `make install` does the same. The bootstrap test (local HTTP server, fake
@@ -228,7 +228,6 @@ cmd/qcyctl/                 Go source for qcyctl
 cmd/qcyctld/                Go source for the qcyctld daemon
 internal/                   Go packages shared by both (qcycore, hearing, protocol)
 docs/                       CLI.md, PROTOCOL.md, WEB_API.md, PUBLISHING.md
-packaging/qcyctld.service   systemd user unit
 manifest.json, *.qml, qmldir, assets/  the Omarchy bar widget (QML plugin, at the repo root)
 scripts/                    install, bootstrap, release packaging
 ```

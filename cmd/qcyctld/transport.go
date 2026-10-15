@@ -111,22 +111,33 @@ var advertScan = func(adapter *bluetooth.Adapter, addr bluetooth.Address, timeou
 // colorProbeInterval. A unit held by another client does not advertise, so a
 // miss simply falls back to the plain fast path.
 func (b *bleDialer) probeColor(adapter *bluetooth.Adapter, addr bluetooth.Address, ce cacheEntry) (uint8, bool) {
-	if !ce.HaveVendor || ce.HaveColor {
-		return ce.ColorIndex, ce.HaveColor
+	_, _, c, ok := b.probeAdvert(adapter, addr, ce)
+	return c, ok
+}
+
+// probeAdvert is the fast path's one short scan for what the cache lacks: the
+// colour when it has the vendorId only, or the vendorId (and colour) when it
+// has neither (an address-only entry). Bounded like probeColor; a miss, or an
+// advertisement of another vendor than the cached one, yields nothing new.
+// Without a new reading it returns what the cache already holds.
+func (b *bleDialer) probeAdvert(adapter *bluetooth.Adapter, addr bluetooth.Address, ce cacheEntry) (vendor uint16, haveVendor bool, color uint8, haveColor bool) {
+	vendor, haveVendor, color, haveColor = ce.VendorID, ce.HaveVendor, ce.ColorIndex, ce.HaveColor
+	if haveVendor && haveColor {
+		return
 	}
 	b.vmu.Lock()
 	if b.colorTries >= colorProbeMaxTries || (!b.lastColorTry.IsZero() && time.Since(b.lastColorTry) < colorProbeInterval) {
 		b.vmu.Unlock()
-		return 0, false
+		return
 	}
 	b.colorTries++
 	b.lastColorTry = time.Now()
 	b.vmu.Unlock()
 	v, c, ok := advertScan(adapter, addr, colorProbeTimeout)
-	if !ok || v != ce.VendorID {
-		return 0, false
+	if !ok || (ce.HaveVendor && v != ce.VendorID) {
+		return
 	}
-	return c, true
+	return v, true, c, true
 }
 
 func (b *bleDialer) setVendor(v uint16, ok bool) {
@@ -192,8 +203,7 @@ func (b *bleDialer) Dial(onNotify func([]byte)) (session, string, error) {
 	if addr, ok := loadCachedAddr(); ok {
 		name := loadCachedName()
 		ce, _ := loadCacheEntry()
-		vendor, haveVendor := ce.VendorID, ce.HaveVendor
-		color, haveColor := b.probeColor(adapter, addr, ce)
+		vendor, haveVendor, color, haveColor := b.probeAdvert(adapter, addr, ce)
 		dev, err := b.dialLE(adapter, addr, 3*time.Second)
 		if err == nil {
 			s, serr := setupSession(dev, onNotify)

@@ -3523,7 +3523,8 @@ Panel {
                 width: parent.width
                 label: Qcy.tr("Status")
                 value: !Qcy.daemonAvailable ? Qcy.tr("Unavailable")
-                  : (Qcy.daemon && Qcy.daemon.running ? Qcy.tr("Running") : Qcy.tr("Stopped"))
+                  : (Qcy.daemon && Qcy.daemon.running ? Qcy.tr("Running")
+                    : (Qcy.daemon && Qcy.daemon.socketActive ? Qcy.tr("On demand") : Qcy.tr("Stopped")))
               }
 
               ToggleRow {
@@ -3539,6 +3540,57 @@ Panel {
                 width: parent.width
                 visible: Qcy.daemonError !== ""
                 text: Qcy.daemonError
+                color: Color.urgent
+                font.family: root.textFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+
+              Item {
+                id: versionsBox
+                width: parent.width
+                height: versionsText.implicitHeight
+                Text {
+                  id: versionsText
+                  width: parent.width
+                  text: Qcy.versionsLine
+                  color: root.muted
+                  font.family: root.textFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                }
+                MouseArea {
+                  id: versionsMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                }
+                Rectangle {
+                  visible: versionsMouse.containsMouse && versionsText.truncated
+                  anchors.bottom: parent.top
+                  anchors.left: parent.left
+                  width: Math.min(versionsTip.implicitWidth + Style.space(12), versionsBox.width)
+                  height: versionsTip.implicitHeight + Style.space(8)
+                  radius: Style.space(4)
+                  color: Color.background
+                  border.color: root.muted
+                  z: 10
+                  Text {
+                    id: versionsTip
+                    anchors.centerIn: parent
+                    width: parent.width - Style.space(12)
+                    text: Qcy.versionsLine
+                    color: root.foreground
+                    font.family: root.textFamily
+                    font.pixelSize: Style.font.caption
+                    wrapMode: Text.WordWrap
+                  }
+                }
+              }
+
+              Text {
+                width: parent.width
+                visible: Qcy.daemonOutdated
+                text: Qcy.tr("The daemon is older than the plugin. Turn “Start with the system” off and on to restart it.")
                 color: Color.urgent
                 font.family: root.textFamily
                 font.pixelSize: Style.font.caption

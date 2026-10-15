@@ -15,6 +15,19 @@ srv_pid=""
 cleanup() { [ -z "${srv_pid}" ] || kill "${srv_pid}" 2>/dev/null || true; rm -rf "${work}"; }
 trap cleanup EXIT
 
+# Airtight against the real session: PATH starts with stubs for systemctl and
+# the daemon binaries (they record the call and fail), and every run below gets
+# a throwaway HOME and XDG_* tree including XDG_RUNTIME_DIR. The bootstrap calls
+# ${data}/bin/qcyctl by absolute path, which is a fake in every case.
+mkdir -p "${work}/stubbin"
+for s in systemctl qcyctl qcyctld; do
+  printf '#!/bin/sh\necho "%s $*" >> "%s/stub.called"\nexit 1\n' "${s}" "${work}" > "${work}/stubbin/${s}"
+  chmod +x "${work}/stubbin/${s}"
+done
+export PATH="${work}/stubbin:${PATH}"
+export XDG_RUNTIME_DIR="${work}/xdg-run" XDG_CONFIG_HOME="${work}/xdg-config" XDG_STATE_HOME="${work}/xdg-state"
+mkdir -p "${XDG_RUNTIME_DIR}" "${XDG_CONFIG_HOME}" "${XDG_STATE_HOME}"
+
 version="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${here}/../manifest.json" | head -n 1)"
 case "$(uname -m)" in aarch64|arm64) arch=arm64; mach='\xb7\x00' ;; *) arch=amd64; mach='\x3e\x00' ;; esac
 name="qcy-omarchy_${version}_linux_${arch}.tar.gz"
@@ -224,5 +237,69 @@ if [ "${rc}" -eq 0 ] && [ -x "${data}/bin/qcyctld" ] && [ "${in_stage}" = ok ] &
    && [ -z "$(stages)" ] && [ ! -e "${home}/.cache" ] && [ "$(tree "${p5}")" = "$(cat "${work}/before5")" ]; then
   check "build fallback keeps its build cache in the staging dir and removes it" ok
 else check "build fallback keeps its build cache in the staging dir and removes it" no; cat "${work}/out"; echo "gocache=${gc}"; fi
+
+# 6. the daemon hand-over: after a fresh install the new qcyctl is asked to
+# `daemon refresh-service --quiet` (a real tiny stand-in records its arguments);
+# when that fails it falls back to `daemon stop --quiet`; a failing qcyctl never
+# fails the install and nothing it prints leaks into the STEP/BIN output.
+if command -v go >/dev/null 2>&1; then
+  mkdir -p "${work}/fakectl" "${work}/recpkg" "${work}/rec"
+  cat > "${work}/fakectl/main.go" <<'ENDGO'
+package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+)
+
+func main() {
+	if f := os.Getenv("QCY_FAKE_LOG"); f != "" {
+		if fh, err := os.OpenFile(f, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+			fmt.Fprintln(fh, strings.Join(os.Args[1:], " "))
+			fh.Close()
+		}
+	}
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Println("qcyctl " + os.Getenv("QCY_FAKE_VERSION"))
+		return
+	}
+	fmt.Println("STEP leaked from qcyctl")
+	if os.Getenv("QCY_FAKE_FAIL") == "1" && len(os.Args) > 2 && os.Args[2] == "refresh-service" {
+		os.Exit(1)
+	}
+	if os.Getenv("QCY_FAKE_FAIL") == "all" {
+		os.Exit(1)
+	}
+}
+ENDGO
+  ( cd "${work}/fakectl" && printf 'module fakectl\n\ngo 1.21\n' > go.mod && env -u GOFLAGS GOWORK=off GOTOOLCHAIN=local GOCACHE="${work}/fakectl/cache" go build -o "${work}/recpkg/qcyctl" . ) >"${work}/fakectl.log" 2>&1 \
+    && cp "${work}/recpkg/qcyctl" "${work}/recpkg/qcyctld" && set_release_from() { tar -czf "$1/$2" -C "${work}/recpkg" qcyctl qcyctld; printf '%s  %s\n' "$(sha256sum "$1/$2" | awk '{print $1}')" "$2" > "$1/SHA256SUMS"; } \
+    && set_release_from "${work}/rec" "${name}" || { echo "could not build the stand-in qcyctl"; cat "${work}/fakectl.log"; fails=$((fails + 1)); }
+  p7="$(new_plugin p7)"
+  rm -rf "${home}"; : > "${work}/fake.log"
+  run "${p7}" "http://127.0.0.1:${port}/rec" QCY_FAKE_LOG="${work}/fake.log" QCY_FAKE_VERSION="${version}"
+  if [ "${rc}" -eq 0 ] && [ "$(grep -c . "${work}/fake.log")" = 1 ] && grep -qx 'daemon refresh-service --quiet' "${work}/fake.log" \
+     && ! grep -v '^STEP \(check\|download\|verify\|install\|build\|done\) \|^BIN ' "${work}/out" | grep -q .; then
+    check "hand-over runs refresh-service --quiet and prints nothing extra" ok
+  else check "hand-over runs refresh-service --quiet and prints nothing extra" no; cat "${work}/out" "${work}/fake.log"; fi
+
+  rm -rf "${home}"; : > "${work}/fake.log"
+  run "${p7}" "http://127.0.0.1:${port}/rec" QCY_FAKE_LOG="${work}/fake.log" QCY_FAKE_VERSION="${version}" QCY_FAKE_FAIL=1
+  if [ "${rc}" -eq 0 ] && [ -x "${data}/bin/qcyctl" ] && [ "$(grep 'refresh-service\|stop' "${work}/fake.log" | tr '\n' ';')" = "daemon refresh-service --quiet;daemon stop --quiet;" ]; then
+    check "failed refresh-service falls back to daemon stop and does not fail the install" ok
+  else check "failed refresh-service falls back to daemon stop and does not fail the install" no; cat "${work}/out" "${work}/fake.log"; fi
+
+  rm -rf "${home}"; : > "${work}/fake.log"
+  run "${p7}" "http://127.0.0.1:${port}/rec" QCY_FAKE_LOG="${work}/fake.log" QCY_FAKE_VERSION="${version}" QCY_FAKE_FAIL=all
+  if [ "${rc}" -eq 0 ] && grep -qx "BIN ${data}/bin/qcyctl" "${work}/out"; then
+    check "a qcyctl that fails every daemon command still leaves a successful install" ok
+  else check "a qcyctl that fails every daemon command still leaves a successful install" no; cat "${work}/out"; fi
+else
+  echo "SKIP hand-over tests (no go to build the stand-in qcyctl)"
+fi
+
+
+if [ -e "${work}/stub.called" ]; then check "nothing reached the real systemctl or qcyctl" no; cat "${work}/stub.called"; else check "nothing reached the real systemctl or qcyctl" ok; fi
 
 [ "${fails}" -eq 0 ] && echo "all passed" || { echo "${fails} failed"; exit 1; }

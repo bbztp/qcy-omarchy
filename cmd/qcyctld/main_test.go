@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -45,10 +46,11 @@ func TestListenSocketDoesNotDisplaceLiveDaemon(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 	sock := filepath.Join(dir, "qcyctld.sock")
 
-	l, p, err := listenSocket()
+	l, p, rel, err := listenSocket()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer rel()
 	defer l.Close()
 	if p != sock {
 		t.Fatalf("path %s", p)
@@ -66,8 +68,8 @@ func TestListenSocketDoesNotDisplaceLiveDaemon(t *testing.T) {
 			c.Close()
 		}
 	}()
-	if _, _, err := listenSocket(); err == nil {
-		t.Fatal("second daemon took over a live socket")
+	if _, _, _, err := listenSocket(); !errors.Is(err, errAlreadyRunning) {
+		t.Fatalf("second daemon: %v, want errAlreadyRunning", err)
 	}
 	if _, err := os.Stat(sock); err != nil {
 		t.Fatal("live socket was removed")
@@ -87,18 +89,19 @@ func TestListenSocketReplacesStaleSocketOnly(t *testing.T) {
 	}
 	l0.(*net.UnixListener).SetUnlinkOnClose(false)
 	l0.Close()
-	l, _, err := listenSocket()
+	l, _, rel, err := listenSocket()
 	if err != nil {
 		t.Fatalf("stale socket not replaced: %v", err)
 	}
 	l.Close()
+	rel()
 	os.Remove(sock)
 
 	// a regular file at the path is never deleted
 	if err := os.WriteFile(sock, []byte("precious"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := listenSocket(); err == nil {
+	if _, _, _, err := listenSocket(); err == nil {
 		t.Fatal("regular file replaced")
 	}
 	if b, _ := os.ReadFile(sock); string(b) != "precious" {

@@ -228,3 +228,102 @@ func TestSaveCachedAddrPermissions(t *testing.T) {
 		}
 	}
 }
+
+func TestSaveCachedAddrNeverLosesInformation(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	var addr bluetooth.Address
+	addr.Set("AA:BB:CC:DD:EE:FF")
+	addr.SetRandom(true)
+	full := "AA:BB:CC:DD:EE:FF 1 QCY_MeloBuds_N70 23877 2\n"
+	if err := os.MkdirAll(filepath.Dir(cacheFilePath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	read := func() string { b, _ := os.ReadFile(cacheFilePath()); return string(b) }
+	reset := func(c string) {
+		if err := os.WriteFile(cacheFilePath(), []byte(c), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Fast path of a connection that does not know the vendor, name or colour.
+	reset(full)
+	saveCachedAddr(addr, "", 0, false, 0, false)
+	if got := read(); got != full {
+		t.Fatalf("lost data: %q", got)
+	}
+	// Colour probe found no advertisement: vendor known, colour not.
+	saveCachedAddr(addr, "QCY MeloBuds N70", 23877, true, 0, false)
+	if got := read(); got != full {
+		t.Fatalf("probeColor miss erased data: %q", got)
+	}
+	// A different vendor does not inherit the colour; a new colour replaces it.
+	saveCachedAddr(addr, "", 23877, true, 5, true)
+	if got := read(); got != "AA:BB:CC:DD:EE:FF 1 QCY_MeloBuds_N70 23877 5\n" {
+		t.Fatalf("new colour: %q", got)
+	}
+	saveCachedAddr(addr, "", 111, true, 0, false)
+	if got := read(); got != "AA:BB:CC:DD:EE:FF 1 QCY_MeloBuds_N70 111\n" {
+		t.Fatalf("other vendor kept the colour: %q", got)
+	}
+	// Another address starts fresh.
+	var other bluetooth.Address
+	other.Set("11:22:33:44:55:66")
+	saveCachedAddr(other, "", 0, false, 0, false)
+	if got := read(); got != "11:22:33:44:55:66 0\n" {
+		t.Fatalf("other address: %q", got)
+	}
+	// An old 4-field entry (name only / with vendor) still parses and is kept.
+	reset("AA:BB:CC:DD:EE:FF 1 QCY_MeloBuds_N70 23877\n")
+	saveCachedAddr(addr, "", 0, false, 0, false)
+	if e, ok := loadCacheEntry(); !ok || !e.HaveVendor || e.VendorID != 23877 || e.HaveColor || e.Name != "QCY MeloBuds N70" {
+		t.Fatalf("old entry: %+v", e)
+	}
+}
+
+func TestConcurrentCacheWritersNeverShrinkOrTruncate(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	var addr bluetooth.Address
+	addr.Set("AA:BB:CC:DD:EE:FF")
+	if err := os.MkdirAll(filepath.Dir(cacheFilePath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	full := "AA:BB:CC:DD:EE:FF 0 QCY_MeloBuds_N70 23877 2\n"
+	if err := os.WriteFile(cacheFilePath(), []byte(full), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	bad := make(chan string, 1)
+	go func() { // reader: never an empty or shrunk file
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			b, err := os.ReadFile(cacheFilePath())
+			if err != nil || string(b) != full {
+				select {
+				case bad <- string(b):
+				default:
+				}
+				return
+			}
+		}
+	}()
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				saveCachedAddr(addr, "", 0, false, 0, false)
+			}
+		}()
+	}
+	wg.Wait()
+	close(stop)
+	select {
+	case b := <-bad:
+		t.Fatalf("reader saw %q", b)
+	default:
+	}
+}

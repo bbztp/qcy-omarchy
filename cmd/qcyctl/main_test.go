@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bbztp/qcy-omarchy/internal/qcycore"
+	"tinygo.org/x/bluetooth"
 )
 
 // payload11 is a 73-byte 0x22 payload (the written form): slot 11, master +1.50 dB, band 1 at
@@ -412,5 +413,29 @@ func TestNamedAncModesMatchThePluginTable(t *testing.T) {
 	}
 	if found != 7 {
 		t.Errorf("found %d named tuples in the QML table, want 7", found)
+	}
+}
+
+func TestSaveCachedAddrKeepsTheDaemonsRicherEntry(t *testing.T) {
+	var addr bluetooth.Address
+	addr.Set("AA:BB:CC:DD:EE:FF")
+	addr.SetRandom(true)
+	p := cacheFilePath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	full := "AA:BB:CC:DD:EE:FF 1 QCY_MeloBuds_N70 23877 2\n"
+	if err := os.WriteFile(p, []byte(full), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	saveCachedAddr(addr)
+	if b, _ := os.ReadFile(p); string(b) != full {
+		t.Fatalf("direct connection shrank the cache: %q", b)
+	}
+	var other bluetooth.Address
+	other.Set("11:22:33:44:55:66")
+	saveCachedAddr(other)
+	if b, _ := os.ReadFile(p); string(b) != "11:22:33:44:55:66 0\n" {
+		t.Fatalf("new address not stored: %q", b)
 	}
 }
