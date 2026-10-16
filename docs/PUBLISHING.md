@@ -88,32 +88,32 @@ first (or run `qcyctl daemon uninstall-service`). Settings > Daemon >
 
 ## 4. Submit to the marketplace
 
-Marketplace: <https://github.com/omacom/omarchy-plugin-marketplace>.
+Marketplace: <https://github.com/omacom/omarchy-plugin-marketplace> (rules in
+its `SUBMISSION.md`). Requirements: public repository, `manifest.json`,
+README with install and removal, `LICENSE` at the root, a unique plugin ID
+outside `omarchy.*` (check `registry.json`); `preview.png` is optional.
 Open <https://github.com/omacom/omarchy-plugin-marketplace/issues/new?template=submit-plugin.yml>
-and fill the form. Title: `[Plugin]: QCY Earbuds`. Available tags: ai, bar,
-education, games, hyprland, kids, launcher, media, power-management,
-quickshell, security, system, vpn, workspaces (pick 1 to 3).
+and fill the form. Title: `[Plugin]: QCY Earbuds`.
 
-Paste, per heading, in this order:
-
-**Repository URL**
+**Repository URL** (repository root, no trailing slash)
 
 ```
 https://github.com/bbztp/qcy-omarchy
 ```
 
-**Category**
+**Category** (one of: Appearance, Desktop, Developer Tools, Hardware, Kids,
+Productivity, System, Widgets, Other)
 
 ```
 Hardware
 ```
 
-(If "Hardware" is not offered, pick the closest available option, e.g. Audio.)
-
-**Tags**
+**Tags** (one to three of: AI, Bar, Education, Games, Hyprland, Kids,
+Launcher, Media, Power management, Quickshell, Security, System, VPN,
+Workspaces)
 
 ```
-bar, media, quickshell
+Bar, Media, Quickshell
 ```
 
 **Suggest a missing tag**
@@ -126,44 +126,55 @@ bluetooth
 
 ```
 QCY Earbuds is a bar widget (Quickshell) that controls QCY earbuds over
-Bluetooth Low Energy: battery, noise control, EQ, touch controls, find my
-earbuds. It needs two small Go programs (qcyctl CLI and qcyctld user daemon),
-so a scanner will flag the following. All of it is deliberate:
+Bluetooth Low Energy: battery, noise control, EQ, touch controls, LDAC,
+the computer's Bluetooth codec, find my earbuds. It needs two small Go
+programs (qcyctl CLI and qcyctld user daemon), so a scanner will flag the
+following. All of it is deliberate:
 
 - Downloads and runs a binary. On first open, scripts/bootstrap.sh downloads
   qcy-omarchy_<version>_linux_<arch>.tar.gz and SHA256SUMS from this
   repository's own GitHub release (https only, host restricted to github.com
   and *.githubusercontent.com), verifies the SHA-256, checks the files are
   ELF binaries for this architecture, and installs them to
-  ~/.local/share/qcy-omarchy/bin/<version> (staged in a .stage.* directory
-  there, moved in with one rename; nothing is written under the plugin
-  directory). Nothing is executed before the checksum matches. The release is built by .github/workflows/release.yml from the
-  tagged source (static, -trimpath).
-- Fallback: if no release can be downloaded, it runs `go build` on the cloned
-  source (needs Go; its build cache lives in the staging directory and is removed; modules use Go's normal cache).
-- systemd --user units (qcyctld.socket + qcyctld.service): the bootstrap runs
-  `qcyctl daemon refresh-service` after installing, which enables the socket on
-  a first install and keeps it off if the user turned it off in Settings >
-  Daemon. They live in ~/.config/systemd/user.
+  ~/.local/share/qcy-omarchy/bin/<version> (staged, moved in with one
+  rename; nothing is written under the plugin directory). Nothing is
+  executed before the checksum matches. The release is built by
+  .github/workflows/release.yml from the tagged source (static, -trimpath).
+- Fallback: if no release can be downloaded, it runs `go build` on the
+  cloned source (needs Go).
+- systemd --user units (qcyctld.socket + qcyctld.service) in
+  ~/.config/systemd/user; the socket can be turned off in Settings > Daemon.
+- Runs pw-dump and wpctl (PipeWire) to show and switch the computer's
+  Bluetooth codec for the earbuds. No sudo.
 - No sudo, no root, no system paths. No `curl | sh`. Writes only under
-  ~/.local/share, ~/.config and ~/.cache in a qcy-omarchy directory (never
-  inside the plugin directory); "Remove QCY data..." deletes them.
+  ~/.local/share, ~/.config and ~/.cache in a qcy-omarchy directory;
+  "Remove QCY data..." deletes them.
 - Network: only the release download above and, on demand, product pictures
   from img.qcymall.com (size-limited, type-checked, can be turned off with
   `qcyctl model images off`).
-- Hardware: only one model (MeloBuds N70) was tested; other QCY models get a
-  conservative profile with risky features blocked. Firmware is never written.
+- Hardware: tested on the MeloBuds N70; every other QCY model shows what its
+  own control panel declares. Firmware is never written.
+- After `omarchy plugin update`, run `omarchy restart shell` (omarchy#10729);
+  the panel says so when needed.
 ```
 
-**Submission checklist**: tick every box in the form (only after you have
-actually done each item: tested on a clean account, preview.png committed,
-license present, README documents install and removal).
+**Submission checklist**: tick every box in the form only after checking each
+statement is true (repository public with install and removal instructions;
+license and dependencies documented; you own the plugin and preview; no user
+configuration overwritten without consent; listing is not a security review).
 
-Attach nothing else; the form reads `preview.png` from the repository.
+After submitting, the marketplace bot posts a validation comment and an
+Automated Security Baseline result on the issue. The release download makes a
+`review-required` result likely; a marketplace maintainer then reviews it and
+applies `approved-and-verified`, which publishes the listing. To fix a
+reported problem, change the repository and edit the same issue (that reruns
+validation); do not open a duplicate.
 
 ### Updating the listing later
 
-After releasing a new version, open the update form
-(<https://github.com/omacom/omarchy-plugin-marketplace/issues/new?template=verify-plugin.yml>)
-and give it the SHA of the new `HEAD` (`git rev-parse HEAD`) so the scanner
-re-verifies the plugin.
+The listing is bound to the approved commit; newer commits show as "Update
+unverified" until verified. After releasing a new version, open
+<https://github.com/omacom/omarchy-plugin-marketplace/issues/new?template=verify-plugin.yml>,
+choose "Verify and publish a newer upstream commit", and give the plugin ID
+(`io.github.bbztp.qcy`), the repository URL and the full 40-character SHA of
+`HEAD` (`git rev-parse HEAD`).
