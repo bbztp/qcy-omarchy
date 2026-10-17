@@ -6,6 +6,17 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-10-17
+
+### Security
+
+- The checksum of the downloaded binaries is now pinned in the repository: `scripts/bootstrap.sh` verifies the tarball against the `SHA256SUMS` file shipped with the plugin (the reviewed commit) and no longer trusts the `SHA256SUMS` published next to the binaries, so replacing release assets cannot change what the plugin accepts. A checkout without an entry for its version builds from source.
+- Release builds are reproducible (`-buildvcs=false`, pinned architecture levels, cleared Go environment); the release workflow rebuilds the binaries, refuses to publish unless they match the committed `SHA256SUMS` exactly, attaches a build provenance attestation (`gh attestation verify`), and publishes the release as immutable.
+
+### Added
+
+- `scripts/release-sums.sh` (`make release-sums`) regenerates `SHA256SUMS`; `scripts/repro-check.sh` checks the tarball does not depend on git state.
+
 ## [0.1.11] - 2026-10-15
 
 ### Added

@@ -1,6 +1,6 @@
 # Publishing guide (maintainer)
 
-Nothing here is automated except the release build. Do the steps in order.
+Nothing here is automated except the release build and its checks. Do the steps in order.
 
 ## 1. Make the repository public
 
@@ -37,13 +37,40 @@ Checklist:
 
 ## 2. Tag and release
 
+The downloaded binaries are bound to the reviewed source: `SHA256SUMS` at the
+repository root pins the SHA-256 of the two tarballs of the `manifest.json`
+version, and `scripts/bootstrap.sh` verifies against that file only (never
+against the `SHA256SUMS` published with the release). It is generated, not
+written by hand, and committed with the version bump.
+
 The release workflow (`.github/workflows/release.yml`) runs on a `v*.*.*` tag:
 it checks that the tag equals `v` + `manifest.json` version and that the
-changelog has that version's section, builds static `linux/amd64` and
-`linux/arm64` binaries, packs `qcy-omarchy_<version>_linux_<arch>.tar.gz`
-(`qcyctl` and `qcyctld` at the root), writes `SHA256SUMS`, and publishes the
-release with the changelog section as notes. The plugin's bootstrap downloads
-exactly these files and refuses anything whose SHA-256 does not match.
+changelog has that version's section, runs the tests, builds static
+`linux/amd64` and `linux/arm64` binaries with `scripts/package-release.sh`
+(`qcyctl` and `qcyctld` at the root of
+`qcy-omarchy_<version>_linux_<arch>.tar.gz`), and fails unless
+`sha256sum *.tar.gz` of the result equals the committed `SHA256SUMS` exactly.
+Only then does it attach a provenance attestation, create the release as a
+draft with the tarballs and the committed `SHA256SUMS`, and make it public as
+the last step (immutable releases lock the assets at that moment).
+
+Steps for a new version:
+
+1. Bump `version` in `manifest.json` and add the `## [x.y.z] - date` section to
+   `CHANGELOG.md`.
+2. Use exactly the Go version of the `go` line in `go.mod`, then run
+   `scripts/release-sums.sh` (or `make release-sums`). It prints the toolchain,
+   builds both tarballs and rewrites `SHA256SUMS`. Run `scripts/repro-check.sh`
+   too: the tarball must be identical built from the working tree, from a copy
+   without `.git` and from a dirty copy.
+3. Commit the bump, the changelog and `SHA256SUMS` together; push `main`; CI must
+   be green (it checks that `SHA256SUMS` names the manifest version's tarballs).
+4. Dry run: `gh workflow run release.yml --ref main`, then `gh run watch`. It
+   builds and compares against `SHA256SUMS` but never attests or publishes.
+5. Releases must be immutable (once, repository setting):
+   `gh api -X PUT repos/bbztp/qcy-omarchy/immutable-releases`. Check with
+   `gh api repos/bbztp/qcy-omarchy/immutable-releases`.
+6. Tag and push:
 
 ```sh
 git switch main && git pull
@@ -54,10 +81,22 @@ gh run watch                       # wait for the Release workflow
 gh release view "v${version}"      # 2 tarballs + SHA256SUMS
 ```
 
-Local dry run of the packaging: `scripts/package-release.sh 0.1.0 amd64 /tmp/out`.
+Verify a published tarball's provenance:
+`gh attestation verify qcy-omarchy_<version>_linux_amd64.tar.gz -R bbztp/qcy-omarchy`.
 
-To release a new version: bump `version` in `manifest.json`, add a
-`## [x.y.z] - date` section to `CHANGELOG.md`, commit, tag `vx.y.z`.
+If the workflow reports a mismatch (the `diff` of `SHA256SUMS` fails), nothing
+was published. Typical causes: the sums were generated on another Go version,
+or a runner image update changed `tar`/`gzip` output. Regenerate the sums on a
+matching toolchain (`go version` in the workflow log shows the one it used),
+commit, and repeat from step 3; if the source changed since the sums were made,
+regenerate them and review the diff. A tag that already failed is deleted and
+recreated only on a commit that has not been released (never after a published
+release).
+
+v0.1.11 and older releases were published before immutable releases and before
+the pinned checksums, so they stay mutable; only old commits refer to them.
+
+Local dry run of the packaging: `scripts/package-release.sh 0.1.0 amd64 /tmp/out`.
 
 ## 3. Test the install on a clean account
 
@@ -132,14 +171,19 @@ programs (qcyctl CLI and qcyctld user daemon), so a scanner will flag the
 following. All of it is deliberate:
 
 - Downloads and runs a binary. On first open, scripts/bootstrap.sh downloads
-  qcy-omarchy_<version>_linux_<arch>.tar.gz and SHA256SUMS from this
-  repository's own GitHub release (https only, host restricted to github.com
-  and *.githubusercontent.com), verifies the SHA-256, checks the files are
-  ELF binaries for this architecture, and installs them to
+  qcy-omarchy_<version>_linux_<arch>.tar.gz from this repository's own
+  GitHub release (https only, host restricted to github.com and
+  *.githubusercontent.com), verifies the SHA-256 against the SHA256SUMS
+  pinned in this repository at the reviewed commit (the release's own
+  checksum file is not trusted), checks the files are ELF binaries for this
+  architecture, and installs them to
   ~/.local/share/qcy-omarchy/bin/<version> (staged, moved in with one
   rename; nothing is written under the plugin directory). Nothing is
-  executed before the checksum matches. The release is built by
-  .github/workflows/release.yml from the tagged source (static, -trimpath).
+  executed before the checksum matches. The builds are reproducible
+  (static, -trimpath, no VCS stamp); .github/workflows/release.yml rebuilds
+  them from the tagged source and refuses to publish unless they equal the
+  pinned SHA256SUMS. Releases are immutable and carry a build provenance
+  attestation (gh attestation verify).
 - Fallback: if no release can be downloaded, it runs `go build` on the
   cloned source (needs Go).
 - systemd --user units (qcyctld.socket + qcyctld.service) in

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Prepare qcyctl + qcyctld for the plugin: download the release matching the
-# plugin version (checksum verified), or build from source with Go.
+# plugin version, or build from source with Go. The expected checksum of the
+# download comes only from the SHA256SUMS file shipped inside the plugin
+# directory (the reviewed commit), never from the release itself: replacing
+# release assets cannot change what this script accepts. A checkout without an
+# entry for this exact tarball name builds from source instead.
 #
 # Binaries go to ${XDG_DATA_HOME:-~/.local/share}/qcy-omarchy/bin, never into
 # the plugin directory. The shell watches ~/.config/omarchy/plugins recursively
@@ -28,7 +32,8 @@
 #   ERROR <text>           final failure (exit status is non-zero)
 #
 # Overrides (tests, mirrors):
-#   QCY_RELEASE_BASE_URL  directory URL holding the tarball and SHA256SUMS
+#   QCY_RELEASE_BASE_URL  directory URL holding the tarball (where the bytes come
+#                         from; the expected checksum is still the pinned one)
 #   QCY_DATA_DIR          replaces ${XDG_DATA_HOME}/qcy-omarchy
 #   QCY_SRC_DIR           source tree for the build fallback (default: repo root)
 #   QCY_BUILD=1           skip the download and build from source
@@ -188,14 +193,15 @@ download() {
   local base="${QCY_RELEASE_BASE_URL:-https://github.com/bbztp/qcy-omarchy/releases/download/v${version}}"
   local name="qcy-omarchy_${version}_linux_${arch}.tar.gz"
   local proto="=https" eff host want got dl="${tmp}/dl" ex="${tmp}/ex"
+  # The pinned checksum is read first: without an entry nothing is requested.
+  want="$(awk -v n="${name}" '$2 == n || $2 == "*" n { print $1; exit }' "${repo_dir}/SHA256SUMS" 2>/dev/null || true)"
+  [[ "${want}" =~ ^[0-9a-f]{64}$ ]] || return 1
   command -v curl >/dev/null 2>&1 || return 1
   [ -z "${QCY_RELEASE_BASE_URL:-}" ] || proto="=http,https"
   mkdir -p "${dl}" "${ex}"
   step download "Downloading ${name}"
   eff="$(curl -fsSL --proto "${proto}" --proto-redir "${proto}" --connect-timeout 10 --max-time 180 \
       -o "${dl}/${name}" -w '%{url_effective}' "${base}/${name}")" || return 1
-  curl -fsSL --proto "${proto}" --proto-redir "${proto}" --connect-timeout 10 --max-time 60 \
-      -o "${dl}/SHA256SUMS" "${base}/SHA256SUMS" || return 1
   if [ -z "${QCY_RELEASE_BASE_URL:-}" ]; then
     host="${eff#https://}"; host="${host%%/*}"
     case "${host}" in
@@ -203,9 +209,7 @@ download() {
       *) return 1 ;;
     esac
   fi
-  step verify "Verifying the checksum"
-  want="$(awk -v n="${name}" '$2 == n || $2 == "*" n { print $1; exit }' "${dl}/SHA256SUMS")"
-  [ -n "${want}" ] || return 1
+  step verify "Verifying the checksum against the pinned SHA256SUMS"
   got="$(sha256sum "${dl}/${name}" | awk '{print $1}')"
   [ "${want}" = "${got}" ] || return 1
   # Only the two expected names, as plain relative entries.

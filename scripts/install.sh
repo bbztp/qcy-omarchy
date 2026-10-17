@@ -79,12 +79,15 @@ echo "installing plugin -> ${plugin_dir}"
 # recreating the whole tree made it reload against a half-copied plugin (the
 # shell has crashed during such reloads). Nothing changed -> nothing written.
 # The plugin lives at the repository root; only its own files are installed
-# (plus scripts/bootstrap.sh, which prepares the binaries; never the Go
+# (plus scripts/bootstrap.sh, which prepares the binaries, and SHA256SUMS, the
+# checksums it pins; never the Go
 # sources, docs or .git).
 plugin_files() {
   find "${repo_dir}" -maxdepth 1 -type f \( -name manifest.json -o -name qmldir -o -name '*.qml' \) -print0
   find "${repo_dir}/assets" -type f -print0
   printf '%s\0' "${repo_dir}/scripts/bootstrap.sh"
+  # The pinned release checksums bootstrap.sh verifies the download against.
+  [ ! -f "${repo_dir}/SHA256SUMS" ] || printf '%s\0' "${repo_dir}/SHA256SUMS"
 }
 fresh=0
 [ -d "${plugin_dir}" ] || fresh=1

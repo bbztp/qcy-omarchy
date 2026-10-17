@@ -8,7 +8,7 @@ UNIT_DIR   := $(HOME)/.config/systemd/user
 VERSION    := $(shell sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' manifest.json | head -n 1)
 LDFLAGS    := -X main.version=$(if $(VERSION),$(VERSION),dev)
 
-.PHONY: build vet install uninstall clean
+.PHONY: build vet install uninstall clean release-sums
 
 build:
 	mkdir -p $(BUILD_DIR)
@@ -37,3 +37,7 @@ clean:
 # Regenerate the embedded protocol registry from docs/reference/protocol.json.
 protocol:
 	python3 scripts/gen_protocol.py
+
+# Regenerate the committed SHA256SUMS for the manifest version (maintainer, before tagging).
+release-sums:
+	bash scripts/release-sums.sh

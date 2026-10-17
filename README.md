@@ -73,7 +73,8 @@ or run `omarchy bar move io.github.bbztp.qcy --section right`.
 
 **First open.** The plugin prepares everything itself, and the panel shows
 "Preparing QCY…" meanwhile. It downloads the `qcyctl`/`qcyctld` release matching
-its version, checks its SHA-256 and installs both to
+its version, checks its SHA-256 against the checksum pinned in the plugin's own
+`SHA256SUMS` (reviewed with the source, not taken from the release) and installs both to
 `~/.local/share/qcy-omarchy/bin/<version>` (with stable `qcyctl`/`qcyctld` links
 beside it). Everything is prepared there and nothing is written under the plugin
 directory, because the shell reloads all plugins on any write below

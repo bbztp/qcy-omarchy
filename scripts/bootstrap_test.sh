@@ -4,6 +4,8 @@
 # plus stable links) and nothing may be written, created or removed under the
 # plugin directory (the shell reloads every plugin on any write there). Also:
 # a failed download/checksum keeps the previous install and leaves no litter,
+# the expected checksum comes only from the SHA256SUMS pinned in the plugin
+# directory (a release whose tarball and own sums were both replaced is refused),
 # an upgrade swaps versions and removes the old one, and the Go build fallback
 # keeps its caches in the staging directory.
 set -euo pipefail
@@ -35,13 +37,16 @@ name="qcy-omarchy_${version}_linux_${arch}.tar.gz"
 # A file with a valid ELF header for this machine (never executed).
 fake_elf() { printf '\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00'"${mach}"'padding-padding' > "$1"; }
 
-mkdir -p "${work}/pkg" "${work}/good" "${work}/bad" "${work}/nosrc"
+mkdir -p "${work}/pkg" "${work}/good" "${work}/bad" "${work}/nosrc" "${work}/badpkg" "${work}/nosums"
 fake_elf "${work}/pkg/qcyctl"; fake_elf "${work}/pkg/qcyctld"
 tar -czf "${work}/good/${name}" -C "${work}/pkg" qcyctl qcyctld
 sum="$(sha256sum "${work}/good/${name}" | awk '{print $1}')"
 printf '%s  %s\n' "${sum}" "${name}" > "${work}/good/SHA256SUMS"
-cp "${work}/good/${name}" "${work}/bad/${name}"
-printf '%064d  %s\n' 0 "${name}" > "${work}/bad/SHA256SUMS"
+# A tampered release: different binaries, and the release's own SHA256SUMS
+# replaced to match them (what an attacker with write access to the release can do).
+fake_elf "${work}/badpkg/qcyctl"; fake_elf "${work}/badpkg/qcyctld"; printf 'evil' >> "${work}/badpkg/qcyctl"
+tar -czf "${work}/bad/${name}" -C "${work}/badpkg" qcyctl qcyctld
+printf '%s  %s\n' "$(sha256sum "${work}/bad/${name}" | awk '{print $1}')" "${name}" > "${work}/bad/SHA256SUMS"
 
 port=$((20000 + RANDOM % 20000))
 python3 -I -m http.server "${port}" --bind 127.0.0.1 --directory "${work}" >/dev/null 2>&1 &
@@ -51,10 +56,11 @@ for _ in $(seq 1 50); do curl -fs "http://127.0.0.1:${port}/good/SHA256SUMS" >/d
 fails=0
 check() { if [ "$2" = ok ]; then echo "PASS $1"; else echo "FAIL $1"; fails=$((fails + 1)); fi; }
 
-# A fresh copy of the repo (without .git) acts as the plugin directory.
+# A fresh copy of the repo (without .git) acts as the plugin directory. The
+# repo's own SHA256SUMS is dropped: each case pins what it needs with `pin`.
 new_plugin() { # name [version] -> plugin dir path
   mkdir -p "${work}/$1"
-  ( cd "${here}/.." && tar -cf - --exclude=.git --exclude=build --exclude=dist . ) | tar -xf - -C "${work}/$1"
+  ( cd "${here}/.." && tar -cf - --exclude=.git --exclude=build --exclude=dist --exclude=SHA256SUMS . ) | tar -xf - -C "${work}/$1"
   [ -z "${2:-}" ] || sed -i "s/\"version\"[[:space:]]*:[[:space:]]*\"[^\"]*\"/\"version\": \"$2\"/" "${work}/$1/manifest.json"
   printf '%s\n' "${work}/$1"
 }
@@ -70,6 +76,11 @@ run() { # plugin-dir base-url [env...] -> output in ${work}/out, status in $rc
   rc=$?
   set -e
 }
+# Write the pinned SHA256SUMS of a fake plugin dir: the hash of <dir>/<tarball>.
+pin() { # plugin-dir release-dir [tarball-name]
+  local n="${3:-${name}}"
+  printf '%s  %s\n' "$(sha256sum "$2/${n}" | awk '{print $1}')" "${n}" > "$1/SHA256SUMS"
+}
 tree() { find "$1" -printf '%p %y %T@ %s %l\n' | sort; }
 stages() { find "${data}" -maxdepth 1 \( -name '.stage.*' -o -name '.qcy-stage.*' \) 2>/dev/null | head -n 1; }
 set_release() { # dir name  (rebuild the archive from ${work}/pkg and its sums)
@@ -77,16 +88,22 @@ set_release() { # dir name  (rebuild the archive from ${work}/pkg and its sums)
   printf '%s  %s\n' "$(sha256sum "$1/$2" | awk '{print $1}')" "$2" > "$1/SHA256SUMS"
 }
 
-# 1. wrong checksum: nothing installed, final ERROR, plugin dir untouched
+# 1. tampered release: the tarball AND the release's SHA256SUMS were replaced
+# consistently, the pinned file is unchanged -> refused, nothing installed,
+# final ERROR, plugin dir untouched, no staging left
 p1="$(new_plugin p1)"; mkdir -p "${p1}/.bin"; echo legacy > "${p1}/.bin/qcyctl"
+pin "${p1}" "${work}/good"
 tree "${p1}" > "${work}/before1"
 run "${p1}" "http://127.0.0.1:${port}/bad"
 if [ "${rc}" -ne 0 ] && grep -q '^ERROR' "${work}/out" && [ ! -e "${data}/bin/qcyctl" ] \
-   && [ "$(tree "${p1}")" = "$(cat "${work}/before1")" ]; then check "wrong checksum refused" ok; else check "wrong checksum refused" no; cat "${work}/out"; fi
+   && [ "$(tree "${p1}")" = "$(cat "${work}/before1")" ] && [ -z "$(stages)" ] && [ ! -e "${data}/bin/current" ]; then
+  check "tampered release (tarball and release sums replaced) refused" ok
+else check "tampered release (tarball and release sums replaced) refused" no; cat "${work}/out"; fi
 
 # 2. correct checksum: installed in the data dir, plugin dir byte-for-byte
 # untouched (a legacy .bin is ignored, not deleted), no staging left
 p2="$(new_plugin p2)"; mkdir -p "${p2}/.bin"; echo legacy > "${p2}/.bin/qcyctl"
+pin "${p2}" "${work}/good"
 tree "${p2}" > "${work}/before2"
 run "${p2}" "http://127.0.0.1:${port}/good"
 if [ "${rc}" -eq 0 ] && [ -x "${data}/bin/${version}/qcyctl" ] && [ -x "${data}/bin/${version}/qcyctld" ] \
@@ -122,6 +139,7 @@ mkdir -p "${work}/up"; printf 'more' >> "${work}/pkg/qcyctl"
 set_release "${work}/up" "${upname}"
 fake_elf "${work}/pkg/qcyctl"
 pu="$(new_plugin pu "${up}")"
+pin "${pu}" "${work}/up" "${upname}"
 tree "${pu}" > "${work}/beforeu"
 run "${pu}" "http://127.0.0.1:${port}/up"
 if [ "${rc}" -eq 0 ] && [ "$(readlink "${data}/bin/current")" = "${up}" ] && [ -x "${data}/bin/${up}/qcyctl" ] \
@@ -136,6 +154,7 @@ printf '#!/bin/sh\necho pwn\n' > "${work}/pkg/qcyctl"
 set_release "${work}/good" "${name}"
 fake_elf "${work}/pkg/qcyctl"
 p3="$(new_plugin p3)"
+pin "${p3}" "${work}/good"
 rm -rf "${home}"
 run "${p3}" "http://127.0.0.1:${port}/good"
 if [ "${rc}" -ne 0 ] && [ ! -e "${data}/bin/qcyctl" ] && [ -z "$(stages)" ]; then check "non-ELF refused" ok; else check "non-ELF refused" no; cat "${work}/out"; fi
@@ -143,7 +162,7 @@ if [ "${rc}" -ne 0 ] && [ ! -e "${data}/bin/qcyctl" ] && [ -z "$(stages)" ]; the
 # 4. read-only plugin dir still installs (nothing is written there anyway)
 if [ "$(id -u)" -ne 0 ]; then
   set_release "${work}/good" "${name}"
-  p4="$(new_plugin p4)"; chmod -R a-w "${p4}"
+  p4="$(new_plugin p4)"; pin "${p4}" "${work}/good"; chmod -R a-w "${p4}"
   rm -rf "${home}"
   run "${p4}" "http://127.0.0.1:${port}/good"
   chmod -R u+w "${p4}"
@@ -213,6 +232,7 @@ chmod +x "${work}/fakebin/go"
 # 4e. a plugin path with edge whitespace is not recorded (the daemon then never checks)
 set_release "${work}/good" "${name}"
 p6="$(new_plugin "p6 ")"
+pin "${p6}" "${work}/good"
 rm -rf "${home}"
 run "${p6}" "http://127.0.0.1:${port}/good"
 if [ "${rc}" -eq 0 ] && [ -x "${data}/bin/qcyctl" ] && [ ! -e "${data}/bin/$(readlink "${data}/bin/current")/plugin-dir" ]; then
@@ -223,6 +243,36 @@ else check "path with edge space: installed, plugin-dir not recorded" no; cat "$
 run "${p6}" "http://127.0.0.1:${port}/none" PATH="${work}/fakebin:${PATH}" QCY_SRC_DIR="${work}/src"
 if grep -q '^STEP build Download or checksum check failed' "${work}/out"; then
   check "fallback to build is announced" ok; else check "fallback to build is announced" no; cat "${work}/out"; fi
+
+# 4g. no pinned entry (no SHA256SUMS in the plugin dir, or only another
+# version/arch): the download is refused before any network call
+p8="$(new_plugin p8)"
+rm -rf "${home}"
+run "${p8}" "http://127.0.0.1:${port}/good"
+if [ "${rc}" -ne 0 ] && grep -q '^ERROR' "${work}/out" && ! grep -q '^STEP download' "${work}/out" \
+   && [ ! -e "${data}/bin/qcyctl" ] && [ -z "$(stages)" ]; then
+  check "no SHA256SUMS in the plugin dir: download refused before any request" ok
+else check "no SHA256SUMS in the plugin dir: download refused before any request" no; cat "${work}/out"; fi
+printf '%s  %s\n' "${sum}" "qcy-omarchy_0.0.0_linux_${arch}.tar.gz" > "${p8}/SHA256SUMS"
+run "${p8}" "http://127.0.0.1:${port}/good"
+if [ "${rc}" -ne 0 ] && ! grep -q '^STEP download' "${work}/out" && [ ! -e "${data}/bin/qcyctl" ]; then
+  check "pinned file without an entry for this tarball: download refused" ok
+else check "pinned file without an entry for this tarball: download refused" no; cat "${work}/out"; fi
+printf '%s  %s\n' "not-a-hash" "${name}" > "${p8}/SHA256SUMS"
+run "${p8}" "http://127.0.0.1:${port}/good"
+if [ "${rc}" -ne 0 ] && ! grep -q '^STEP download' "${work}/out" && [ ! -e "${data}/bin/qcyctl" ]; then
+  check "malformed pinned hash: download refused" ok
+else check "malformed pinned hash: download refused" no; cat "${work}/out"; fi
+
+# 4h. a release without its own SHA256SUMS still installs (the pin is enough)
+# (a release that publishes no SHA256SUMS at all)
+cp "${work}/good/${name}" "${work}/nosums/${name}"
+pin "${p8}" "${work}/good"
+rm -rf "${home}"
+run "${p8}" "http://127.0.0.1:${port}/nosums"
+if [ "${rc}" -eq 0 ] && [ -x "${data}/bin/qcyctl" ]; then
+  check "release without SHA256SUMS installs against the pinned file" ok
+else check "release without SHA256SUMS installs against the pinned file" no; cat "${work}/out"; fi
 
 # 5. build fallback: a fake `go` shows where its caches go; they live in the
 # staging directory (never the plugin dir or ~/.cache) and go with it
@@ -274,9 +324,10 @@ func main() {
 }
 ENDGO
   ( cd "${work}/fakectl" && printf 'module fakectl\n\ngo 1.21\n' > go.mod && env -u GOFLAGS GOWORK=off GOTOOLCHAIN=local GOCACHE="${work}/fakectl/cache" go build -o "${work}/recpkg/qcyctl" . ) >"${work}/fakectl.log" 2>&1 \
-    && cp "${work}/recpkg/qcyctl" "${work}/recpkg/qcyctld" && set_release_from() { tar -czf "$1/$2" -C "${work}/recpkg" qcyctl qcyctld; printf '%s  %s\n' "$(sha256sum "$1/$2" | awk '{print $1}')" "$2" > "$1/SHA256SUMS"; } \
+    && cp "${work}/recpkg/qcyctl" "${work}/recpkg/qcyctld" && set_release_from() { tar -czf "$1/$2" -C "${work}/recpkg" qcyctl qcyctld; } \
     && set_release_from "${work}/rec" "${name}" || { echo "could not build the stand-in qcyctl"; cat "${work}/fakectl.log"; fails=$((fails + 1)); }
   p7="$(new_plugin p7)"
+  pin "${p7}" "${work}/rec"
   rm -rf "${home}"; : > "${work}/fake.log"
   run "${p7}" "http://127.0.0.1:${port}/rec" QCY_FAKE_LOG="${work}/fake.log" QCY_FAKE_VERSION="${version}"
   if [ "${rc}" -eq 0 ] && [ "$(grep -c . "${work}/fake.log")" = 1 ] && grep -qx 'daemon refresh-service --quiet' "${work}/fake.log" \

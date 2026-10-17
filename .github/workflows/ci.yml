@@ -34,6 +34,29 @@ jobs:
         run: |
           for f in scripts/*.sh; do bash -n "$f"; done
           bash scripts/bootstrap_test.sh
+      - name: Pinned release checksums
+        # SHA256SUMS (committed, verified by scripts/bootstrap.sh) must name exactly
+        # the two tarballs of the manifest version. The hashes are checked by the
+        # release workflow, which rebuilds the binaries.
+        run: |
+          python3 -I - <<'PY'
+          import json, re, sys
+          v = json.load(open("manifest.json"))["version"]
+          want = [f"qcy-omarchy_{v}_linux_{a}.tar.gz" for a in ("amd64", "arm64")]
+          try:
+              lines = open("SHA256SUMS").read().splitlines()
+          except OSError as e:
+              sys.exit(f"SHA256SUMS missing: {e}")
+          got = []
+          for l in lines:
+              m = re.fullmatch(r"([0-9a-f]{64})  (\S+)", l)
+              if not m:
+                  sys.exit(f"bad SHA256SUMS line: {l!r}")
+              got.append(m.group(2))
+          if got != want:
+              sys.exit(f"SHA256SUMS names {got}, expected {want}; run scripts/release-sums.sh")
+          print("SHA256SUMS ok for", v)
+          PY
       - name: Manifest
         run: |
           python3 -I - <<'PY'
